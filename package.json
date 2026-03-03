@@ -1,0 +1,23 @@
+{
+  "name": "competehive",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dynamic price tracking & competitor analysis platform for e-commerce sellers",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "cd apps/web && npm run dev",
+    "dev:worker": "cd apps/worker && npm run dev",
+    "build:web": "cd apps/web && npm run build",
+    "build:worker": "cd apps/worker && npm run build",
+    "db:generate": "cd packages/database && npx prisma generate",
+    "db:push": "cd packages/database && npx prisma db push",
+    "db:migrate": "cd packages/database && npx prisma migrate dev",
+    "db:studio": "cd packages/database && npx prisma studio",
+    "db:seed": "cd packages/database && npx prisma db seed"
+  },
+  "author": "Alptekin Ayyavuz",
+  "license": "UNLICENSED"
+}
