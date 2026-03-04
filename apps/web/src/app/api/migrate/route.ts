@@ -1,37 +1,27 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
+export const maxDuration = 60;
+
 export async function GET() {
   const prisma = new PrismaClient();
-  
+  const results: string[] = [];
+
   try {
-    // Raw SQL ile tabloları oluştur
-    await prisma.$executeRawUnsafe(`
-      -- ENUM Types
-      DO $$ BEGIN
-        CREATE TYPE "Plan" AS ENUM ('FREE', 'STARTER', 'PRO', 'ENTERPRISE');
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
-      
-      DO $$ BEGIN
-        CREATE TYPE "Marketplace" AS ENUM ('TRENDYOL', 'HEPSIBURADA', 'AMAZON_TR', 'N11', 'SHOPIFY', 'CUSTOM');
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
-      
-      DO $$ BEGIN
-        CREATE TYPE "ProductStatus" AS ENUM ('ACTIVE', 'PAUSED', 'ERROR', 'OUT_OF_STOCK');
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
-      
-      DO $$ BEGIN
-        CREATE TYPE "RuleType" AS ENUM ('PRICE_DROP', 'PRICE_INCREASE', 'PRICE_THRESHOLD', 'PERCENTAGE_CHANGE', 'COMPETITOR_CHEAPER', 'OUT_OF_STOCK', 'BACK_IN_STOCK');
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
-      
-      DO $$ BEGIN
-        CREATE TYPE "NotifyChannel" AS ENUM ('EMAIL', 'TELEGRAM', 'WEBHOOK');
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
-      
-      DO $$ BEGIN
-        CREATE TYPE "JobStatus" AS ENUM ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED');
-      EXCEPTION WHEN duplicate_object THEN null; END $$;
-    `);
+    // ENUM Types - her biri ayrı
+    const enums = [
+      `DO $$ BEGIN CREATE TYPE "Plan" AS ENUM ('FREE', 'STARTER', 'PRO', 'ENTERPRISE'); EXCEPTION WHEN duplicate_object THEN null; END $$`,
+      `DO $$ BEGIN CREATE TYPE "Marketplace" AS ENUM ('TRENDYOL', 'HEPSIBURADA', 'AMAZON_TR', 'N11', 'SHOPIFY', 'CUSTOM'); EXCEPTION WHEN duplicate_object THEN null; END $$`,
+      `DO $$ BEGIN CREATE TYPE "ProductStatus" AS ENUM ('ACTIVE', 'PAUSED', 'ERROR', 'OUT_OF_STOCK'); EXCEPTION WHEN duplicate_object THEN null; END $$`,
+      `DO $$ BEGIN CREATE TYPE "RuleType" AS ENUM ('PRICE_DROP', 'PRICE_INCREASE', 'PRICE_THRESHOLD', 'PERCENTAGE_CHANGE', 'COMPETITOR_CHEAPER', 'OUT_OF_STOCK', 'BACK_IN_STOCK'); EXCEPTION WHEN duplicate_object THEN null; END $$`,
+      `DO $$ BEGIN CREATE TYPE "NotifyChannel" AS ENUM ('EMAIL', 'TELEGRAM', 'WEBHOOK'); EXCEPTION WHEN duplicate_object THEN null; END $$`,
+      `DO $$ BEGIN CREATE TYPE "JobStatus" AS ENUM ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED'); EXCEPTION WHEN duplicate_object THEN null; END $$`,
+    ];
+
+    for (const sql of enums) {
+      await prisma.$executeRawUnsafe(sql);
+    }
+    results.push("ENUMs created");
 
     // Users
     await prisma.$executeRawUnsafe(`
@@ -52,6 +42,7 @@ export async function GET() {
       )
     `);
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "users_email_key" ON "users"("email")`);
+    results.push("users table created");
 
     // API Keys
     await prisma.$executeRawUnsafe(`
@@ -68,6 +59,7 @@ export async function GET() {
       )
     `);
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "api_keys_key_key" ON "api_keys"("key")`);
+    results.push("api_keys table created");
 
     // Tracked Products
     await prisma.$executeRawUnsafe(`
@@ -94,6 +86,7 @@ export async function GET() {
     `);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "tracked_products_user_id_marketplace_idx" ON "tracked_products"("user_id", "marketplace")`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "tracked_products_status_last_scraped_at_idx" ON "tracked_products"("status", "last_scraped_at")`);
+    results.push("tracked_products table created");
 
     // Price History
     await prisma.$executeRawUnsafe(`
@@ -114,6 +107,7 @@ export async function GET() {
     `);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "price_history_tracked_product_id_scraped_at_idx" ON "price_history"("tracked_product_id", "scraped_at")`);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "price_history_scraped_at_idx" ON "price_history"("scraped_at")`);
+    results.push("price_history table created");
 
     // Competitors
     await prisma.$executeRawUnsafe(`
@@ -130,6 +124,7 @@ export async function GET() {
         CONSTRAINT "competitors_tracked_product_id_fkey" FOREIGN KEY ("tracked_product_id") REFERENCES "tracked_products"("id") ON DELETE CASCADE
       )
     `);
+    results.push("competitors table created");
 
     // Competitor Prices
     await prisma.$executeRawUnsafe(`
@@ -145,6 +140,7 @@ export async function GET() {
       )
     `);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "competitor_prices_competitor_id_scraped_at_idx" ON "competitor_prices"("competitor_id", "scraped_at")`);
+    results.push("competitor_prices table created");
 
     // Alert Rules
     await prisma.$executeRawUnsafe(`
@@ -165,6 +161,7 @@ export async function GET() {
         CONSTRAINT "alert_rules_tracked_product_id_fkey" FOREIGN KEY ("tracked_product_id") REFERENCES "tracked_products"("id") ON DELETE CASCADE
       )
     `);
+    results.push("alert_rules table created");
 
     // Notifications
     await prisma.$executeRawUnsafe(`
@@ -184,6 +181,7 @@ export async function GET() {
       )
     `);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "notifications_user_id_is_read_idx" ON "notifications"("user_id", "is_read")`);
+    results.push("notifications table created");
 
     // Scrape Jobs
     await prisma.$executeRawUnsafe(`
@@ -201,6 +199,7 @@ export async function GET() {
       )
     `);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "scrape_jobs_status_created_at_idx" ON "scrape_jobs"("status", "created_at")`);
+    results.push("scrape_jobs table created");
 
     // System Logs
     await prisma.$executeRawUnsafe(`
@@ -215,11 +214,12 @@ export async function GET() {
       )
     `);
     await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "system_logs_level_created_at_idx" ON "system_logs"("level", "created_at")`);
+    results.push("system_logs table created");
 
-    // Tabloları doğrula
-    const tables = await prisma.$queryRaw`
-      SELECT table_name FROM information_schema.tables 
-      WHERE table_schema = 'public' 
+    // Doğrulama
+    const tables: any = await prisma.$queryRaw`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
       ORDER BY table_name
     `;
 
@@ -228,12 +228,14 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       message: "Tüm tablolar başarıyla oluşturuldu!",
-      tables,
+      steps: results,
+      tables: tables.map((t: any) => t.table_name),
     });
   } catch (error: any) {
     await prisma.$disconnect();
     return NextResponse.json({
       success: false,
+      completedSteps: results,
       error: error.message,
     }, { status: 500 });
   }
