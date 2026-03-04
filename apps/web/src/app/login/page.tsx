@@ -35,13 +35,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-dark-1000 flex items-center justify-center px-6">
       <div className="w-full max-w-md">
         <Link href="/" className="flex items-center justify-center gap-2 mb-10">
-          <div className="w-10 h-10 bg-hive-500 rounded-xl flex items-center justify-center">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0A0A0B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-              <path d="M2 17l10 5 10-5"/>
-              <path d="M2 12l10 5 10-5"/>
-            </svg>
-          </div>
+          <img src="/competehive-logo.png" alt="CompeteHive" className="w-10 h-10" />
           <span className="text-xl font-bold text-white">CompeteHive</span>
         </Link>
 
