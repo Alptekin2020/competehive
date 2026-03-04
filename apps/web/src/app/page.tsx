@@ -7,13 +7,7 @@ export default function Home() {
       <nav className="fixed top-0 w-full z-50 bg-dark-1000/80 backdrop-blur-xl border-b border-dark-800">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-hive-500 rounded-lg flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0A0A0B" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
-              </svg>
-            </div>
+            <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-lg font-bold text-white">CompeteHive</span>
           </Link>
           <div className="flex items-center gap-6">
@@ -125,13 +119,7 @@ export default function Home() {
       <footer className="border-t border-dark-800 py-8 px-6">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-hive-500 rounded flex items-center justify-center">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0A0A0B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
-              </svg>
-            </div>
+            <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-sm text-dark-400">© 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
           <div className="flex gap-6 text-sm text-dark-500">
