@@ -147,13 +147,13 @@ export async function DELETE(req: NextRequest) {
 // Helpers
 // ============================================
 
-function detectMarketplace(url: string): "TRENDYOL" | "HEPSIBURADA" | "AMAZON_TR" | "N11" | null {
+function detectMarketplace(url: string): "TRENDYOL" | "HEPSIBURADA" | "AMAZON_TR" | "N11" | undefined {
   const lower = url.toLowerCase();
   if (lower.includes("trendyol.com")) return "TRENDYOL";
   if (lower.includes("hepsiburada.com")) return "HEPSIBURADA";
   if (lower.includes("amazon.com.tr")) return "AMAZON_TR";
   if (lower.includes("n11.com")) return "N11";
-  return null;
+  return undefined;
 }
 
 function getScrapeInterval(plan: string): number {
