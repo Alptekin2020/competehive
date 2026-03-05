@@ -15,14 +15,6 @@ const HEADERS: Record<string, string> = {
   "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
 };
 
-const API_HEADERS: Record<string, string> = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "tr-TR,tr;q=0.9",
-  "Origin": "https://www.trendyol.com",
-  "Referer": "https://www.trendyol.com/",
-};
-
 function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
   const cleaned = priceStr.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
@@ -31,37 +23,8 @@ function parsePrice(priceStr: string): number | null {
 }
 
 // === TRENDYOL ===
-// Trendyol dahili JSON API kullanır — çok güvenilir
+// www.trendyol.com sayfasından __NEXT_DATA__ / JSON-LD / HTML parse
 export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
-  // URL'den contentId çıkar (ör: -p-123456 → 123456)
-  const contentIdMatch = url.match(/-p-(\d+)/);
-
-  if (contentIdMatch) {
-    // Yöntem 1: Trendyol widget API ile ürün detayı çek
-    try {
-      const contentId = contentIdMatch[1];
-      const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}?storefrontId=1&culture=tr-TR&linearVariants=true&channelId=1`;
-      const res = await fetch(apiUrl, { headers: API_HEADERS, cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        const product = data?.result;
-        if (product) {
-          return {
-            name: product.name || product.productName || "Ürün",
-            price: product.price?.sellingPrice?.value || product.price?.discountedPrice?.value || product.price?.originalPrice?.value || null,
-            currency: "TRY",
-            image: product.images?.[0]?.url ? `https://cdn.dsmcdn.com${product.images[0].url}` : null,
-            seller: product.merchant?.name || product.seller?.name || null,
-            inStock: product.inStock !== false,
-          };
-        }
-      }
-    } catch (e) {
-      console.error("Trendyol API error:", e);
-    }
-  }
-
-  // Yöntem 2: Sayfadaki __NEXT_DATA__ veya window.__PRODUCT_DETAIL_APP_INITIAL_STATE__ JSON'ı parse et
   try {
     const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
     const html = await res.text();
