@@ -11,10 +11,10 @@ export default function Home() {
             <span className="text-lg font-bold text-white">CompeteHive</span>
           </Link>
           <div className="flex items-center gap-6">
-            <Link href="/login" className="text-dark-400 hover:text-white transition text-sm">
+            <Link href="/sign-in" className="text-dark-400 hover:text-white transition text-sm">
               Giriş Yap
             </Link>
-            <Link href="/register" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition">
+            <Link href="/sign-up" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition">
               Ücretsiz Başla
             </Link>
           </div>
@@ -37,7 +37,7 @@ export default function Home() {
             anında haberdar olun. Fiyat stratejinizi veriye dayalı oluşturun.
           </p>
           <div className="flex justify-center gap-4">
-            <Link href="/register" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center gap-2">
+            <Link href="/sign-up" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center gap-2">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               Ücretsiz Başla
             </Link>
@@ -95,7 +95,7 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-                <Link href="/register" className={`block text-center mt-6 py-2.5 rounded-xl text-sm font-semibold transition ${p.hl ? "bg-hive-500 text-dark-1000 hover:bg-hive-600" : "border border-dark-700 text-white hover:border-dark-500"}`}>
+                <Link href="/sign-up" className={`block text-center mt-6 py-2.5 rounded-xl text-sm font-semibold transition ${p.hl ? "bg-hive-500 text-dark-1000 hover:bg-hive-600" : "border border-dark-700 text-white hover:border-dark-500"}`}>
                   Başla
                 </Link>
               </div>
@@ -109,7 +109,7 @@ export default function Home() {
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-3xl font-bold text-white mb-4">Rakipleriniz fiyat değiştirdiğinde ilk siz bilin</h2>
           <p className="text-dark-400 mb-8">Ücretsiz başlayın, kredi kartı gerekmez.</p>
-          <Link href="/register" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-block">
+          <Link href="/sign-up" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-block">
             Ücretsiz Dene →
           </Link>
         </div>

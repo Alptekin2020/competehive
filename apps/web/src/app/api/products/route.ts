@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 
 // ============================================
@@ -8,13 +8,13 @@ import { z } from "zod";
 // ============================================
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
 
   const products = await prisma.trackedProduct.findMany({
-    where: { userId: user.userId },
+    where: { userId: userId },
     include: {
       priceHistory: {
         orderBy: { scrapedAt: "desc" },
@@ -44,8 +44,8 @@ const addProductSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
 
@@ -61,12 +61,12 @@ export async function POST(req: NextRequest) {
 
     // Kullanıcının ürün limitini kontrol et
     const currentCount = await prisma.trackedProduct.count({
-      where: { userId: user.userId, status: { not: "PAUSED" } },
+      where: { userId: userId, status: { not: "PAUSED" } },
     });
 
     const userRecord = await prisma.user.findUnique({
-      where: { id: user.userId },
-      select: { maxProducts: true },
+      where: { id: userId },
+      select: { maxProducts: true, plan: true },
     });
 
     if (currentCount >= (userRecord?.maxProducts || 5)) {
@@ -93,12 +93,12 @@ export async function POST(req: NextRequest) {
     // Ürünü oluştur
     const product = await prisma.trackedProduct.create({
       data: {
-        userId: user.userId,
+        userId: userId,
         productUrl,
         productName: productName || "Yükleniyor...",
         marketplace,
         status: "ACTIVE",
-        scrapeInterval: getScrapeInterval(user.plan),
+        scrapeInterval: getScrapeInterval(userRecord?.plan || "FREE"),
       },
     });
 
@@ -117,8 +117,8 @@ export async function POST(req: NextRequest) {
 // ============================================
 
 export async function DELETE(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
 
@@ -131,7 +131,7 @@ export async function DELETE(req: NextRequest) {
 
   // Kullanıcının kendi ürünü mü?
   const product = await prisma.trackedProduct.findFirst({
-    where: { id: productId, userId: user.userId },
+    where: { id: productId, userId: userId },
   });
 
   if (!product) {
