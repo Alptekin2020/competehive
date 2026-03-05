@@ -7,9 +7,9 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   HEPSIBURADA: { name: "Hepsiburada", color: "#FF6000" },
   AMAZON_TR: { name: "Amazon TR", color: "#FF9900" },
   N11: { name: "N11", color: "#7B2D8E" },
-  CICEKSEPETI: { name: "Çiçeksepeti", color: "#E91E63" },
+  CICEKSEPETI: { name: "Ciceksepeti", color: "#E91E63" },
   PTTAVM: { name: "PTT AVM", color: "#FFD600" },
-  AKAKCE: { name: "Akakçe", color: "#00BCD4" },
+  AKAKCE: { name: "Akakce", color: "#00BCD4" },
   CIMRI: { name: "Cimri", color: "#4CAF50" },
   EPEY: { name: "Epey", color: "#2196F3" },
 };
@@ -20,26 +20,17 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [products, setProducts] = useState<any[]>([]);
-
-  const [fetchLoading, setFetchLoading] = useState(true);
+  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
+  const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/products")
-      .then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || "Failed to fetch products");
-        }
-        return res.json();
-      })
+      .then(res => res.json())
       .then(data => {
         if (data.products) setProducts(data.products);
       })
-      .catch((err) => {
-        console.error(err);
-        setError(err.message);
-      })
-      .finally(() => setFetchLoading(false));
+      .catch(console.error)
+      .finally(() => setPageLoading(false));
   }, []);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -55,9 +46,20 @@ export default function ProductsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setProducts([data.product, ...products]);
+
+      const newProduct = { ...data.product, competitors: [] };
+      if (data.competitors) {
+        newProduct.competitors = data.competitors.map((c: any) => ({
+          marketplace: c.marketplace,
+          competitor_name: c.name,
+          current_price: c.price,
+          competitor_url: c.url,
+        }));
+      }
+      setProducts([newProduct, ...products]);
       setUrl("");
       setShowModal(false);
+      setExpandedProduct(newProduct.id);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -65,124 +67,267 @@ export default function ProductsPage() {
     }
   };
 
+  const handleDelete = async (productId: string) => {
+    try {
+      await fetch(`/api/products?id=${productId}`, { method: "DELETE" });
+      setProducts(products.filter(p => p.id !== productId));
+    } catch (err) {
+      console.error("Delete error:", err);
+    }
+  };
+
+  const getLowestPrice = (product: any) => {
+    const prices = [
+      product.current_price ? Number(product.current_price) : null,
+      ...(product.competitors || []).map((c: any) => c.current_price ? Number(c.current_price) : null)
+    ].filter(Boolean) as number[];
+    return prices.length > 0 ? Math.min(...prices) : null;
+  };
+
+  const getHighestPrice = (product: any) => {
+    const prices = [
+      product.current_price ? Number(product.current_price) : null,
+      ...(product.competitors || []).map((c: any) => c.current_price ? Number(c.current_price) : null)
+    ].filter(Boolean) as number[];
+    return prices.length > 0 ? Math.max(...prices) : null;
+  };
+
+  if (pageLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-8 h-8 border-2 border-hive-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Ürünler</h1>
-          <p className="text-dark-500 text-sm">Takip ettiğiniz ürünleri yönetin.</p>
+          <h1 className="text-2xl font-bold text-white mb-1">Urunler</h1>
+          <p className="text-dark-500 text-sm">Takip ettiginiz urunleri ve rakip fiyatlarini yonetin.</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
           className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Ürün Ekle
+          Urun Ekle
         </button>
       </div>
 
-      {/* Products Grid */}
-      {fetchLoading ? (
-        <div className="bg-dark-900 border border-dark-800 rounded-2xl p-12 text-center">
-          <p className="text-dark-500 text-sm">Ürünler yükleniyor...</p>
-        </div>
-      ) : products.length > 0 ? (
-        <div className="grid gap-4">
-          {products.map((product) => (
-            <div key={product.id} className="bg-dark-900 border border-dark-800 rounded-2xl p-5 flex items-center gap-4 hover:border-dark-700 transition">
-              <div className="w-12 h-12 bg-dark-800 rounded-xl flex items-center justify-center overflow-hidden">
-                {product.product_image ? (
-                  <img src={product.product_image} alt="" className="w-full h-full object-cover rounded-xl" />
-                ) : (
-                  <span className="text-dark-500">📦</span>
+      {products.length > 0 ? (
+        <div className="space-y-4">
+          {products.map((product) => {
+            const lowest = getLowestPrice(product);
+            const highest = getHighestPrice(product);
+            const isExpanded = expandedProduct === product.id;
+            const competitorCount = product.competitors?.length || 0;
+            const myPrice = product.current_price ? Number(product.current_price) : null;
+            const isCheapest = myPrice !== null && lowest !== null && myPrice <= lowest;
+
+            return (
+              <div key={product.id} className="bg-dark-900 border border-dark-800 rounded-2xl overflow-hidden">
+                <div
+                  className="p-5 flex items-center gap-4 cursor-pointer hover:bg-dark-800/30 transition"
+                  onClick={() => setExpandedProduct(isExpanded ? null : product.id)}
+                >
+                  <div className="w-14 h-14 bg-dark-800 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {product.product_image ? (
+                      <img src={product.product_image} alt="" className="w-full h-full object-cover rounded-xl" />
+                    ) : (
+                      <span className="text-dark-500 text-xl">📦</span>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-white font-medium text-sm truncate">{product.product_name}</h3>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span
+                        className="text-xs font-medium px-2 py-0.5 rounded-full"
+                        style={{
+                          backgroundColor: `${MARKETPLACE_LABELS[product.marketplace]?.color}20`,
+                          color: MARKETPLACE_LABELS[product.marketplace]?.color,
+                        }}
+                      >
+                        {MARKETPLACE_LABELS[product.marketplace]?.name || product.marketplace}
+                      </span>
+                      {competitorCount > 0 && (
+                        <span className="text-xs text-dark-500">
+                          {competitorCount} rakip bulundu
+                        </span>
+                      )}
+                      {myPrice && !isCheapest && lowest && (
+                        <span className="text-xs text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full">
+                          En dusuk: {lowest.toLocaleString("tr-TR")} TL
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-right flex-shrink-0">
+                    <div className={`font-semibold ${isCheapest ? "text-green-400" : "text-white"}`}>
+                      {myPrice ? `${myPrice.toLocaleString("tr-TR")} TL` : "\u2014"}
+                    </div>
+                    <div className="text-dark-600 text-xs">
+                      {product.last_scraped_at
+                        ? new Date(product.last_scraped_at).toLocaleDateString("tr-TR")
+                        : "Taraniyor..."}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <svg className={`w-5 h-5 text-dark-500 transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(product.id); }}
+                      className="text-dark-600 hover:text-red-400 transition p-1"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    </button>
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <div className="border-t border-dark-800 px-5 py-4 bg-dark-950/50">
+                    <h4 className="text-sm font-medium text-dark-300 mb-3">
+                      Marketplace Fiyat Karsilastirmasi
+                    </h4>
+
+                    <div className="flex items-center gap-3 p-3 bg-dark-900 rounded-xl mb-2 border border-hive-500/30">
+                      <span
+                        className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{
+                          backgroundColor: `${MARKETPLACE_LABELS[product.marketplace]?.color}20`,
+                          color: MARKETPLACE_LABELS[product.marketplace]?.color,
+                        }}
+                      >
+                        {MARKETPLACE_LABELS[product.marketplace]?.name}
+                      </span>
+                      <span className="text-sm text-white flex-1 truncate">{product.product_name}</span>
+                      <span className="text-sm font-semibold text-hive-500">
+                        {myPrice ? `${myPrice.toLocaleString("tr-TR")} TL` : "\u2014"}
+                      </span>
+                      <span className="text-xs text-hive-500/60 bg-hive-500/10 px-2 py-0.5 rounded">Senin ununun</span>
+                    </div>
+
+                    {product.competitors && product.competitors.length > 0 ? (
+                      <div className="space-y-2">
+                        {product.competitors
+                          .sort((a: any, b: any) => (Number(a.current_price) || 999999) - (Number(b.current_price) || 999999))
+                          .map((comp: any, idx: number) => {
+                            const compPrice = comp.current_price ? Number(comp.current_price) : null;
+                            const diff = myPrice && compPrice ? compPrice - myPrice : null;
+                            const isLower = diff !== null && diff < 0;
+                            const isHigher = diff !== null && diff > 0;
+
+                            return (
+                              <a
+                                key={idx}
+                                href={comp.competitor_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-3 p-3 bg-dark-900 rounded-xl hover:bg-dark-800 transition"
+                              >
+                                <span
+                                  className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
+                                  style={{
+                                    backgroundColor: `${MARKETPLACE_LABELS[comp.marketplace]?.color}20`,
+                                    color: MARKETPLACE_LABELS[comp.marketplace]?.color,
+                                  }}
+                                >
+                                  {MARKETPLACE_LABELS[comp.marketplace]?.name || comp.marketplace}
+                                </span>
+                                <span className="text-sm text-dark-300 flex-1 truncate">{comp.competitor_name}</span>
+                                <span className={`text-sm font-semibold ${isLower ? "text-green-400" : isHigher ? "text-red-400" : "text-white"}`}>
+                                  {compPrice ? `${compPrice.toLocaleString("tr-TR")} TL` : "\u2014"}
+                                </span>
+                                {diff !== null && (
+                                  <span className={`text-xs px-2 py-0.5 rounded ${isLower ? "bg-green-400/10 text-green-400" : "bg-red-400/10 text-red-400"}`}>
+                                    {isLower ? "" : "+"}{diff.toLocaleString("tr-TR")} TL
+                                  </span>
+                                )}
+                                <svg className="w-4 h-4 text-dark-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                              </a>
+                            );
+                          })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 text-dark-500 text-sm">
+                        Diger marketplace&apos;lerde eslesen urun bulunamadi veya arama devam ediyor...
+                      </div>
+                    )}
+
+                    {product.competitors && product.competitors.length > 0 && lowest && highest && (
+                      <div className="mt-4 p-3 bg-dark-900 rounded-xl border border-dark-800">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-dark-500">Fiyat araligi:</span>
+                          <span className="text-white font-medium">
+                            {lowest.toLocaleString("tr-TR")} TL &mdash; {highest.toLocaleString("tr-TR")} TL
+                          </span>
+                          <span className="text-dark-500">Fark:</span>
+                          <span className={`font-medium ${(highest - lowest) > 0 ? "text-hive-500" : "text-white"}`}>
+                            {(highest - lowest).toLocaleString("tr-TR")} TL ({((highest - lowest) / lowest * 100).toFixed(1)}%)
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-white font-medium text-sm truncate">{product.productName || product.product_name}</h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span
-                    className="text-xs font-medium px-2 py-0.5 rounded-full"
-                    style={{
-                      backgroundColor: `${MARKETPLACE_LABELS[product.marketplace]?.color}20`,
-                      color: MARKETPLACE_LABELS[product.marketplace]?.color,
-                    }}
-                  >
-                    {MARKETPLACE_LABELS[product.marketplace]?.name || product.marketplace}
-                  </span>
-                  <span className="text-dark-600 text-xs">Taranıyor...</span>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-white font-semibold">
-                  {(product.current_price)
-                    ? `${Number(product.current_price).toLocaleString("tr-TR")} ₺`
-                    : "Fiyat bekleniyor"}
-                </div>
-                <div className="text-dark-600 text-xs">
-                  {product.last_scraped_at
-                    ? `Son: ${new Date(product.last_scraped_at).toLocaleString("tr-TR")}`
-                    : "Taranıyor..."}
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="bg-dark-900 border border-dark-800 rounded-2xl p-12 text-center">
           <div className="w-16 h-16 bg-dark-800 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <span className="text-3xl">📦</span>
           </div>
-          <h2 className="text-lg font-bold text-white mb-2">Henüz ürün eklenmedi</h2>
-          <p className="text-dark-500 text-sm mb-6">Marketplace ürün linkini yapıştırarak takibe başlayın.</p>
-          <button
-            onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-6 py-3 rounded-xl font-semibold text-sm transition"
-          >
-            İlk Ürünü Ekle
+          <h2 className="text-lg font-bold text-white mb-2">Henuz urun eklenmedi</h2>
+          <p className="text-dark-500 text-sm mb-6">Bir marketplace linkini yapistirin &mdash; diger sitelerdeki fiyatlar otomatik bulunacak.</p>
+          <button onClick={() => setShowModal(true)} className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-6 py-3 rounded-xl font-semibold text-sm transition">
+            Ilk Urunu Ekle
           </button>
         </div>
       )}
 
-      {/* Add Product Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowModal(false)} />
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !loading && setShowModal(false)} />
           <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6 w-full max-w-lg relative z-10">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-bold text-white">Ürün Ekle</h2>
-              <button onClick={() => setShowModal(false)} className="text-dark-500 hover:text-white transition">
+              <h2 className="text-lg font-bold text-white">Urun Ekle</h2>
+              <button onClick={() => !loading && setShowModal(false)} className="text-dark-500 hover:text-white transition">
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">
-                {error}
-              </div>
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">{error}</div>
             )}
 
             <form onSubmit={handleAdd}>
-              <label className="block text-sm font-medium text-dark-300 mb-2">Ürün URL&apos;si</label>
+              <label className="block text-sm font-medium text-dark-300 mb-2">Urun URL&apos;si</label>
               <input
-                type="url"
-                value={url}
-                onChange={e => setUrl(e.target.value)}
+                type="url" value={url} onChange={e => setUrl(e.target.value)}
                 className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm mb-2"
-                placeholder="https://www.trendyol.com/... veya https://www.hepsiburada.com/..."
-                required
+                placeholder="https://www.trendyol.com/... veya baska marketplace"
+                required disabled={loading}
               />
-              <p className="text-dark-600 text-xs mb-6">Trendyol, Hepsiburada, Amazon TR, N11, Çiçeksepeti, PTT AVM, Akakçe, Cimri veya Epey ürün linkini yapıştırın.</p>
+              <p className="text-dark-600 text-xs mb-6">Trendyol, Hepsiburada, Amazon TR, N11, Ciceksepeti, PTT AVM linki yapistirin. Diger marketplace&apos;lerdeki fiyatlar otomatik bulunacak.</p>
 
               <div className="flex gap-3">
-                <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 transition">
-                  İptal
+                <button type="button" onClick={() => !loading && setShowModal(false)}
+                  className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 transition" disabled={loading}>
+                  Iptal
                 </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="flex-1 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 py-2.5 rounded-xl text-sm font-semibold transition"
-                >
-                  {loading ? "Ekleniyor..." : "Takibe Al"}
+                <button type="submit" disabled={loading}
+                  className="flex-1 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 py-2.5 rounded-xl text-sm font-semibold transition">
+                  {loading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>
+                      AI analiz ediyor...
+                    </span>
+                  ) : "Takibe Al"}
                 </button>
               </div>
             </form>
