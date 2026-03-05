@@ -33,7 +33,7 @@ async function searchTrendyol(query: string): Promise<MarketplaceResult[]> {
     const results: MarketplaceResult[] = [];
 
     // __NEXT_DATA__ veya inline JSON'dan ürünleri çek
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch) {
       try {
         const nextData = JSON.parse(nextDataMatch[1]);
