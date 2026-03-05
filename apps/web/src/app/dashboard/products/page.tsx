@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   TRENDYOL: { name: "Trendyol", color: "#F27A1A" },
@@ -15,6 +15,15 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [products, setProducts] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/products")
+      .then(res => res.json())
+      .then(data => {
+        if (data.products) setProducts(data.products);
+      })
+      .catch(console.error);
+  }, []);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();

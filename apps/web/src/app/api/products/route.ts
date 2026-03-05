@@ -1,151 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { auth } from "@clerk/nextjs/server";
-import { z } from "zod";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { PrismaClient } from "@prisma/client";
 
-// ============================================
-// GET /api/products - Kullanıcının ürünlerini listele
-// ============================================
-
-export async function GET() {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-  }
-
-  const products = await prisma.trackedProduct.findMany({
-    where: { userId: userId },
-    include: {
-      priceHistory: {
-        orderBy: { scrapedAt: "desc" },
-        take: 30, // Son 30 veri noktası
-      },
-      alertRules: {
-        where: { isActive: true },
-      },
-      _count: {
-        select: { competitors: true },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  return NextResponse.json({ products });
-}
-
-// ============================================
-// POST /api/products - Yeni ürün takibe al
-// ============================================
-
-const addProductSchema = z.object({
-  productUrl: z.string().url("Geçerli bir URL girin"),
-  productName: z.string().optional(),
-  marketplace: z.enum(["TRENDYOL", "HEPSIBURADA", "AMAZON_TR", "N11"]).optional(),
-});
-
-export async function POST(req: NextRequest) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-  }
-
-  try {
-    const body = await req.json();
-    const parsed = addProductSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.errors[0].message },
-        { status: 400 }
-      );
-    }
-
-    // Kullanıcının ürün limitini kontrol et
-    const currentCount = await prisma.trackedProduct.count({
-      where: { userId: userId, status: { not: "PAUSED" } },
-    });
-
-    const userRecord = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { maxProducts: true, plan: true },
-    });
-
-    if (currentCount >= (userRecord?.maxProducts || 5)) {
-      return NextResponse.json(
-        { error: `Ürün limitinize ulaştınız (${userRecord?.maxProducts}). Daha fazla ürün takip etmek için planınızı yükseltin.` },
-        { status: 403 }
-      );
-    }
-
-    // Marketplace'i URL'den tespit et
-    const { productUrl, productName } = parsed.data;
-    let marketplace = parsed.data.marketplace;
-
-    if (!marketplace) {
-      marketplace = detectMarketplace(productUrl);
-      if (!marketplace) {
-        return NextResponse.json(
-          { error: "Bu marketplace henüz desteklenmiyor. Trendyol, Hepsiburada, Amazon TR ve N11 desteklenmektedir." },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Ürünü oluştur
-    const product = await prisma.trackedProduct.create({
-      data: {
-        userId: userId,
-        productUrl,
-        productName: productName || "Yükleniyor...",
-        marketplace,
-        status: "ACTIVE",
-        scrapeInterval: getScrapeInterval(userRecord?.plan || "FREE"),
-      },
-    });
-
-    // TODO: İlk scrape job'ı queue'ya ekle
-    // await addScrapeJob(product.id, marketplace);
-
-    return NextResponse.json({ success: true, product }, { status: 201 });
-  } catch (error) {
-    console.error("Add product error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
-  }
-}
-
-// ============================================
-// DELETE /api/products - Ürün takibini kaldır
-// ============================================
-
-export async function DELETE(req: NextRequest) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const productId = searchParams.get("id");
-
-  if (!productId) {
-    return NextResponse.json({ error: "Ürün ID gerekli" }, { status: 400 });
-  }
-
-  // Kullanıcının kendi ürünü mü?
-  const product = await prisma.trackedProduct.findFirst({
-    where: { id: productId, userId: userId },
-  });
-
-  if (!product) {
-    return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
-  }
-
-  await prisma.trackedProduct.delete({ where: { id: productId } });
-
-  return NextResponse.json({ success: true });
-}
-
-// ============================================
-// Helpers
-// ============================================
+const prisma = new PrismaClient();
 
 function detectMarketplace(url: string): "TRENDYOL" | "HEPSIBURADA" | "AMAZON_TR" | "N11" | undefined {
   const lower = url.toLowerCase();
@@ -156,11 +13,147 @@ function detectMarketplace(url: string): "TRENDYOL" | "HEPSIBURADA" | "AMAZON_TR
   return undefined;
 }
 
-function getScrapeInterval(plan: string): number {
-  switch (plan) {
-    case "ENTERPRISE": return 5;
-    case "PRO": return 15;
-    case "STARTER": return 60;
-    default: return 1440; // Free = günde 1
+// Clerk userId ile DB user'ı eşleştir veya oluştur
+async function getOrCreateUser(clerkUserId: string) {
+  // Önce mevcut kullanıcıyı ara (stripe_customer_id alanını clerk_id olarak kullanıyoruz geçici olarak)
+  let user = await prisma.$queryRaw<any[]>`
+    SELECT * FROM users WHERE stripe_customer_id = ${clerkUserId} LIMIT 1
+  `;
+
+  if (user && user.length > 0) {
+    return user[0];
+  }
+
+  // Clerk'ten kullanıcı bilgilerini al
+  const clerkUser = await currentUser();
+  const email = clerkUser?.emailAddresses?.[0]?.emailAddress || `${clerkUserId}@clerk.user`;
+  const name = clerkUser?.firstName ? `${clerkUser.firstName} ${clerkUser.lastName || ""}`.trim() : "User";
+
+  // Yeni kullanıcı oluştur
+  const newUser = await prisma.$queryRaw<any[]>`
+    INSERT INTO users (email, password_hash, name, stripe_customer_id)
+    VALUES (${email}, ${'clerk_managed'}, ${name}, ${clerkUserId})
+    ON CONFLICT (email) DO UPDATE SET stripe_customer_id = ${clerkUserId}
+    RETURNING *
+  `;
+
+  return newUser[0];
+}
+
+// GET - Kullanıcının ürünlerini listele
+export async function GET() {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
+
+    const user = await getOrCreateUser(userId);
+
+    const products = await prisma.$queryRaw<any[]>`
+      SELECT * FROM tracked_products
+      WHERE user_id = ${user.id}::uuid
+      ORDER BY created_at DESC
+    `;
+
+    return NextResponse.json({ products });
+  } catch (error: any) {
+    console.error("GET /api/products error:", error);
+    return NextResponse.json({ error: "Sunucu hatası: " + error.message }, { status: 500 });
+  }
+}
+
+// POST - Yeni ürün ekle
+export async function POST(req: NextRequest) {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
+
+    const user = await getOrCreateUser(userId);
+    const body = await req.json();
+    const { productUrl } = body;
+
+    if (!productUrl) {
+      return NextResponse.json({ error: "Ürün URL'si gerekli" }, { status: 400 });
+    }
+
+    // Marketplace algıla
+    const marketplace = detectMarketplace(productUrl);
+    if (!marketplace) {
+      return NextResponse.json(
+        { error: "Bu marketplace henüz desteklenmiyor. Trendyol, Hepsiburada, Amazon TR ve N11 desteklenmektedir." },
+        { status: 400 }
+      );
+    }
+
+    // Ürün limitini kontrol et
+    const productCount = await prisma.$queryRaw<any[]>`
+      SELECT COUNT(*) as count FROM tracked_products WHERE user_id = ${user.id}::uuid
+    `;
+    const count = parseInt(productCount[0].count);
+
+    if (count >= user.max_products) {
+      return NextResponse.json(
+        { error: `Ürün limitinize ulaştınız (${user.max_products}). Planınızı yükseltin.` },
+        { status: 403 }
+      );
+    }
+
+    // URL'den geçici ürün adı çıkar
+    let productName = "Ürün yükleniyor...";
+    try {
+      const urlObj = new URL(productUrl);
+      const pathParts = urlObj.pathname.split("/").filter(Boolean);
+      if (pathParts.length > 0) {
+        productName = pathParts[pathParts.length - 1]
+          .replace(/-/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+          .substring(0, 100);
+      }
+    } catch {}
+
+    // Veritabanına kaydet
+    const product = await prisma.$queryRaw<any[]>`
+      INSERT INTO tracked_products (user_id, product_name, marketplace, product_url, status)
+      VALUES (${user.id}::uuid, ${productName}, ${marketplace}::"Marketplace", ${productUrl}, 'ACTIVE'::"ProductStatus")
+      RETURNING *
+    `;
+
+    return NextResponse.json({
+      success: true,
+      product: product[0],
+    });
+  } catch (error: any) {
+    console.error("POST /api/products error:", error);
+    return NextResponse.json({ error: "Sunucu hatası: " + error.message }, { status: 500 });
+  }
+}
+
+// DELETE - Ürün sil
+export async function DELETE(req: NextRequest) {
+  try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
+
+    const user = await getOrCreateUser(userId);
+    const { searchParams } = new URL(req.url);
+    const productId = searchParams.get("id");
+
+    if (!productId) {
+      return NextResponse.json({ error: "Ürün ID gerekli" }, { status: 400 });
+    }
+
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM tracked_products WHERE id = '${productId}' AND user_id = '${user.id}'
+    `);
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("DELETE /api/products error:", error);
+    return NextResponse.json({ error: "Sunucu hatası: " + error.message }, { status: 500 });
   }
 }
