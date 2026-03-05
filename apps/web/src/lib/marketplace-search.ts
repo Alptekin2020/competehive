@@ -14,33 +14,70 @@ const HEADERS: Record<string, string> = {
   "Accept-Language": "tr-TR,tr;q=0.9",
 };
 
-// === TRENDYOL ARAMA — Dahili JSON API ===
+// === TRENDYOL ARAMA — HTML scrape + JSON parse ===
 async function searchTrendyol(query: string): Promise<MarketplaceResult[]> {
   try {
-    const apiUrl = `https://public.trendyol.com/discovery-web-searchgw-service/v2/api/infinite-scroll/sr?q=${encodeURIComponent(query)}&pi=1&culture=tr-TR&userGenderId=0&pId=0&scoringAlgorithmId=2&categoryRelevancyEnabled=false&isLegalRequirementConfirmed=false&searchStrategyType=DEFAULT&productStampId=null`;
-
-    const res = await fetch(apiUrl, {
+    const searchUrl = `https://www.trendyol.com/sr?q=${encodeURIComponent(query)}`;
+    const res = await fetch(searchUrl, {
       headers: {
-        ...HEADERS,
-        "Origin": "https://www.trendyol.com",
-        "Referer": "https://www.trendyol.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "tr-TR,tr;q=0.9",
       },
       cache: "no-store",
     });
-
     if (!res.ok) return [];
-    const data = await res.json();
-    const products = data?.result?.products || [];
+    const html = await res.text();
+    const cheerio = await import("cheerio");
+    const $ = cheerio.load(html);
+    const results: MarketplaceResult[] = [];
 
-    return products.slice(0, 3).map((p: any) => ({
-      marketplace: "TRENDYOL",
-      productName: p.name || p.productName || "",
-      price: p.price?.sellingPrice?.value || p.price?.discountedPrice?.value || p.price?.originalPrice?.value || null,
-      url: `https://www.trendyol.com${p.url || `/brand/product-p-${p.id}`}`,
-      seller: p.merchant?.name || null,
-      image: p.images?.[0] ? `https://cdn.dsmcdn.com/ty${p.images[0]}` : null,
-      inStock: true,
-    })).filter((r: MarketplaceResult) => r.productName && r.price);
+    // __NEXT_DATA__ veya inline JSON'dan ürünleri çek
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+    if (nextDataMatch) {
+      try {
+        const nextData = JSON.parse(nextDataMatch[1]);
+        const products = nextData?.props?.pageProps?.products || [];
+        for (const p of products.slice(0, 3)) {
+          results.push({
+            marketplace: "TRENDYOL",
+            productName: p.name || "",
+            price: p.price?.sellingPrice?.value || p.price?.discountedPrice?.value || null,
+            url: p.url ? `https://www.trendyol.com${p.url}` : "",
+            seller: p.merchant?.name || null,
+            image: p.images?.[0] ? `https://cdn.dsmcdn.com/ty${p.images[0]}` : null,
+            inStock: true,
+          });
+        }
+        if (results.length > 0) return results.filter(r => r.productName && r.price);
+      } catch {}
+    }
+
+    // JSON-LD fallback
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const json = JSON.parse($(el).html() || "");
+        if (json["@type"] === "ItemList" && json.itemListElement) {
+          for (const item of json.itemListElement.slice(0, 3)) {
+            const product = item.item || item;
+            if (product.name) {
+              const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+              results.push({
+                marketplace: "TRENDYOL",
+                productName: product.name,
+                price: offers?.price ? parseFloat(offers.price) : null,
+                url: product.url || product["@id"] || "",
+                seller: null,
+                image: product.image || null,
+                inStock: true,
+              });
+            }
+          }
+        }
+      } catch {}
+    });
+
+    return results.filter(r => r.productName && r.price).slice(0, 3);
   } catch (e) {
     console.error("Trendyol search error:", e);
     return [];
