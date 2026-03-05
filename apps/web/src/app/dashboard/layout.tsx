@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { UserButton } from "@clerk/nextjs";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Genel Bakış", icon: "home" },
@@ -29,13 +30,7 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-  };
 
   return (
     <div className="min-h-screen bg-dark-1000 flex">
@@ -83,17 +78,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </Link>
             </div>
           </div>
-
-          {/* Logout */}
-          <div className="px-3 pb-4">
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-dark-500 hover:text-red-400 hover:bg-dark-900 transition"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-              Çıkış Yap
-            </button>
-          </div>
         </div>
       </aside>
 
@@ -114,9 +98,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button className="relative text-dark-400 hover:text-white transition">
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
             </button>
-            <div className="w-8 h-8 bg-hive-500/20 rounded-full flex items-center justify-center">
-              <span className="text-hive-500 text-sm font-semibold">A</span>
-            </div>
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "w-8 h-8",
+                  userButtonPopoverCard: "bg-dark-900 border border-dark-800",
+                  userButtonPopoverActionButton: "text-dark-300 hover:text-white hover:bg-dark-800",
+                  userButtonPopoverActionButtonText: "text-dark-300",
+                  userButtonPopoverFooter: "hidden",
+                },
+              }}
+            />
           </div>
         </header>
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 
 // ============================================
@@ -8,13 +8,13 @@ import { z } from "zod";
 // ============================================
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
 
   const rules = await prisma.alertRule.findMany({
-    where: { userId: user.userId },
+    where: { userId: userId },
     include: {
       trackedProduct: {
         select: { productName: true, marketplace: true, currentPrice: true },
@@ -43,8 +43,8 @@ const createAlertSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
 
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
     // Ürün kullanıcıya ait mi?
     const product = await prisma.trackedProduct.findFirst({
-      where: { id: parsed.data.trackedProductId, userId: user.userId },
+      where: { id: parsed.data.trackedProductId, userId: userId },
     });
 
     if (!product) {
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     const rule = await prisma.alertRule.create({
       data: {
-        userId: user.userId,
+        userId: userId,
         trackedProductId: parsed.data.trackedProductId,
         ruleType: parsed.data.ruleType,
         thresholdValue: parsed.data.thresholdValue,
@@ -91,8 +91,8 @@ export async function POST(req: NextRequest) {
 // ============================================
 
 export async function DELETE(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
 
@@ -104,7 +104,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const rule = await prisma.alertRule.findFirst({
-    where: { id: ruleId, userId: user.userId },
+    where: { id: ruleId, userId: userId },
   });
 
   if (!rule) {
