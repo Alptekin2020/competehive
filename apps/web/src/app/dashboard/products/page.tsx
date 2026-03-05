@@ -7,6 +7,11 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   HEPSIBURADA: { name: "Hepsiburada", color: "#FF6000" },
   AMAZON_TR: { name: "Amazon TR", color: "#FF9900" },
   N11: { name: "N11", color: "#7B2D8E" },
+  CICEKSEPETI: { name: "Çiçeksepeti", color: "#E91E63" },
+  PTTAVM: { name: "PTT AVM", color: "#FFD600" },
+  AKAKCE: { name: "Akakçe", color: "#00BCD4" },
+  CIMRI: { name: "Cimri", color: "#4CAF50" },
+  EPEY: { name: "Epey", color: "#2196F3" },
 };
 
 export default function ProductsPage() {
@@ -85,8 +90,12 @@ export default function ProductsPage() {
         <div className="grid gap-4">
           {products.map((product) => (
             <div key={product.id} className="bg-dark-900 border border-dark-800 rounded-2xl p-5 flex items-center gap-4 hover:border-dark-700 transition">
-              <div className="w-12 h-12 bg-dark-800 rounded-xl flex items-center justify-center text-dark-500">
-                📦
+              <div className="w-12 h-12 bg-dark-800 rounded-xl flex items-center justify-center overflow-hidden">
+                {product.product_image ? (
+                  <img src={product.product_image} alt="" className="w-full h-full object-cover rounded-xl" />
+                ) : (
+                  <span className="text-dark-500">📦</span>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-white font-medium text-sm truncate">{product.productName || product.product_name}</h3>
@@ -105,9 +114,15 @@ export default function ProductsPage() {
               </div>
               <div className="text-right">
                 <div className="text-white font-semibold">
-                  {product.currentPrice || product.current_price ? `${product.currentPrice || product.current_price} ₺` : "—"}
+                  {(product.current_price)
+                    ? `${Number(product.current_price).toLocaleString("tr-TR")} ₺`
+                    : "Fiyat bekleniyor"}
                 </div>
-                <div className="text-dark-600 text-xs">{product.status === "ACTIVE" ? "Aktif" : "Bekliyor"}</div>
+                <div className="text-dark-600 text-xs">
+                  {product.last_scraped_at
+                    ? `Son: ${new Date(product.last_scraped_at).toLocaleString("tr-TR")}`
+                    : "Taranıyor..."}
+                </div>
               </div>
             </div>
           ))}
@@ -156,7 +171,7 @@ export default function ProductsPage() {
                 placeholder="https://www.trendyol.com/... veya https://www.hepsiburada.com/..."
                 required
               />
-              <p className="text-dark-600 text-xs mb-6">Trendyol, Hepsiburada, Amazon TR veya N11 ürün linkini yapıştırın.</p>
+              <p className="text-dark-600 text-xs mb-6">Trendyol, Hepsiburada, Amazon TR, N11, Çiçeksepeti, PTT AVM, Akakçe, Cimri veya Epey ürün linkini yapıştırın.</p>
 
               <div className="flex gap-3">
                 <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 transition">

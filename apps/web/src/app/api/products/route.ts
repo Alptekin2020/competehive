@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { PrismaClient } from "@prisma/client";
+import { scrapeProduct } from "@/lib/scraper";
 
 const prisma = new PrismaClient();
 
-function detectMarketplace(url: string): "TRENDYOL" | "HEPSIBURADA" | "AMAZON_TR" | "N11" | undefined {
+function detectMarketplace(url: string): string | undefined {
   const lower = url.toLowerCase();
   if (lower.includes("trendyol.com")) return "TRENDYOL";
   if (lower.includes("hepsiburada.com")) return "HEPSIBURADA";
   if (lower.includes("amazon.com.tr")) return "AMAZON_TR";
   if (lower.includes("n11.com")) return "N11";
+  if (lower.includes("ciceksepeti.com")) return "CICEKSEPETI";
+  if (lower.includes("pttavm.com")) return "PTTAVM";
+  if (lower.includes("akakce.com")) return "AKAKCE";
+  if (lower.includes("cimri.com")) return "CIMRI";
+  if (lower.includes("epey.com")) return "EPEY";
   return undefined;
 }
 
@@ -88,7 +94,7 @@ export async function POST(req: NextRequest) {
     const marketplace = detectMarketplace(productUrl);
     if (!marketplace) {
       return NextResponse.json(
-        { error: "Bu marketplace henüz desteklenmiyor. Trendyol, Hepsiburada, Amazon TR ve N11 desteklenmektedir." },
+        { error: "Bu site henüz desteklenmiyor. Desteklenen siteler: Trendyol, Hepsiburada, Amazon TR, N11, Çiçeksepeti, PTT AVM, Akakçe, Cimri, Epey" },
         { status: 400 }
       );
     }
@@ -106,13 +112,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // URL'den geçici ürün adı çıkar
-    let productName = "Ürün yükleniyor...";
+    // URL'den geçici ürün adı çıkar (fallback)
+    let fallbackName = "Ürün yükleniyor...";
     try {
       const urlObj = new URL(productUrl);
       const pathParts = urlObj.pathname.split("/").filter(Boolean);
       if (pathParts.length > 0) {
-        productName = pathParts[pathParts.length - 1]
+        fallbackName = pathParts[pathParts.length - 1]
           .replace(/-/g, " ")
           .replace(/\b\w/g, (c) => c.toUpperCase())
           .substring(0, 100);
@@ -121,12 +127,37 @@ export async function POST(req: NextRequest) {
       console.warn("Could not parse product name from URL, using default.", { productUrl, error });
     }
 
+    // Fiyat çek
+    let scraped;
+    try {
+      scraped = await scrapeProduct(productUrl, marketplace);
+    } catch (scrapeError: any) {
+      console.error("Scrape error:", scrapeError);
+      scraped = { name: fallbackName, price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    }
+
+    const productName = scraped.name !== "Urun adi alinamadi" ? scraped.name : fallbackName;
+
     // Veritabanına kaydet
     const product = await prisma.$queryRaw<any[]>`
-      INSERT INTO tracked_products (user_id, product_name, marketplace, product_url, status)
-      VALUES (${user.id}::uuid, ${productName}, ${marketplace}::"Marketplace", ${productUrl}, 'ACTIVE'::"ProductStatus")
-      RETURNING *
+      INSERT INTO tracked_products (
+        user_id, product_name, marketplace, product_url,
+        product_image, seller_name, current_price, currency,
+        status, last_scraped_at
+      ) VALUES (
+        ${user.id}::uuid, ${productName}, ${marketplace}::"Marketplace", ${productUrl},
+        ${scraped.image}, ${scraped.seller}, ${scraped.price}, ${scraped.currency},
+        ${scraped.inStock ? "ACTIVE" : "OUT_OF_STOCK"}::"ProductStatus", NOW()
+      ) RETURNING *
     `;
+
+    // Fiyat geçmişine kaydet
+    if (scraped.price) {
+      await prisma.$queryRaw`
+        INSERT INTO price_history (tracked_product_id, price, currency, in_stock, seller_name)
+        VALUES (${product[0].id}::uuid, ${scraped.price}, ${scraped.currency}, ${scraped.inStock}, ${scraped.seller})
+      `;
+    }
 
     return NextResponse.json({
       success: true,
