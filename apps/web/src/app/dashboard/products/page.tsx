@@ -16,13 +16,25 @@ export default function ProductsPage() {
   const [error, setError] = useState("");
   const [products, setProducts] = useState<any[]>([]);
 
+  const [fetchLoading, setFetchLoading] = useState(true);
+
   useEffect(() => {
     fetch("/api/products")
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to fetch products");
+        }
+        return res.json();
+      })
       .then(data => {
         if (data.products) setProducts(data.products);
       })
-      .catch(console.error);
+      .catch((err) => {
+        console.error(err);
+        setError(err.message);
+      })
+      .finally(() => setFetchLoading(false));
   }, []);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -65,7 +77,11 @@ export default function ProductsPage() {
       </div>
 
       {/* Products Grid */}
-      {products.length > 0 ? (
+      {fetchLoading ? (
+        <div className="bg-dark-900 border border-dark-800 rounded-2xl p-12 text-center">
+          <p className="text-dark-500 text-sm">Ürünler yükleniyor...</p>
+        </div>
+      ) : products.length > 0 ? (
         <div className="grid gap-4">
           {products.map((product) => (
             <div key={product.id} className="bg-dark-900 border border-dark-800 rounded-2xl p-5 flex items-center gap-4 hover:border-dark-700 transition">

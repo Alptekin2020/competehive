@@ -78,6 +78,11 @@ export async function POST(req: NextRequest) {
     if (!productUrl) {
       return NextResponse.json({ error: "Ürün URL'si gerekli" }, { status: 400 });
     }
+    try {
+      new URL(productUrl);
+    } catch (_) {
+      return NextResponse.json({ error: "Geçerli bir URL girin" }, { status: 400 });
+    }
 
     // Marketplace algıla
     const marketplace = detectMarketplace(productUrl);
@@ -112,7 +117,9 @@ export async function POST(req: NextRequest) {
           .replace(/\b\w/g, (c) => c.toUpperCase())
           .substring(0, 100);
       }
-    } catch {}
+    } catch (error) {
+      console.warn("Could not parse product name from URL, using default.", { productUrl, error });
+    }
 
     // Veritabanına kaydet
     const product = await prisma.$queryRaw<any[]>`
@@ -147,9 +154,9 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Ürün ID gerekli" }, { status: 400 });
     }
 
-    await prisma.$executeRawUnsafe(`
-      DELETE FROM tracked_products WHERE id = '${productId}' AND user_id = '${user.id}'
-    `);
+    await prisma.$executeRaw`
+      DELETE FROM tracked_products WHERE id = ${productId}::uuid AND user_id = ${user.id}::uuid
+    `;
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
