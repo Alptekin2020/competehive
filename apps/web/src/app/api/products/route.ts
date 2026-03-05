@@ -1,11 +1,10 @@
-export const maxDuration = 60; // Vercel timeout 60 saniye
+export const maxDuration = 15; // Vercel timeout 15 saniye
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { PrismaClient } from "@prisma/client";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
-import { searchAllMarketplaces, findBestMatch } from "@/lib/marketplace-search";
 
 const prisma = new PrismaClient();
 
@@ -180,52 +179,10 @@ export async function POST(req: NextRequest) {
       `;
     }
 
-    // 5. Diger marketplace'lerde ara
-    let competitorResults: any[] = [];
-    try {
-      const allResults = await searchAllMarketplaces(analysis.searchKeywords, marketplace);
-
-      for (const [mp, results] of Object.entries(allResults)) {
-        const bestMatch = findBestMatch(results, analysis.shortTitle);
-        if (bestMatch && bestMatch.price) {
-          const compName = bestMatch.productName.substring(0, 200);
-          const competitor = await prisma.$queryRaw<any[]>`
-            INSERT INTO competitors (
-              tracked_product_id, competitor_url, competitor_name,
-              marketplace, current_price, last_scraped_at
-            ) VALUES (
-              ${product[0].id}::uuid,
-              ${bestMatch.url},
-              ${compName},
-              ${mp}::"Marketplace",
-              ${bestMatch.price},
-              NOW()
-            ) RETURNING *
-          `;
-
-          await prisma.$queryRaw`
-            INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
-            VALUES (${competitor[0].id}::uuid, ${bestMatch.price}, ${'TRY'}, ${bestMatch.inStock})
-          `;
-
-          competitorResults.push({
-            marketplace: mp,
-            name: bestMatch.productName,
-            price: bestMatch.price,
-            url: bestMatch.url,
-            image: bestMatch.image,
-          });
-        }
-      }
-    } catch (err: any) {
-      console.error("Cross-marketplace search error:", err);
-    }
-
     return NextResponse.json({
       success: true,
       product: product[0],
       analysis,
-      competitors: competitorResults,
     });
   } catch (error: any) {
     console.error("POST /api/products error:", error);
