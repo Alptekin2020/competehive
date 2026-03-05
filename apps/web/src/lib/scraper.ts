@@ -26,7 +26,10 @@ function parsePrice(priceStr: string): number | null {
 // www.trendyol.com sayfasından __NEXT_DATA__ / JSON-LD / HTML parse
 export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
   try {
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
     const html = await res.text();
     const $ = cheerio.load(html);
 
@@ -101,7 +104,10 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
 // === HEPSIBURADA ===
 export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
   try {
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
     const html = await res.text();
     const $ = cheerio.load(html);
 
@@ -162,7 +168,10 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
 // === AMAZON TR ===
 export async function scrapeAmazonTR(url: string): Promise<ScrapedProduct> {
   try {
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
     const html = await res.text();
     const $ = cheerio.load(html);
 
@@ -181,7 +190,10 @@ export async function scrapeAmazonTR(url: string): Promise<ScrapedProduct> {
 // === N11 ===
 export async function scrapeN11(url: string): Promise<ScrapedProduct> {
   try {
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
     const html = await res.text();
     const $ = cheerio.load(html);
 
@@ -215,7 +227,10 @@ export async function scrapeN11(url: string): Promise<ScrapedProduct> {
 // === DİĞERLERİ (fallback: JSON-LD + meta tags) ===
 export async function scrapeGeneric(url: string, marketplace: string): Promise<ScrapedProduct> {
   try {
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
     const html = await res.text();
     const $ = cheerio.load(html);
 

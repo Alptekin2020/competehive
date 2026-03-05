@@ -54,18 +54,25 @@ export default function ProductsPage() {
       if (!res.ok) throw new Error(data.error);
 
       const newProduct = { ...data.product, competitors: [] };
-      if (data.competitors) {
-        newProduct.competitors = data.competitors.map((c: any) => ({
-          marketplace: c.marketplace,
-          competitor_name: c.name,
-          current_price: c.price,
-          competitor_url: c.url,
-        }));
-      }
       setProducts([newProduct, ...products]);
       setUrl("");
       setShowModal(false);
       setExpandedProduct(newProduct.id);
+
+      // Arka planda rakip araması başlat
+      fetch("/api/products/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: data.product.id }),
+      }).then(res => res.json()).then(compareData => {
+        if (compareData.competitors?.length > 0) {
+          setProducts(prev => prev.map(p =>
+            p.id === data.product.id
+              ? { ...p, competitors: compareData.competitors.map((c: any) => ({ marketplace: c.marketplace, competitor_name: c.name, current_price: c.price, competitor_url: c.url })) }
+              : p
+          ));
+        }
+      }).catch(console.error);
     } catch (err: any) {
       setError(err.message);
     } finally {
