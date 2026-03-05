@@ -64,7 +64,7 @@ async function searchHepsiburada(query: string): Promise<MarketplaceResult[]> {
     const html = await res.text();
 
     // __NEXT_DATA__ JSON'dan ürünleri çek
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch) {
       try {
         const nextData = JSON.parse(nextDataMatch[1]);
@@ -103,7 +103,7 @@ async function searchN11(query: string): Promise<MarketplaceResult[]> {
 
     // JSON-LD'den ürünleri çek
     const results: MarketplaceResult[] = [];
-    const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs);
+    const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g);
 
     for (const match of jsonLdMatches) {
       try {
@@ -218,7 +218,7 @@ async function searchCiceksepeti(query: string): Promise<MarketplaceResult[]> {
     const html = await res.text();
 
     // __NEXT_DATA__ JSON parse
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch) {
       try {
         const nextData = JSON.parse(nextDataMatch[1]);
@@ -238,7 +238,7 @@ async function searchCiceksepeti(query: string): Promise<MarketplaceResult[]> {
 
     // JSON-LD fallback
     const results: MarketplaceResult[] = [];
-    const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs);
+    const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g);
     for (const match of jsonLdMatches) {
       try {
         const json = JSON.parse(match[1]);
@@ -380,7 +380,7 @@ async function searchCimri(query: string): Promise<MarketplaceResult[]> {
     const html = await res.text();
 
     // __NEXT_DATA__ JSON parse
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch) {
       try {
         const nextData = JSON.parse(nextDataMatch[1]);
@@ -542,7 +542,7 @@ async function parseGenericSearch(html: string, marketplace: string, baseUrl: st
   const results: MarketplaceResult[] = [];
 
   // 1. __NEXT_DATA__ JSON parse
-  const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+  const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (nextDataMatch) {
     try {
       const nextData = JSON.parse(nextDataMatch[1]);
@@ -566,7 +566,7 @@ async function parseGenericSearch(html: string, marketplace: string, baseUrl: st
   }
 
   // 2. JSON-LD parse
-  const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs);
+  const jsonLdMatches = html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g);
   for (const match of jsonLdMatches) {
     try {
       const json = JSON.parse(match[1]);

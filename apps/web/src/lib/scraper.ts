@@ -72,7 +72,7 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
     $("script").each((_, el) => {
       const text = $(el).html() || "";
       if (text.includes("window.__PRODUCT_DETAIL_APP_INITIAL_STATE__")) {
-        const match = text.match(/window\.__PRODUCT_DETAIL_APP_INITIAL_STATE__\s*=\s*({.*?});/s);
+        const match = text.match(/window\.__PRODUCT_DETAIL_APP_INITIAL_STATE__\s*=\s*({[\s\S]*?});/);
         if (match) {
           try { productData = JSON.parse(match[1]); } catch {}
         }
