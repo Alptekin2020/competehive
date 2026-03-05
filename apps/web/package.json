@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.1",
+    "@clerk/themes": "^2.4.57",
     "@prisma/client": "^6.4.0",
     "clsx": "^2.1.0",
     "ioredis": "^5.4.0",
