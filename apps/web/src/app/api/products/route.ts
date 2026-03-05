@@ -1,3 +1,5 @@
+export const maxDuration = 60; // Vercel timeout 60 saniye
+
 import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { PrismaClient } from "@prisma/client";
@@ -18,6 +20,12 @@ function detectMarketplace(url: string): string | undefined {
   if (lower.includes("akakce.com")) return "AKAKCE";
   if (lower.includes("cimri.com")) return "CIMRI";
   if (lower.includes("epey.com")) return "EPEY";
+  if (lower.includes("boyner.com")) return "BOYNER";
+  if (lower.includes("gratis.com")) return "GRATIS";
+  if (lower.includes("watsons.com.tr")) return "WATSONS";
+  if (lower.includes("kitapyurdu.com")) return "KITAPYURDU";
+  if (lower.includes("decathlon.com.tr")) return "DECATHLON";
+  if (lower.includes("teknosa.com")) return "TEKNOSA";
   return undefined;
 }
 

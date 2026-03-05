@@ -7,11 +7,17 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   HEPSIBURADA: { name: "Hepsiburada", color: "#FF6000" },
   AMAZON_TR: { name: "Amazon TR", color: "#FF9900" },
   N11: { name: "N11", color: "#7B2D8E" },
-  CICEKSEPETI: { name: "Ciceksepeti", color: "#E91E63" },
+  CICEKSEPETI: { name: "Çiçeksepeti", color: "#E91E63" },
   PTTAVM: { name: "PTT AVM", color: "#FFD600" },
-  AKAKCE: { name: "Akakce", color: "#00BCD4" },
+  AKAKCE: { name: "Akakçe", color: "#00BCD4" },
   CIMRI: { name: "Cimri", color: "#4CAF50" },
   EPEY: { name: "Epey", color: "#2196F3" },
+  BOYNER: { name: "Boyner", color: "#1A1A1A" },
+  GRATIS: { name: "Gratis", color: "#FF4081" },
+  WATSONS: { name: "Watsons", color: "#00A19A" },
+  KITAPYURDU: { name: "Kitapyurdu", color: "#FF5722" },
+  DECATHLON: { name: "Decathlon", color: "#0082C3" },
+  TEKNOSA: { name: "Teknosa", color: "#ED1C24" },
 };
 
 export default function ProductsPage() {
