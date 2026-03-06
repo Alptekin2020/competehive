@@ -18,6 +18,11 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   KITAPYURDU: { name: "Kitapyurdu", color: "#FF5722" },
   DECATHLON: { name: "Decathlon", color: "#0082C3" },
   TEKNOSA: { name: "Teknosa", color: "#ED1C24" },
+  SEPHORA: { name: "Sephora", color: "#000000" },
+  KOCTAS: { name: "Koçtaş", color: "#FF6F00" },
+  MEDIAMARKT: { name: "MediaMarkt", color: "#DF0000" },
+  VATAN: { name: "Vatan Bilgisayar", color: "#003399" },
+  ITOPYA: { name: "İtopya", color: "#00C853" },
 };
 
 export default function ProductsPage() {
@@ -159,8 +164,8 @@ export default function ProductsPage() {
                       <span
                         className="text-xs font-medium px-2 py-0.5 rounded-full"
                         style={{
-                          backgroundColor: `${MARKETPLACE_LABELS[product.marketplace]?.color}20`,
-                          color: MARKETPLACE_LABELS[product.marketplace]?.color,
+                          backgroundColor: `${(MARKETPLACE_LABELS[product.marketplace]?.color || "#666")}20`,
+                          color: MARKETPLACE_LABELS[product.marketplace]?.color || "#999",
                         }}
                       >
                         {MARKETPLACE_LABELS[product.marketplace]?.name || product.marketplace}
@@ -210,11 +215,11 @@ export default function ProductsPage() {
                       <span
                         className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
                         style={{
-                          backgroundColor: `${MARKETPLACE_LABELS[product.marketplace]?.color}20`,
-                          color: MARKETPLACE_LABELS[product.marketplace]?.color,
+                          backgroundColor: `${(MARKETPLACE_LABELS[product.marketplace]?.color || "#666")}20`,
+                          color: MARKETPLACE_LABELS[product.marketplace]?.color || "#999",
                         }}
                       >
-                        {MARKETPLACE_LABELS[product.marketplace]?.name}
+                        {MARKETPLACE_LABELS[product.marketplace]?.name || product.marketplace}
                       </span>
                       <span className="text-sm text-white flex-1 truncate">{product.product_name}</span>
                       <span className="text-sm font-semibold text-hive-500">
@@ -244,8 +249,8 @@ export default function ProductsPage() {
                                 <span
                                   className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
                                   style={{
-                                    backgroundColor: `${MARKETPLACE_LABELS[comp.marketplace]?.color}20`,
-                                    color: MARKETPLACE_LABELS[comp.marketplace]?.color,
+                                    backgroundColor: `${(MARKETPLACE_LABELS[comp.marketplace]?.color || "#666")}20`,
+                                    color: MARKETPLACE_LABELS[comp.marketplace]?.color || "#999",
                                   }}
                                 >
                                   {MARKETPLACE_LABELS[comp.marketplace]?.name || comp.marketplace}
