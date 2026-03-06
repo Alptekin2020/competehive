@@ -8,7 +8,7 @@ import { analyzeProduct } from "@/lib/ai-analyzer";
 
 const prisma = new PrismaClient();
 
-function detectMarketplace(url: string): string | undefined {
+function detectMarketplace(url: string): string {
   const lower = url.toLowerCase();
   if (lower.includes("trendyol.com")) return "TRENDYOL";
   if (lower.includes("hepsiburada.com")) return "HEPSIBURADA";
@@ -21,11 +21,16 @@ function detectMarketplace(url: string): string | undefined {
   if (lower.includes("epey.com")) return "EPEY";
   if (lower.includes("boyner.com")) return "BOYNER";
   if (lower.includes("gratis.com")) return "GRATIS";
-  if (lower.includes("watsons.com.tr")) return "WATSONS";
+  if (lower.includes("watsons.com")) return "WATSONS";
   if (lower.includes("kitapyurdu.com")) return "KITAPYURDU";
-  if (lower.includes("decathlon.com.tr")) return "DECATHLON";
+  if (lower.includes("decathlon.com")) return "DECATHLON";
   if (lower.includes("teknosa.com")) return "TEKNOSA";
-  return undefined;
+  if (lower.includes("mediamarkt.com")) return "MEDIAMARKT";
+  if (lower.includes("sephora.com")) return "SEPHORA";
+  if (lower.includes("koctas.com")) return "KOCTAS";
+  if (lower.includes("vatanbilgisayar.com")) return "VATAN";
+  if (lower.includes("itopya.com")) return "ITOPYA";
+  return "CUSTOM";
 }
 
 async function getOrCreateUser(clerkUserId: string) {
@@ -100,12 +105,6 @@ export async function POST(req: NextRequest) {
     }
 
     const marketplace = detectMarketplace(productUrl);
-    if (!marketplace) {
-      return NextResponse.json(
-        { error: "Bu site desteklenmiyor. Desteklenen: Trendyol, Hepsiburada, Amazon TR, N11, Ciceksepeti, PTT AVM, Akakce, Cimri, Epey" },
-        { status: 400 }
-      );
-    }
 
     const productCount = await prisma.$queryRaw<any[]>`
       SELECT COUNT(*) as count FROM tracked_products WHERE user_id = ${user.id}::uuid

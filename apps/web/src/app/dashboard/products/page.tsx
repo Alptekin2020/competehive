@@ -23,6 +23,7 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   MEDIAMARKT: { name: "MediaMarkt", color: "#DF0000" },
   VATAN: { name: "Vatan Bilgisayar", color: "#003399" },
   ITOPYA: { name: "İtopya", color: "#00C853" },
+  CUSTOM: { name: "Diğer", color: "#9CA3AF" },
 };
 
 export default function ProductsPage() {
@@ -359,7 +360,7 @@ export default function ProductsPage() {
                 placeholder="https://www.trendyol.com/... veya baska marketplace"
                 required disabled={loading}
               />
-              <p className="text-dark-600 text-xs mb-6">Trendyol, Hepsiburada, Amazon TR, N11, Ciceksepeti, PTT AVM linki yapistirin. Diger marketplace&apos;lerdeki fiyatlar otomatik bulunacak.</p>
+              <p className="text-dark-600 text-xs mb-6">Herhangi bir e-ticaret sitesinin urun linkini yapistirin. Diger marketplace&apos;lerdeki fiyatlar otomatik bulunacak.</p>
 
               <div className="flex gap-3">
                 <button type="button" onClick={() => !loading && setShowModal(false)}

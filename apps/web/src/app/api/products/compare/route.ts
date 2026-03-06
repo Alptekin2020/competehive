@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { productId } = await req.json();
+    console.log("[CompeteHive Compare] Called with productId:", productId);
     if (!productId) {
       return NextResponse.json({ error: "productId gerekli" }, { status: 400 });
     }
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
 
     // Tüm marketplace'lerde ara
     const allResults = await searchAllMarketplaces(keywords, product.marketplace);
+    console.log("[CompeteHive Compare] Results:", JSON.stringify(Object.keys(allResults)));
     const competitors: any[] = [];
 
     console.log("Search results:", Object.keys(allResults).map(k => `${k}: ${allResults[k].length} results`));
