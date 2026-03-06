@@ -1,4 +1,4 @@
-import * as cheerio from "cheerio";
+import OpenAI from "openai";
 
 export interface MarketplaceResult {
   marketplace: string;
@@ -8,26 +8,6 @@ export interface MarketplaceResult {
   url: string;
   image: string | null;
   inStock: boolean;
-  source: "akakce" | "cimri" | "google";
-}
-
-async function fetchWithTimeout(url: string, headers: Record<string, string> = {}, timeoutMs = 10000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const defaultHeaders: Record<string, string> = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-      ...headers,
-    };
-    const res = await fetch(url, { headers: defaultHeaders, signal: controller.signal, cache: "no-store" });
-    clearTimeout(timeout);
-    return res;
-  } catch (e) {
-    clearTimeout(timeout);
-    throw e;
-  }
 }
 
 function parsePrice(priceStr: string): number | null {
@@ -37,302 +17,225 @@ function parsePrice(priceStr: string): number | null {
   return isNaN(num) ? null : num;
 }
 
-// Mağaza adından marketplace kodu çıkar
-function storeToMarketplace(storeName: string): string {
-  const lower = storeName.toLowerCase();
-  if (lower.includes("trendyol")) return "TRENDYOL";
-  if (lower.includes("hepsiburada")) return "HEPSIBURADA";
-  if (lower.includes("amazon")) return "AMAZON_TR";
-  if (lower.includes("n11")) return "N11";
-  if (lower.includes("çiçeksepeti") || lower.includes("ciceksepeti")) return "CICEKSEPETI";
-  if (lower.includes("pttavm") || lower.includes("ptt avm")) return "PTTAVM";
-  if (lower.includes("teknosa")) return "TEKNOSA";
-  if (lower.includes("mediamarkt") || lower.includes("media markt")) return "MEDIAMARKT";
-  if (lower.includes("koçtaş") || lower.includes("koctas")) return "KOCTAS";
-  if (lower.includes("boyner")) return "BOYNER";
-  if (lower.includes("gratis")) return "GRATIS";
-  if (lower.includes("watsons")) return "WATSONS";
-  if (lower.includes("sephora")) return "SEPHORA";
-  if (lower.includes("decathlon")) return "DECATHLON";
-  if (lower.includes("kitapyurdu")) return "KITAPYURDU";
-  if (lower.includes("vatanbilgisayar") || lower.includes("vatan")) return "VATAN";
-  if (lower.includes("itopya")) return "ITOPYA";
-  if (lower.includes("letgo") || lower.includes("dolap")) return "DOLAP";
-  return storeName.toUpperCase().replace(/[^A-Z0-9]/g, "_").substring(0, 20);
+function detectStore(url: string, title: string): { marketplace: string; storeName: string } {
+  const lower = (url + " " + title).toLowerCase();
+  const stores: [string, string, string][] = [
+    ["trendyol", "TRENDYOL", "Trendyol"],
+    ["hepsiburada", "HEPSIBURADA", "Hepsiburada"],
+    ["amazon.com.tr", "AMAZON_TR", "Amazon TR"],
+    ["n11.com", "N11", "N11"],
+    ["ciceksepeti", "CICEKSEPETI", "Çiçeksepeti"],
+    ["pttavm", "PTTAVM", "PTT AVM"],
+    ["teknosa", "TEKNOSA", "Teknosa"],
+    ["mediamarkt", "MEDIAMARKT", "MediaMarkt"],
+    ["koctas", "KOCTAS", "Koçtaş"],
+    ["sephora", "SEPHORA", "Sephora"],
+    ["boyner", "BOYNER", "Boyner"],
+    ["gratis.com", "GRATIS", "Gratis"],
+    ["watsons", "WATSONS", "Watsons"],
+    ["kitapyurdu", "KITAPYURDU", "Kitapyurdu"],
+    ["decathlon", "DECATHLON", "Decathlon"],
+    ["vatanbilgisayar", "VATAN", "Vatan"],
+    ["itopya", "ITOPYA", "İtopya"],
+    ["migros", "MIGROS", "Migros"],
+    ["carrefour", "CARREFOUR", "CarrefourSA"],
+    ["lcwaikiki", "LCWAIKIKI", "LC Waikiki"],
+    ["flo.com", "FLO", "FLO"],
+    ["nike.com", "NIKE", "Nike"],
+    ["adidas.com", "ADIDAS", "Adidas"],
+    ["ikea.com", "IKEA", "IKEA"],
+    ["karaca.com", "KARACA", "Karaca"],
+    ["dr.com.tr", "DR", "D&R"],
+    ["bkmkitap", "BKMKITAP", "BKM Kitap"],
+    ["idefix", "IDEFIX", "İdefix"],
+    ["rossmann", "ROSSMANN", "Rossmann"],
+    ["a101", "A101", "A101"],
+    ["sok.com", "SOK", "ŞOK"],
+    ["mavi.com", "MAVI", "Mavi"],
+    ["koton.com", "KOTON", "Koton"],
+    ["defacto", "DEFACTO", "DeFacto"],
+    ["superstep", "SUPERSTEP", "SuperStep"],
+    ["vivense", "VIVENSE", "Vivense"],
+    ["bellona", "BELLONA", "Bellona"],
+    ["madamecoco", "MADAMECOCO", "Madame Coco"],
+    ["morhipo", "MORHIPO", "Morhipo"],
+    ["evidea", "EVIDEA", "Evidea"],
+    ["electroworld", "ELECTROWORLD", "Electro World"],
+  ];
+  for (const [keyword, mp, name] of stores) {
+    if (lower.includes(keyword)) return { marketplace: mp, storeName: name };
+  }
+  try {
+    const domain = new URL(url).hostname.replace("www.", "");
+    const name = domain.split(".")[0];
+    return { marketplace: "CUSTOM", storeName: name.charAt(0).toUpperCase() + name.slice(1) };
+  } catch {
+    return { marketplace: "CUSTOM", storeName: "Diğer" };
+  }
 }
 
-// ============================================
-// AKAKÇE ARAMA — 430+ mağazadan fiyat toplar
-// ============================================
-async function searchAkakce(query: string): Promise<MarketplaceResult[]> {
+// Serper.dev ile Google arama + Google Shopping arama
+async function searchSerper(query: string): Promise<MarketplaceResult[]> {
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) {
+    console.error("[CompeteHive] SERPER_API_KEY missing");
+    return [];
+  }
+
+  const results: MarketplaceResult[] = [];
+
+  // 1. Google Shopping araması
   try {
-    const searchUrl = `https://www.akakce.com/arama/?q=${encodeURIComponent(query)}`;
-    const res = await fetchWithTimeout(searchUrl);
-    if (!res.ok) return [];
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const results: MarketplaceResult[] = [];
-
-    // Akakçe ürün kartları
-    $("li.p_w, div.p_w, ul.products li, .search-result-item").slice(0, 5).each((_, el) => {
-      const name = $(el).find(".pn_t, .p_n, .product-name, a").first().text().trim() || $(el).find("a").attr("title") || "";
-      const priceText = $(el).find(".pt_v8, .p_p, .price-value, .fiyat").first().text().trim();
-      const price = parsePrice(priceText);
-      const href = $(el).find("a").attr("href");
-      const url = href ? (href.startsWith("http") ? href : `https://www.akakce.com${href}`) : "";
-      const image = $(el).find("img").attr("src") || $(el).find("img").attr("data-src") || null;
-
-      if (name && url) {
-        results.push({
-          marketplace: "AKAKCE",
-          storeName: "Akakçe",
-          productName: name,
-          price,
-          url,
-          image,
-          inStock: true,
-          source: "akakce",
-        });
-      }
+    const shoppingRes = await fetch("https://google.serper.dev/shopping", {
+      method: "POST",
+      headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ q: query, gl: "tr", hl: "tr", num: 10 }),
+      cache: "no-store",
     });
 
-    // Akakçe ürün detay sayfasına gidip mağaza fiyatlarını çekmeye çalış
-    if (results.length > 0 && results[0].url) {
-      try {
-        const detailRes = await fetchWithTimeout(results[0].url);
-        if (detailRes.ok) {
-          const detailHtml = await detailRes.text();
-          const $d = cheerio.load(detailHtml);
+    if (shoppingRes.ok) {
+      const data = await shoppingRes.json();
+      const items = data.shopping || [];
+      console.log("[CompeteHive] Serper Shopping results:", items.length);
 
-          // Mağaza fiyat listesi
-          $d(".f_w, .price-list li, .merchant-list li, tr.seller-row, .seller-item").each((_, el) => {
-            const storeName = $d(el).find(".v_v, .store-name, .merchant-name, .seller-name, td:first-child a").first().text().trim();
-            const storePrice = parsePrice($d(el).find(".pt_v8, .price, .fiyat, td.price").first().text().trim());
-            const storeUrl = $d(el).find("a.v_v, a.store-link, a.merchant-link, td a").attr("href");
-            const fullUrl = storeUrl ? (storeUrl.startsWith("http") ? storeUrl : `https://www.akakce.com${storeUrl}`) : "";
-
-            if (storeName && storePrice) {
-              results.push({
-                marketplace: storeToMarketplace(storeName),
-                storeName,
-                productName: results[0].productName,
-                price: storePrice,
-                url: fullUrl || results[0].url,
-                image: results[0].image,
-                inStock: true,
-                source: "akakce",
-              });
-            }
+      for (const item of items) {
+        const { marketplace, storeName } = detectStore(item.link || item.source || "", item.title || "");
+        let price: number | null = null;
+        if (item.price) {
+          price = parsePrice(String(item.price).replace("TL", "").replace("₺", ""));
+        }
+        if (item.title) {
+          results.push({
+            marketplace,
+            storeName: item.source || storeName,
+            productName: item.title,
+            price,
+            url: item.link || "",
+            image: item.imageUrl || item.thumbnail || null,
+            inStock: true,
           });
         }
-      } catch {}
-    }
-
-    return results;
-  } catch (e) {
-    console.error("Akakce search error:", e);
-    return [];
-  }
-}
-
-// ============================================
-// CİMRİ ARAMA — Ek mağazalar
-// ============================================
-async function searchCimri(query: string): Promise<MarketplaceResult[]> {
-  try {
-    const searchUrl = `https://www.cimri.com/arama?q=${encodeURIComponent(query)}`;
-    const res = await fetchWithTimeout(searchUrl);
-    if (!res.ok) return [];
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const results: MarketplaceResult[] = [];
-
-    // __NEXT_DATA__ JSON parse — Cimri Next.js kullanıyor
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if (nextDataMatch) {
-      try {
-        const nextData = JSON.parse(nextDataMatch[1]);
-        const products = nextData?.props?.pageProps?.products ||
-                         nextData?.props?.pageProps?.initialData?.products ||
-                         nextData?.props?.pageProps?.searchResult?.products || [];
-
-        for (const p of products.slice(0, 5)) {
-          const name = p.name || p.title || p.productName || "";
-          const price = p.price || p.minPrice || p.lowestPrice || p.salePrice || null;
-          const pUrl = p.url || p.slug || p.productUrl || "";
-          const storeName = p.merchantName || p.sellerName || p.store?.name || "Cimri";
-
-          if (name) {
-            results.push({
-              marketplace: storeToMarketplace(storeName),
-              storeName,
-              productName: name,
-              price: typeof price === "number" ? price : parsePrice(String(price)),
-              url: pUrl.startsWith("http") ? pUrl : `https://www.cimri.com${pUrl}`,
-              image: p.image || p.imageUrl || p.images?.[0] || null,
-              inStock: true,
-              source: "cimri",
-            });
-          }
-        }
-      } catch {}
-    }
-
-    // JSON-LD fallback
-    if (results.length === 0) {
-      $('script[type="application/ld+json"]').each((_, el) => {
-        try {
-          const json = JSON.parse($(el).html() || "");
-          if (json["@type"] === "ItemList" && json.itemListElement) {
-            for (const item of json.itemListElement.slice(0, 5)) {
-              const product = item.item || item;
-              if (product.name) {
-                const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
-                results.push({
-                  marketplace: "CIMRI",
-                  storeName: "Cimri",
-                  productName: product.name,
-                  price: offers?.price ? parseFloat(offers.price) : null,
-                  url: product.url || "",
-                  image: typeof product.image === "string" ? product.image : null,
-                  inStock: true,
-                  source: "cimri",
-                });
-              }
-            }
-          }
-        } catch {}
-      });
-    }
-
-    return results;
-  } catch (e) {
-    console.error("Cimri search error:", e);
-    return [];
-  }
-}
-
-// ============================================
-// GOOGLE SHOPPING TR — Global kapsam
-// ============================================
-async function searchGoogleShopping(query: string): Promise<MarketplaceResult[]> {
-  try {
-    const searchUrl = `https://www.google.com.tr/search?tbm=shop&q=${encodeURIComponent(query)}&hl=tr&gl=tr`;
-    const res = await fetchWithTimeout(searchUrl, {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "text/html",
-    });
-    if (!res.ok) return [];
-    const html = await res.text();
-    const $ = cheerio.load(html);
-    const results: MarketplaceResult[] = [];
-
-    // Google Shopping ürün kartları
-    $(".sh-dgr__content, .sh-dlr__list-result, .xcR77").slice(0, 5).each((_, el) => {
-      const name = $(el).find("h3, .tAxDx, .EI11Pd").first().text().trim();
-      const priceText = $(el).find(".a8Pemb, .HRLxBb, .kHxwFf").first().text().trim();
-      const price = parsePrice(priceText);
-      const storeName = $(el).find(".aULzUe, .IuHnof, .LsYFnd").first().text().trim();
-      const href = $(el).find("a").attr("href");
-      const url = href ? (href.startsWith("http") ? href : `https://www.google.com.tr${href}`) : "";
-      const image = $(el).find("img").attr("src") || null;
-
-      if (name && price) {
-        results.push({
-          marketplace: storeToMarketplace(storeName || "Google Shopping"),
-          storeName: storeName || "Google Shopping",
-          productName: name,
-          price,
-          url,
-          image,
-          inStock: true,
-          source: "google",
-        });
       }
+    }
+  } catch (e) {
+    console.error("[CompeteHive] Serper Shopping error:", e);
+  }
+
+  // 2. Normal Google arama (shopping bulamazsa ek sonuçlar)
+  try {
+    const searchRes = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ q: query + " fiyat satın al", gl: "tr", hl: "tr", num: 10 }),
+      cache: "no-store",
     });
 
-    return results;
+    if (searchRes.ok) {
+      const data = await searchRes.json();
+      const items = data.organic || [];
+      console.log("[CompeteHive] Serper Organic results:", items.length);
+
+      for (const item of items) {
+        const { marketplace, storeName } = detectStore(item.link || "", item.title || "");
+
+        let price: number | null = null;
+        const snippet = (item.snippet || "") + " " + (item.title || "");
+        const priceMatch = snippet.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)/);
+        if (priceMatch) price = parsePrice(priceMatch[1]);
+
+        // Siteinfo'dan fiyat
+        if (!price && item.priceRange) price = parsePrice(item.priceRange);
+        if (!price && item.attributes?.price) price = parsePrice(String(item.attributes.price));
+
+        if (item.title) {
+          results.push({
+            marketplace,
+            storeName,
+            productName: item.title,
+            price,
+            url: item.link || "",
+            image: item.thumbnail || null,
+            inStock: true,
+          });
+        }
+      }
+    }
   } catch (e) {
-    console.error("Google Shopping search error:", e);
-    return [];
+    console.error("[CompeteHive] Serper Search error:", e);
   }
+
+  return results;
 }
 
-// ============================================
-// EN İYİ EŞLEŞMEYİ BUL
-// ============================================
-export function findBestMatch(
+// GPT ile en iyi eşleşmeleri seç
+async function selectBestMatches(
   results: MarketplaceResult[],
   originalProduct: string
-): MarketplaceResult | null {
-  if (results.length === 0) return null;
-  if (results.length === 1) return results[0];
+): Promise<MarketplaceResult[]> {
+  if (results.length === 0) return [];
 
-  const originalWords = originalProduct.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-  let bestMatch = results[0];
-  let bestScore = 0;
-
-  for (const result of results) {
-    const resultWords = result.productName.toLowerCase().split(/\s+/);
-    const matchCount = originalWords.filter(w =>
-      resultWords.some(rw => rw.includes(w) || w.includes(rw))
-    ).length;
-    const score = matchCount / Math.max(originalWords.length, 1);
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = result;
-    }
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!openaiKey) {
+    return results.filter(r => r.price && r.price > 0).slice(0, 8);
   }
 
-  return bestMatch;
+  try {
+    const openai = new OpenAI({ apiKey: openaiKey });
+    const productList = results.map((r, i) =>
+      `${i}: [${r.storeName}] ${r.productName}${r.price ? ` — ${r.price} TL` : ""}`
+    ).join("\n");
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      max_tokens: 200,
+      messages: [
+        {
+          role: "system",
+          content: "E-ticaret ürün eşleştirme asistanısın. Orijinal ürünle AYNI veya ÇOK BENZER ürünlerin indekslerini seç. Sadece JSON array döndür."
+        },
+        {
+          role: "user",
+          content: `Orijinal: "${originalProduct}"\n\nSonuçlar:\n${productList}\n\nAynı/benzer ürün indeksleri (JSON array):`
+        }
+      ],
+    });
+
+    const text = response.choices[0]?.message?.content || "[]";
+    const indices: number[] = JSON.parse(text.replace(/```json|```/g, "").trim());
+    return indices.filter(i => i >= 0 && i < results.length).map(i => results[i]);
+  } catch (e) {
+    console.error("[CompeteHive] GPT matching error:", e);
+    return results.filter(r => r.price && r.price > 0).slice(0, 8);
+  }
 }
 
-// ============================================
-// ANA FONKSİYON — 3 kaynakta paralel arama
-// ============================================
+export function findBestMatch(results: MarketplaceResult[], originalProduct: string): MarketplaceResult | null {
+  return results.length > 0 ? results[0] : null;
+}
+
+// ANA FONKSİYON
 export async function searchAllMarketplaces(
   keywords: string[],
   sourceMarketplace: string
 ): Promise<Record<string, MarketplaceResult[]>> {
   const query = keywords.join(" ");
-  console.log(`[CompeteHive] Searching: "${query}" (excluding ${sourceMarketplace})`);
+  console.log(`[CompeteHive] Searching: "${query}" (source: ${sourceMarketplace})`);
 
-  // 3 kaynakta paralel arama
-  const [akakceResults, cimriResults, googleResults] = await Promise.allSettled([
-    searchAkakce(query),
-    searchCimri(query),
-    searchGoogleShopping(query),
-  ]);
+  const allResults = await searchSerper(query);
+  console.log(`[CompeteHive] Total: ${allResults.length} results`);
 
-  const allResults: MarketplaceResult[] = [];
+  const bestMatches = await selectBestMatches(allResults, query);
+  console.log(`[CompeteHive] AI matched: ${bestMatches.length}`);
 
-  if (akakceResults.status === "fulfilled") {
-    console.log(`[CompeteHive] Akakçe: ${akakceResults.value.length} results`);
-    allResults.push(...akakceResults.value);
-  }
-  if (cimriResults.status === "fulfilled") {
-    console.log(`[CompeteHive] Cimri: ${cimriResults.value.length} results`);
-    allResults.push(...cimriResults.value);
-  }
-  if (googleResults.status === "fulfilled") {
-    console.log(`[CompeteHive] Google: ${googleResults.value.length} results`);
-    allResults.push(...googleResults.value);
-  }
-
-  // Kaynak marketplace'i filtrele ve marketplace'e göre grupla
+  // Kaynak marketplace filtrele + grupla
   const grouped: Record<string, MarketplaceResult[]> = {};
-  for (const result of allResults) {
-    // Kaynak marketplace'i atla
+  for (const result of bestMatches) {
     if (result.marketplace === sourceMarketplace) continue;
-    // "AKAKCE" ve "CIMRI" marketplace'lerini de atla (bunlar kaynak, mağaza değil)
-    if (result.marketplace === "AKAKCE" || result.marketplace === "CIMRI") continue;
-
-    if (!grouped[result.marketplace]) {
-      grouped[result.marketplace] = [];
-    }
+    if (!grouped[result.marketplace]) grouped[result.marketplace] = [];
     grouped[result.marketplace].push(result);
   }
 
-  console.log(`[CompeteHive] Grouped into ${Object.keys(grouped).length} marketplaces`);
+  console.log(`[CompeteHive] Final: ${Object.keys(grouped).length} stores:`, Object.keys(grouped));
   return grouped;
 }
