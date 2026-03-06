@@ -148,7 +148,7 @@ async function searchCimri(query: string): Promise<MarketplaceResult[]> {
     const results: MarketplaceResult[] = [];
 
     // __NEXT_DATA__ JSON parse — Cimri Next.js kullanıyor
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s);
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch) {
       try {
         const nextData = JSON.parse(nextDataMatch[1]);
