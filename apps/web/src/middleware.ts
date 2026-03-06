@@ -7,6 +7,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   "/api/migrate(.*)",
   "/api/webhooks(.*)",
+  "/api/debug(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
@@ -14,7 +15,6 @@ export default clerkMiddleware(async (auth, req) => {
     const { userId } = await auth();
     if (!userId) {
       const signInUrl = new URL("/sign-in", req.url);
-      signInUrl.searchParams.set("redirect_url", req.url);
       return NextResponse.redirect(signInUrl);
     }
   }
