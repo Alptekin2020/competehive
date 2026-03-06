@@ -265,8 +265,36 @@ export default function ProductsPage() {
                           })}
                       </div>
                     ) : (
-                      <div className="text-center py-6 text-dark-500 text-sm">
-                        Diger marketplace&apos;lerde eslesen urun bulunamadi veya arama devam ediyor...
+                      <div className="text-center py-6">
+                        <p className="text-dark-500 text-sm mb-3">
+                          Rakipler araniyor veya bulunamadi...
+                        </p>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fetch("/api/products/compare", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ productId: product.id }),
+                            })
+                              .then(res => res.json())
+                              .then(compareData => {
+                                if (compareData.competitors?.length > 0) {
+                                  setProducts(prev =>
+                                    prev.map(p =>
+                                      p.id === product.id
+                                        ? { ...p, competitors: compareData.competitors.map((c: any) => ({ marketplace: c.marketplace, competitor_name: c.name, current_price: c.price, competitor_url: c.url })) }
+                                        : p
+                                    )
+                                  );
+                                }
+                              })
+                              .catch(console.error);
+                          }}
+                          className="text-xs bg-hive-500/10 text-hive-500 px-4 py-2 rounded-lg hover:bg-hive-500/20 transition"
+                        >
+                          Diger Marketplace&apos;lerde Ara
+                        </button>
                       </div>
                     )}
 
