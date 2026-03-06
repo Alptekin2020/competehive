@@ -54,6 +54,9 @@ export async function POST(req: NextRequest) {
     for (const [mp, results] of Object.entries(allResults)) {
       const best = findBestMatch(results, product.product_name);
       if (best && best.price) {
+        const compName = best.storeName
+          ? `${best.storeName} — ${best.productName}`.substring(0, 200)
+          : best.productName.substring(0, 200);
         try {
           // Mevcut competitor varsa güncelle, yoksa ekle
           const existing = await prisma.$queryRaw<any[]>`
@@ -66,19 +69,19 @@ export async function POST(req: NextRequest) {
             await prisma.$executeRaw`
               UPDATE competitors SET
                 competitor_url = ${best.url.substring(0, 500)},
-                competitor_name = ${best.productName.substring(0, 200)},
+                competitor_name = ${compName},
                 current_price = ${best.price},
                 last_scraped_at = NOW()
               WHERE id = ${existing[0].id}::uuid
             `;
-            competitors.push({ marketplace: mp, name: best.productName, price: best.price, url: best.url });
+            competitors.push({ marketplace: mp, name: compName, price: best.price, url: best.url });
           } else {
             const comp = await prisma.$queryRaw<any[]>`
               INSERT INTO competitors (tracked_product_id, competitor_url, competitor_name, marketplace, current_price, last_scraped_at)
               VALUES (
                 ${productId}::uuid,
                 ${best.url.substring(0, 500)},
-                ${best.productName.substring(0, 200)},
+                ${compName},
                 ${mp}::"Marketplace",
                 ${best.price},
                 NOW()
@@ -90,7 +93,7 @@ export async function POST(req: NextRequest) {
                 INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
                 VALUES (${comp[0].id}::uuid, ${best.price}, 'TRY', true)
               `;
-              competitors.push({ marketplace: mp, name: best.productName, price: best.price, url: best.url });
+              competitors.push({ marketplace: mp, name: compName, price: best.price, url: best.url });
             }
           }
         } catch (e) {

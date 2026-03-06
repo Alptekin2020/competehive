@@ -141,12 +141,23 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 3. Görseli temizle
-    let imageUrl = scraped.image;
-    if (imageUrl && typeof imageUrl === "object") {
-      const imgObj = imageUrl as any;
-      imageUrl = imgObj.contentUrl ? (Array.isArray(imgObj.contentUrl) ? imgObj.contentUrl[0] : imgObj.contentUrl) : imgObj.url || null;
+    // 3. Görsel URL temizleme — bazen JSON object geliyor
+    let cleanImage: string | null = null;
+    if (scraped.image) {
+      if (typeof scraped.image === "string") {
+        cleanImage = scraped.image;
+      } else if (typeof scraped.image === "object") {
+        const imgObj = scraped.image as any;
+        if (imgObj.contentUrl) {
+          cleanImage = Array.isArray(imgObj.contentUrl) ? imgObj.contentUrl[0] : imgObj.contentUrl;
+        } else if (imgObj.url) {
+          cleanImage = imgObj.url;
+        } else if (Array.isArray(imgObj) && imgObj.length > 0) {
+          cleanImage = typeof imgObj[0] === "string" ? imgObj[0] : null;
+        }
+      }
     }
+    const imageUrl = cleanImage;
 
     // 4. Urunu veritabanina kaydet
     const productName = analysis.shortTitle || scraped.name;
