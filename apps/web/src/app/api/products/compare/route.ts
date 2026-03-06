@@ -9,9 +9,16 @@ const prisma = new PrismaClient();
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    let userId: string | null = null;
+    try {
+      const authResult = await auth();
+      userId = authResult.userId;
+    } catch (e) {
+      console.error("Auth error:", e);
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
     const { productId } = await req.json();

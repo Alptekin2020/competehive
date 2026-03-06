@@ -55,9 +55,16 @@ async function getOrCreateUser(clerkUserId: string) {
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
   try {
-    const { userId } = await auth();
+    let userId: string | null = null;
+    try {
+      const authResult = await auth();
+      userId = authResult.userId;
+    } catch (e) {
+      console.error("Auth error:", e);
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
     if (!userId) {
-      return NextResponse.json({ error: "Giris yapmaniz gerekiyor" }, { status: 401 });
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
     const user = await getOrCreateUser(userId);
@@ -91,9 +98,16 @@ export async function GET() {
 // POST - Yeni urun ekle + AI analiz + capraz marketplace arama
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    let userId: string | null = null;
+    try {
+      const authResult = await auth();
+      userId = authResult.userId;
+    } catch (e) {
+      console.error("Auth error:", e);
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
     if (!userId) {
-      return NextResponse.json({ error: "Giris yapmaniz gerekiyor" }, { status: 401 });
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
     const user = await getOrCreateUser(userId);
@@ -210,9 +224,16 @@ export async function POST(req: NextRequest) {
 // DELETE - Urun sil
 export async function DELETE(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    let userId: string | null = null;
+    try {
+      const authResult = await auth();
+      userId = authResult.userId;
+    } catch (e) {
+      console.error("Auth error:", e);
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    }
     if (!userId) {
-      return NextResponse.json({ error: "Giris yapmaniz gerekiyor" }, { status: 401 });
+      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
     const user = await getOrCreateUser(userId);
