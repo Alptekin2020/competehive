@@ -15,6 +15,19 @@ const HEADERS: Record<string, string> = {
   "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
 };
 
+async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers: HEADERS, signal: controller.signal, cache: "no-store" });
+    clearTimeout(timeout);
+    return res;
+  } catch (e) {
+    clearTimeout(timeout);
+    throw e;
+  }
+}
+
 function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
   const cleaned = priceStr.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
@@ -22,78 +35,79 @@ function parsePrice(priceStr: string): number | null {
   return isNaN(num) ? null : num;
 }
 
-// === TRENDYOL ===
-// www.trendyol.com sayfasından __NEXT_DATA__ / JSON-LD / HTML parse
+// Görsel URL'yi temizle — bazen JSON object geliyor, string olmalı
+function cleanImageUrl(img: any): string | null {
+  if (!img) return null;
+  if (typeof img === "string") return img;
+  if (typeof img === "object") {
+    // JSON-LD bazen {"@type": "ImageObject", "contentUrl": "..."} döndürür
+    if (img.contentUrl) {
+      return Array.isArray(img.contentUrl) ? img.contentUrl[0] : img.contentUrl;
+    }
+    if (img.url) return img.url;
+    if (Array.isArray(img) && img.length > 0) {
+      return typeof img[0] === "string" ? img[0] : img[0]?.url || img[0]?.contentUrl || null;
+    }
+  }
+  return null;
+}
+
+// JSON-LD'den ürün bilgisi çek
+function extractFromJsonLd($: cheerio.CheerioAPI): { name: string; price: number | null; image: string | null; seller: string | null } {
+  let name = "";
+  let price: number | null = null;
+  let image: string | null = null;
+  let seller: string | null = null;
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const json = JSON.parse($(el).html() || "");
+      const product = json["@type"] === "Product" ? json : null;
+      if (product) {
+        if (!name) name = product.name || "";
+        if (!image) image = cleanImageUrl(product.image);
+        const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+        if (!price && offers?.price) price = parseFloat(offers.price);
+        if (!seller && offers?.seller?.name) seller = offers.seller.name;
+      }
+    } catch {}
+  });
+
+  return { name, price, image, seller };
+}
+
+// Meta tag'lardan bilgi çek
+function extractFromMeta($: cheerio.CheerioAPI): { name: string; image: string | null } {
+  const name = $("meta[property='og:title']").attr("content") || $("meta[name='title']").attr("content") || "";
+  const image = $("meta[property='og:image']").attr("content") || null;
+  return { name, image };
+}
+
+// TRENDYOL
 export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
-    clearTimeout(timeout);
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(`Status: ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // __NEXT_DATA__ veya inline JSON bul
-    let productData: any = null;
-    $("script").each((_, el) => {
-      const text = $(el).html() || "";
-      if (text.includes("window.__PRODUCT_DETAIL_APP_INITIAL_STATE__")) {
-        const match = text.match(/window\.__PRODUCT_DETAIL_APP_INITIAL_STATE__\s*=\s*({[\s\S]*?});/);
-        if (match) {
-          try { productData = JSON.parse(match[1]); } catch {}
-        }
-      }
-    });
+    // 1. JSON-LD
+    const jsonLd = extractFromJsonLd($);
 
-    if (productData?.product) {
-      const p = productData.product;
-      return {
-        name: p.name || p.nameWithProductContent || "Ürün",
-        price: p.price?.sellingPrice?.value || p.price?.discountedPrice?.value || null,
-        currency: "TRY",
-        image: p.images?.[0]?.url ? `https://cdn.dsmcdn.com${p.images[0].url}` : null,
-        seller: p.merchant?.name || null,
-        inStock: p.hasStock !== false,
-      };
-    }
+    // 2. Meta tags
+    const meta = extractFromMeta($);
 
-    // Yöntem 3: JSON-LD fallback
-    let jsonLdPrice: number | null = null;
-    let jsonLdName = "";
-    let jsonLdImage = "";
-    $('script[type="application/ld+json"]').each((_, el) => {
-      try {
-        const json = JSON.parse($(el).html() || "");
-        if (json["@type"] === "Product") {
-          jsonLdName = json.name || "";
-          jsonLdImage = json.image || "";
-          const offers = Array.isArray(json.offers) ? json.offers[0] : json.offers;
-          if (offers?.price) jsonLdPrice = parseFloat(offers.price);
-        }
-      } catch {}
-    });
+    // 3. HTML fallback
+    const htmlName = $("h1.pr-new-br span").first().text().trim() || $("h1").first().text().trim();
+    const htmlPrice = parsePrice($("span.prc-dsc").first().text().trim() || $("span.prc-slg").first().text().trim());
 
-    if (jsonLdName) {
-      return {
-        name: jsonLdName,
-        price: jsonLdPrice,
-        currency: "TRY",
-        image: jsonLdImage || null,
-        seller: null,
-        inStock: true,
-      };
-    }
-
-    // Yöntem 4: HTML fallback
-    const name = $("h1.pr-new-br span").first().text().trim() || $("h1").first().text().trim() || "Ürün adı alınamadı";
-    const priceText = $("span.prc-dsc").first().text().trim() || "";
     return {
-      name,
-      price: parsePrice(priceText),
+      name: jsonLd.name || meta.name || htmlName || "Trendyol ürünü",
+      price: jsonLd.price || htmlPrice,
       currency: "TRY",
-      image: null,
-      seller: null,
-      inStock: true,
+      image: jsonLd.image || meta.image,
+      seller: jsonLd.seller,
+      inStock: !html.includes("pr-out-of-stock"),
     };
   } catch (e) {
     console.error("Trendyol scrape error:", e);
@@ -101,63 +115,42 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
   }
 }
 
-// === HEPSIBURADA ===
+// HEPSIBURADA — og: meta tagları kullan (JS gerektirmez)
 export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
-    clearTimeout(timeout);
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(`Status: ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // Hepsiburada sayfasındaki JSON-LD verisini kullan
-    let name = "";
-    let price: number | null = null;
-    let image: string | null = null;
-    let seller: string | null = null;
+    // 1. JSON-LD
+    const jsonLd = extractFromJsonLd($);
 
-    // JSON-LD'den çek
-    $('script[type="application/ld+json"]').each((_, el) => {
-      try {
-        const json = JSON.parse($(el).html() || "");
-        if (json["@type"] === "Product") {
-          name = json.name || "";
-          image = json.image || null;
-          const offers = Array.isArray(json.offers) ? json.offers[0] : json.offers;
-          if (offers?.price) price = parseFloat(offers.price);
-          if (offers?.seller?.name) seller = offers.seller.name;
-        }
-      } catch {}
-    });
+    // 2. Meta tags — Hepsiburada meta tag'larını iyi doldurur
+    const ogTitle = $("meta[property='og:title']").attr("content") || "";
+    const ogImage = $("meta[property='og:image']").attr("content") || null;
+    const ogPrice = $("meta[property='product:price:amount']").attr("content");
+    const metaPrice = ogPrice ? parseFloat(ogPrice) : null;
 
-    // __NEXT_DATA__ varsa ondan da çek
-    $("script#__NEXT_DATA__").each((_, el) => {
-      try {
-        const nextData = JSON.parse($(el).html() || "");
-        const pageProps = nextData?.props?.pageProps;
-        if (pageProps?.product) {
-          const p = pageProps.product;
-          if (!name) name = p.name || p.productName || "";
-          if (!price && p.listing?.priceInfo?.price) price = p.listing.priceInfo.price;
-          if (!price && p.priceInfo?.price) price = p.priceInfo.price;
-          if (!image && p.images?.[0]) image = p.images[0].url || p.images[0];
-          if (!seller && p.merchant?.name) seller = p.merchant.name;
-        }
-      } catch {}
-    });
+    // 3. Sayfadaki description'dan fiyat çekmeye çalış
+    const descContent = $("meta[name='description']").attr("content") || "";
+    let descPrice: number | null = null;
+    const priceMatch = descContent.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL/);
+    if (priceMatch) {
+      descPrice = parsePrice(priceMatch[1]);
+    }
 
-    // Meta tag fallback
-    if (!name) name = $("meta[property='og:title']").attr("content") || $("h1").first().text().trim() || "Hepsiburada ürünü";
-    if (!image) image = $("meta[property='og:image']").attr("content") || null;
+    // Title temizle — " - Hepsiburada" kısmını kaldır
+    let cleanTitle = (jsonLd.name || ogTitle).replace(/\s*[-–]\s*Hepsiburada.*$/i, "").replace(/\s*[-–]\s*Online Alışveriş.*$/i, "").trim();
+    if (!cleanTitle || cleanTitle === "Hepsiburada") cleanTitle = $("title").text().replace(/\s*[-–]\s*Hepsiburada.*$/i, "").trim();
 
     return {
-      name,
-      price,
+      name: cleanTitle || "Hepsiburada ürünü",
+      price: jsonLd.price || metaPrice || descPrice,
       currency: "TRY",
-      image,
-      seller,
-      inStock: !html.includes("out-of-stock") && !html.includes("tükendi"),
+      image: jsonLd.image || ogImage,
+      seller: jsonLd.seller,
+      inStock: !html.includes("tükendi") && !html.includes("out-of-stock"),
     };
   } catch (e) {
     console.error("Hepsiburada scrape error:", e);
@@ -165,103 +158,84 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
   }
 }
 
-// === AMAZON TR ===
+// AMAZON TR
 export async function scrapeAmazonTR(url: string): Promise<ScrapedProduct> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
-    clearTimeout(timeout);
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(`Status: ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    const name = $("#productTitle").text().trim() || $("h1").first().text().trim() || "Amazon ürünü";
-    const priceText = $(".a-price .a-offscreen").first().text().trim() || "";
-    const price = parsePrice(priceText);
-    const image = $("#landingImage").attr("src") || null;
-    const seller = $("#sellerProfileTriggerId").text().trim() || null;
+    const jsonLd = extractFromJsonLd($);
+    const meta = extractFromMeta($);
+    const htmlName = $("#productTitle").text().trim();
+    const htmlPrice = parsePrice($(".a-price .a-offscreen").first().text().trim());
+    const htmlImage = $("#landingImage").attr("src") || null;
 
-    return { name, price, currency: "TRY", image, seller, inStock: !$("#outOfStock").length };
+    return {
+      name: jsonLd.name || htmlName || meta.name || "Amazon ürünü",
+      price: jsonLd.price || htmlPrice,
+      currency: "TRY",
+      image: jsonLd.image || htmlImage || meta.image,
+      seller: $("#sellerProfileTriggerId").text().trim() || null,
+      inStock: !$("#outOfStock").length,
+    };
   } catch {
     return { name: "Amazon ürünü", price: null, currency: "TRY", image: null, seller: null, inStock: true };
   }
 }
 
-// === N11 ===
+// N11
 export async function scrapeN11(url: string): Promise<ScrapedProduct> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
-    clearTimeout(timeout);
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(`Status: ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    let name = "";
-    let price: number | null = null;
-    let image: string | null = null;
+    const jsonLd = extractFromJsonLd($);
+    const meta = extractFromMeta($);
+    const htmlName = $("h1.proName").text().trim();
+    const htmlPrice = parsePrice($(".newPrice ins").text().trim());
 
-    // JSON-LD
-    $('script[type="application/ld+json"]').each((_, el) => {
-      try {
-        const json = JSON.parse($(el).html() || "");
-        if (json["@type"] === "Product") {
-          name = json.name || "";
-          image = json.image || null;
-          const offers = Array.isArray(json.offers) ? json.offers[0] : json.offers;
-          if (offers?.price) price = parseFloat(offers.price);
-        }
-      } catch {}
-    });
-
-    if (!name) name = $("h1.proName").text().trim() || $("h1").first().text().trim() || "N11 ürünü";
-    if (!price) { const pt = $(".newPrice ins").text().trim(); price = parsePrice(pt); }
-    if (!image) image = $(".imgObj img").attr("src") || null;
-
-    return { name, price, currency: "TRY", image, seller: null, inStock: true };
+    return {
+      name: jsonLd.name || htmlName || meta.name || "N11 ürünü",
+      price: jsonLd.price || htmlPrice,
+      currency: "TRY",
+      image: jsonLd.image || meta.image,
+      seller: null,
+      inStock: true,
+    };
   } catch {
     return { name: "N11 ürünü", price: null, currency: "TRY", image: null, seller: null, inStock: true };
   }
 }
 
-// === DİĞERLERİ (fallback: JSON-LD + meta tags) ===
-export async function scrapeGeneric(url: string, marketplace: string): Promise<ScrapedProduct> {
+// Genel scraper (diğer tüm siteler için)
+export async function scrapeGeneric(url: string, label: string): Promise<ScrapedProduct> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, { headers: HEADERS, cache: "no-store", signal: controller.signal });
-    clearTimeout(timeout);
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(`Status: ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    let name = "";
-    let price: number | null = null;
-    let image: string | null = null;
+    const jsonLd = extractFromJsonLd($);
+    const meta = extractFromMeta($);
 
-    // JSON-LD
-    $('script[type="application/ld+json"]').each((_, el) => {
-      try {
-        const json = JSON.parse($(el).html() || "");
-        const product = json["@type"] === "Product" ? json : null;
-        if (product) {
-          name = product.name || "";
-          image = product.image || null;
-          const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
-          if (offers?.price) price = parseFloat(offers.price);
-        }
-      } catch {}
-    });
-
-    if (!name) name = $("meta[property='og:title']").attr("content") || $("h1").first().text().trim() || `${marketplace} ürünü`;
-    if (!image) image = $("meta[property='og:image']").attr("content") || null;
-
-    return { name, price, currency: "TRY", image, seller: null, inStock: true };
+    return {
+      name: jsonLd.name || meta.name || `${label} ürünü`,
+      price: jsonLd.price,
+      currency: "TRY",
+      image: jsonLd.image || meta.image,
+      seller: jsonLd.seller,
+      inStock: true,
+    };
   } catch {
-    return { name: `${marketplace} ürünü`, price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    return { name: `${label} ürünü`, price: null, currency: "TRY", image: null, seller: null, inStock: true };
   }
 }
 
-// === ANA SCRAPE FONKSİYONU ===
+// ANA FONKSİYON
 export async function scrapeProduct(url: string, marketplace: string): Promise<ScrapedProduct> {
   switch (marketplace) {
     case "TRENDYOL": return scrapeTrendyol(url);

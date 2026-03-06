@@ -14,22 +14,30 @@ const HEADERS: Record<string, string> = {
   "Accept-Language": "tr-TR,tr;q=0.9",
 };
 
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal, cache: "no-store" as any });
+    clearTimeout(timeout);
+    return res;
+  } catch (e) {
+    clearTimeout(timeout);
+    throw e;
+  }
+}
+
 // === TRENDYOL ARAMA — HTML scrape + JSON parse ===
 async function searchTrendyol(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.trendyol.com/sr?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "tr-TR,tr;q=0.9",
       },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     const cheerio = await import("cheerio");
@@ -92,18 +100,13 @@ async function searchTrendyol(query: string): Promise<MarketplaceResult[]> {
 async function searchHepsiburada(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.hepsiburada.com/ara?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "tr-TR,tr;q=0.9",
       },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
 
     if (!res.ok) return [];
     const html = await res.text();
@@ -139,14 +142,9 @@ async function searchHepsiburada(query: string): Promise<MarketplaceResult[]> {
 async function searchN11(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.n11.com/arama?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
 
@@ -187,14 +185,9 @@ async function searchN11(query: string): Promise<MarketplaceResult[]> {
 async function searchAmazonTR(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.amazon.com.tr/s?k=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     const cheerio = await import("cheerio");
@@ -263,14 +256,9 @@ export function findBestMatch(
 async function searchCiceksepeti(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.ciceksepeti.com/ara?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
 
@@ -328,14 +316,9 @@ async function searchCiceksepeti(query: string): Promise<MarketplaceResult[]> {
 async function searchPttavm(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.pttavm.com/arama?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     const cheerio = await import("cheerio");
@@ -400,14 +383,9 @@ async function searchPttavm(query: string): Promise<MarketplaceResult[]> {
 async function searchAkakce(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.akakce.com/arama/?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     const cheerio = await import("cheerio");
@@ -437,14 +415,9 @@ async function searchAkakce(query: string): Promise<MarketplaceResult[]> {
 async function searchCimri(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.cimri.com/arama?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
 
@@ -493,14 +466,9 @@ async function searchCimri(query: string): Promise<MarketplaceResult[]> {
 async function searchEpey(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.epey.com/arama/?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     const cheerio = await import("cheerio");
@@ -530,14 +498,9 @@ async function searchEpey(query: string): Promise<MarketplaceResult[]> {
 async function searchBoyner(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.boyner.com.tr/arama?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     return parseGenericSearch(html, "BOYNER", "https://www.boyner.com.tr");
@@ -548,14 +511,9 @@ async function searchBoyner(query: string): Promise<MarketplaceResult[]> {
 async function searchGratis(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.gratis.com/arama?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     return parseGenericSearch(html, "GRATIS", "https://www.gratis.com");
@@ -566,14 +524,9 @@ async function searchGratis(query: string): Promise<MarketplaceResult[]> {
 async function searchWatsons(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.watsons.com.tr/search?q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     return parseGenericSearch(html, "WATSONS", "https://www.watsons.com.tr");
@@ -584,14 +537,9 @@ async function searchWatsons(query: string): Promise<MarketplaceResult[]> {
 async function searchKitapyurdu(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.kitapyurdu.com/index.php?route=product/search&filter_name=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     return parseGenericSearch(html, "KITAPYURDU", "https://www.kitapyurdu.com");
@@ -602,14 +550,9 @@ async function searchKitapyurdu(query: string): Promise<MarketplaceResult[]> {
 async function searchDecathlon(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.decathlon.com.tr/search?Ntt=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     return parseGenericSearch(html, "DECATHLON", "https://www.decathlon.com.tr");
@@ -620,14 +563,9 @@ async function searchDecathlon(query: string): Promise<MarketplaceResult[]> {
 async function searchTeknosa(query: string): Promise<MarketplaceResult[]> {
   try {
     const searchUrl = `https://www.teknosa.com/arama/?s=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(searchUrl, {
+    const res = await fetchWithTimeout(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "text/html" },
-      cache: "no-store",
-      signal: controller.signal,
     });
-    clearTimeout(timeout);
     if (!res.ok) return [];
     const html = await res.text();
     return parseGenericSearch(html, "TEKNOSA", "https://www.teknosa.com");

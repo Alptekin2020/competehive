@@ -141,7 +141,14 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 3. Urunu veritabanina kaydet
+    // 3. Görseli temizle
+    let imageUrl = scraped.image;
+    if (imageUrl && typeof imageUrl === "object") {
+      const imgObj = imageUrl as any;
+      imageUrl = imgObj.contentUrl ? (Array.isArray(imgObj.contentUrl) ? imgObj.contentUrl[0] : imgObj.contentUrl) : imgObj.url || null;
+    }
+
+    // 4. Urunu veritabanina kaydet
     const productName = analysis.shortTitle || scraped.name;
     const metadataJson = JSON.stringify({
       brand: analysis.brand,
@@ -161,7 +168,7 @@ export async function POST(req: NextRequest) {
         ${productName},
         ${marketplace}::"Marketplace",
         ${productUrl},
-        ${scraped.image},
+        ${imageUrl},
         ${scraped.seller},
         ${scraped.price},
         ${scraped.currency},
@@ -171,7 +178,7 @@ export async function POST(req: NextRequest) {
       ) RETURNING *
     `;
 
-    // 4. Fiyat gecmisine kaydet
+    // 5. Fiyat gecmisine kaydet
     if (scraped.price) {
       await prisma.$queryRaw`
         INSERT INTO price_history (tracked_product_id, price, currency, in_stock, seller_name)
