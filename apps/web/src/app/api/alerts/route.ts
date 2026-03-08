@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { getCurrentUser } from "@/lib/current-user";
 
 // ============================================
 // GET /api/alerts - Kullanıcının uyarı kurallarını listele
 // ============================================
 
 export async function GET() {
-  const { userId } = await auth();
-  if (!userId) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const rules = await prisma.alertRule.findMany({
-    where: { userId: userId },
+    where: { userId: user.id },
     include: {
       trackedProduct: {
         select: { productName: true, marketplace: true, currentPrice: true },
@@ -43,8 +43,8 @@ const createAlertSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
-  if (!userId) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -58,9 +58,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Ürün kullanıcıya ait mi?
     const product = await prisma.trackedProduct.findFirst({
-      where: { id: parsed.data.trackedProductId, userId: userId },
+      where: { id: parsed.data.trackedProductId, userId: user.id },
     });
 
     if (!product) {
@@ -69,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     const rule = await prisma.alertRule.create({
       data: {
-        userId: userId,
+        userId: user.id,
         trackedProductId: parsed.data.trackedProductId,
         ruleType: parsed.data.ruleType,
         thresholdValue: parsed.data.thresholdValue,
@@ -91,8 +90,8 @@ export async function POST(req: NextRequest) {
 // ============================================
 
 export async function DELETE(req: NextRequest) {
-  const { userId } = await auth();
-  if (!userId) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -104,7 +103,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const rule = await prisma.alertRule.findFirst({
-    where: { id: ruleId, userId: userId },
+    where: { id: ruleId, userId: user.id },
   });
 
   if (!rule) {

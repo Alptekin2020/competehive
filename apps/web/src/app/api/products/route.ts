@@ -1,12 +1,10 @@
 export const maxDuration = 15; // Vercel timeout 15 saniye
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/current-user";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
-
-const prisma = new PrismaClient();
 
 function detectMarketplace(url: string): string {
   const lower = url.toLowerCase();
@@ -33,27 +31,17 @@ function detectMarketplace(url: string): string {
   return "CUSTOM";
 }
 
-async function getUser(userId: string) {
-  const user = await prisma.$queryRaw<any[]>`
-    SELECT * FROM users WHERE id = ${userId}::uuid LIMIT 1
-  `;
-  if (user && user.length > 0) return user[0];
-  return null;
-}
-
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
   try {
-    const { userId } = await auth();
-    if (!userId) {
+    const user = await getCurrentUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUser(userId);
-
     const products = await prisma.$queryRaw<any[]>`
       SELECT * FROM tracked_products
-      WHERE user_id = ${user.id}::uuid
+      WHERE user_id = ${user.id}
       ORDER BY created_at DESC
     `;
 
@@ -80,12 +68,11 @@ export async function GET() {
 // POST - Yeni urun ekle + AI analiz + capraz marketplace arama
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
+    const user = await getCurrentUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUser(userId);
     const body = await req.json();
     const { productUrl } = body;
 
@@ -96,11 +83,11 @@ export async function POST(req: NextRequest) {
     const marketplace = detectMarketplace(productUrl);
 
     const productCount = await prisma.$queryRaw<any[]>`
-      SELECT COUNT(*) as count FROM tracked_products WHERE user_id = ${user.id}::uuid
+      SELECT COUNT(*) as count FROM tracked_products WHERE user_id = ${user.id}
     `;
-    if (parseInt(productCount[0].count) >= user.max_products) {
+    if (parseInt(productCount[0].count) >= user.maxProducts) {
       return NextResponse.json(
-        { error: `Urun limitinize ulastiniz (${user.max_products}). Planinizi yukseltin.` },
+        { error: `Urun limitinize ulastiniz (${user.maxProducts}). Planinizi yukseltin.` },
         { status: 403 }
       );
     }
@@ -163,7 +150,7 @@ export async function POST(req: NextRequest) {
         product_image, seller_name, current_price, currency,
         status, last_scraped_at, metadata
       ) VALUES (
-        ${user.id}::uuid,
+        ${user.id},
         ${productName},
         ${marketplace}::"Marketplace",
         ${productUrl},
@@ -199,12 +186,11 @@ export async function POST(req: NextRequest) {
 // DELETE - Urun sil
 export async function DELETE(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
+    const user = await getCurrentUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUser(userId);
     const { searchParams } = new URL(req.url);
     const productId = searchParams.get("id");
 
@@ -217,7 +203,7 @@ export async function DELETE(req: NextRequest) {
       DELETE FROM competitors WHERE tracked_product_id = ${productId}::uuid
     `;
     await prisma.$queryRaw`
-      DELETE FROM tracked_products WHERE id = ${productId}::uuid AND user_id = ${user.id}::uuid
+      DELETE FROM tracked_products WHERE id = ${productId}::uuid AND user_id = ${user.id}
     `;
 
     return NextResponse.json({ success: true });

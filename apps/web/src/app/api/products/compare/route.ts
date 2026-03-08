@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
+import prisma from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/current-user";
 import { searchAllMarketplaces, findBestMatch } from "@/lib/marketplace-search";
 
 export const maxDuration = 60;
 
-const prisma = new PrismaClient();
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
+    const user = await getCurrentUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -22,7 +21,7 @@ export async function POST(req: NextRequest) {
 
     // Ürünü bul
     const products = await prisma.$queryRaw<any[]>`
-      SELECT * FROM tracked_products WHERE id = ${productId}::uuid LIMIT 1
+      SELECT * FROM tracked_products WHERE id = ${productId}::uuid AND user_id = ${user.id} LIMIT 1
     `;
     if (!products?.length) {
       return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
