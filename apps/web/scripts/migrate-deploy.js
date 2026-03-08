@@ -106,6 +106,8 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
     process.exit(1);
   }
 
+  const baselineMigration = "0001_initial_baseline";
+
   for (const migration of failedMigrations) {
     console.log(`[db:migrate] Marking "${migration}" as rolled back...`);
     const rollbackResult = spawnSync(
@@ -118,21 +120,24 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
       process.exit(rollbackResult.status ?? 1);
     }
 
-    // Since baseline migration was never actually executed (tables already exist),
-    // mark it as applied so it won't try to run the SQL again
-    console.log(`[db:migrate] Marking "${migration}" as applied...`);
-    const applyResult = spawnSync(
-      "npx",
-      ["prisma", "migrate", "resolve", "--applied", migration, ...schemaArg],
-      { ...spawnOpts, stdio: "inherit" }
-    );
-    if (applyResult.status !== 0) {
-      console.error(`[db:migrate] Failed to mark migration as applied: ${migration}`);
-      process.exit(applyResult.status ?? 1);
+    // Only the baseline migration should be marked as applied without running,
+    // because its tables already exist in the database. Other migrations must
+    // actually execute their SQL via migrate deploy.
+    if (migration === baselineMigration) {
+      console.log(`[db:migrate] Marking baseline "${migration}" as applied (tables already exist)...`);
+      const applyResult = spawnSync(
+        "npx",
+        ["prisma", "migrate", "resolve", "--applied", migration, ...schemaArg],
+        { ...spawnOpts, stdio: "inherit" }
+      );
+      if (applyResult.status !== 0) {
+        console.error(`[db:migrate] Failed to mark migration as applied: ${migration}`);
+        process.exit(applyResult.status ?? 1);
+      }
     }
   }
 
-  // Retry migrate deploy to apply pending migrations
+  // Retry migrate deploy to apply pending (non-baseline) migrations
   console.log("[db:migrate] Retrying prisma migrate deploy...");
   const retryResult = spawnSync(
     "npx",
