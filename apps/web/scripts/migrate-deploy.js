@@ -90,6 +90,62 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
   }
 
   console.log("[db:migrate] Prisma migrate deploy completed after baselining.");
+} else if (stdout.includes("P3009") || stderr.includes("P3009")) {
+  // P3009: failed migrations exist – resolve them as rolled back, then re-apply
+  console.log(
+    "[db:migrate] Found failed migrations in the database (P3009). Resolving..."
+  );
+
+  const combined = stdout + stderr;
+  // Extract failed migration name(s) from output like "The `0001_initial_baseline` migration started at ..."
+  const failedMatches = combined.matchAll(/The `([^`]+)` migration started at/g);
+  const failedMigrations = [...failedMatches].map((m) => m[1]);
+
+  if (failedMigrations.length === 0) {
+    console.error("[db:migrate] Could not detect which migration failed.");
+    process.exit(1);
+  }
+
+  for (const migration of failedMigrations) {
+    console.log(`[db:migrate] Marking "${migration}" as rolled back...`);
+    const rollbackResult = spawnSync(
+      "npx",
+      ["prisma", "migrate", "resolve", "--rolled-back", migration, ...schemaArg],
+      { ...spawnOpts, stdio: "inherit" }
+    );
+    if (rollbackResult.status !== 0) {
+      console.error(`[db:migrate] Failed to roll back migration: ${migration}`);
+      process.exit(rollbackResult.status ?? 1);
+    }
+
+    // Since baseline migration was never actually executed (tables already exist),
+    // mark it as applied so it won't try to run the SQL again
+    console.log(`[db:migrate] Marking "${migration}" as applied...`);
+    const applyResult = spawnSync(
+      "npx",
+      ["prisma", "migrate", "resolve", "--applied", migration, ...schemaArg],
+      { ...spawnOpts, stdio: "inherit" }
+    );
+    if (applyResult.status !== 0) {
+      console.error(`[db:migrate] Failed to mark migration as applied: ${migration}`);
+      process.exit(applyResult.status ?? 1);
+    }
+  }
+
+  // Retry migrate deploy to apply pending migrations
+  console.log("[db:migrate] Retrying prisma migrate deploy...");
+  const retryResult = spawnSync(
+    "npx",
+    ["prisma", "migrate", "deploy", ...schemaArg],
+    { ...spawnOpts, stdio: "inherit" }
+  );
+
+  if (retryResult.status !== 0) {
+    console.error("[db:migrate] Prisma migrate deploy failed after resolving P3009.");
+    process.exit(retryResult.status ?? 1);
+  }
+
+  console.log("[db:migrate] Prisma migrate deploy completed after resolving failed migrations.");
 } else {
   // Some other error
   if (stdout) process.stdout.write(stdout);
