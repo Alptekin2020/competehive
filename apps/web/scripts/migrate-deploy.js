@@ -20,9 +20,9 @@ if (!databaseUrl) {
   process.exit(0);
 }
 
-if (isVercel && vercelEnv === "preview") {
+if (isVercel && vercelEnv === "preview" && !databaseUrl) {
   console.log(
-    "[db:migrate] Vercel preview deployment detected; skipping Prisma migrate deploy."
+    "[db:migrate] Vercel preview deployment without DATABASE_URL; skipping Prisma migrate deploy."
   );
   process.exit(0);
 }
