@@ -53,39 +53,27 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
   );
   console.log("[db:migrate] Baselining existing migrations...");
 
-  // Read migration directory names to resolve them as already applied
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const migrationsDir = path.resolve(
-    __dirname,
-    "../../../packages/database/prisma/migrations"
+  // Only resolve the initial baseline migration as already applied.
+  // Subsequent migrations (e.g. adding clerk_id) must actually run against the database.
+  const baselineMigration = "0001_initial_baseline";
+  console.log(`[db:migrate] Resolving baseline migration as applied: ${baselineMigration}`);
+  const resolveResult = spawnSync(
+    "npx",
+    [
+      "prisma",
+      "migrate",
+      "resolve",
+      "--applied",
+      baselineMigration,
+      ...schemaArg,
+    ],
+    { ...spawnOpts, stdio: "inherit" }
   );
-  const migrations = fs
-    .readdirSync(migrationsDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name !== "migration_lock.toml")
-    .map((d) => d.name)
-    .sort();
-
-  for (const migration of migrations) {
-    console.log(`[db:migrate] Resolving migration as applied: ${migration}`);
-    const resolveResult = spawnSync(
-      "npx",
-      [
-        "prisma",
-        "migrate",
-        "resolve",
-        "--applied",
-        migration,
-        ...schemaArg,
-      ],
-      { ...spawnOpts, stdio: "inherit" }
+  if (resolveResult.status !== 0) {
+    console.error(
+      `[db:migrate] Failed to resolve baseline migration: ${baselineMigration}`
     );
-    if (resolveResult.status !== 0) {
-      console.error(
-        `[db:migrate] Failed to resolve migration: ${migration}`
-      );
-      process.exit(resolveResult.status ?? 1);
-    }
+    process.exit(resolveResult.status ?? 1);
   }
 
   // Retry migrate deploy after baselining
