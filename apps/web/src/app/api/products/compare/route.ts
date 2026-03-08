@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthUserId } from "@/lib/auth";
 import { PrismaClient } from "@prisma/client";
 import { searchAllMarketplaces, findBestMatch } from "@/lib/marketplace-search";
 
@@ -9,14 +9,7 @@ const prisma = new PrismaClient();
 
 export async function POST(req: NextRequest) {
   try {
-    let userId: string | null = null;
-    try {
-      const authResult = await auth();
-      userId = authResult.userId;
-    } catch (e) {
-      console.error("Auth error:", e);
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-    }
+    const userId = await getAuthUserId();
     if (!userId) {
       return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }

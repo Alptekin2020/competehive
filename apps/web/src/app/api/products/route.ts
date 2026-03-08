@@ -1,7 +1,7 @@
 export const maxDuration = 15; // Vercel timeout 15 saniye
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { getAuthUserId } from "@/lib/auth";
 import { PrismaClient } from "@prisma/client";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
@@ -33,41 +33,23 @@ function detectMarketplace(url: string): string {
   return "CUSTOM";
 }
 
-async function getOrCreateUser(clerkUserId: string) {
-  let user = await prisma.$queryRaw<any[]>`
-    SELECT * FROM users WHERE stripe_customer_id = ${clerkUserId} LIMIT 1
+async function getUser(userId: string) {
+  const user = await prisma.$queryRaw<any[]>`
+    SELECT * FROM users WHERE id = ${userId}::uuid LIMIT 1
   `;
   if (user && user.length > 0) return user[0];
-
-  const clerkUser = await currentUser();
-  const email = clerkUser?.emailAddresses?.[0]?.emailAddress || `${clerkUserId}@clerk.user`;
-  const name = clerkUser?.firstName ? `${clerkUser.firstName} ${clerkUser.lastName || ""}`.trim() : "User";
-
-  const newUser = await prisma.$queryRaw<any[]>`
-    INSERT INTO users (email, password_hash, name, stripe_customer_id)
-    VALUES (${email}, ${'clerk_managed'}, ${name}, ${clerkUserId})
-    ON CONFLICT (email) DO UPDATE SET stripe_customer_id = ${clerkUserId}
-    RETURNING *
-  `;
-  return newUser[0];
+  return null;
 }
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
   try {
-    let userId: string | null = null;
-    try {
-      const authResult = await auth();
-      userId = authResult.userId;
-    } catch (e) {
-      console.error("Auth error:", e);
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-    }
-    if (!userId) {
+    const authUserId = await getAuthUserId();
+    if (!authUserId) {
       return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
-    const user = await getOrCreateUser(userId);
+    const user = await getUser(authUserId);
 
     const products = await prisma.$queryRaw<any[]>`
       SELECT * FROM tracked_products
@@ -98,19 +80,12 @@ export async function GET() {
 // POST - Yeni urun ekle + AI analiz + capraz marketplace arama
 export async function POST(req: NextRequest) {
   try {
-    let userId: string | null = null;
-    try {
-      const authResult = await auth();
-      userId = authResult.userId;
-    } catch (e) {
-      console.error("Auth error:", e);
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-    }
-    if (!userId) {
+    const authUserId = await getAuthUserId();
+    if (!authUserId) {
       return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
-    const user = await getOrCreateUser(userId);
+    const user = await getUser(authUserId);
     const body = await req.json();
     const { productUrl } = body;
 
@@ -224,19 +199,12 @@ export async function POST(req: NextRequest) {
 // DELETE - Urun sil
 export async function DELETE(req: NextRequest) {
   try {
-    let userId: string | null = null;
-    try {
-      const authResult = await auth();
-      userId = authResult.userId;
-    } catch (e) {
-      console.error("Auth error:", e);
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
-    }
-    if (!userId) {
+    const authUserId = await getAuthUserId();
+    if (!authUserId) {
       return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
     }
 
-    const user = await getOrCreateUser(userId);
+    const user = await getUser(authUserId);
     const { searchParams } = new URL(req.url);
     const productId = searchParams.get("id");
 

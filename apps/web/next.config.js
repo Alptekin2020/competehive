@@ -2,6 +2,14 @@ const path = require("path");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  async redirects() {
+    return [
+      { source: "/sign-in", destination: "/login", permanent: false },
+      { source: "/sign-in/:path*", destination: "/login", permanent: false },
+      { source: "/sign-up", destination: "/register", permanent: false },
+      { source: "/sign-up/:path*", destination: "/register", permanent: false },
+    ];
+  },
   turbopack: {
     root: path.join(__dirname, "../.."),
   },

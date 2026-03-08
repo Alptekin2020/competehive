@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { UserButton } from "@clerk/nextjs";
+import { LogOut } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Genel Bakış", icon: "home" },
@@ -98,17 +98,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button className="relative text-dark-400 hover:text-white transition">
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
             </button>
-            <UserButton
-              appearance={{
-                elements: {
-                  avatarBox: "w-8 h-8",
-                  userButtonPopoverCard: "bg-dark-900 border border-dark-800",
-                  userButtonPopoverActionButton: "text-dark-300 hover:text-white hover:bg-dark-800",
-                  userButtonPopoverActionButtonText: "text-dark-300",
-                  userButtonPopoverFooter: "hidden",
-                },
-              }}
-            />
+            <a
+              href="/api/auth/logout"
+              className="flex items-center gap-2 text-dark-400 hover:text-white transition text-sm"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Çıkış</span>
+            </a>
           </div>
         </header>
 
