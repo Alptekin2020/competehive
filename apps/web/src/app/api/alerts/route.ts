@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getAuthUserId } from "@/lib/auth";
+import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 
 // ============================================
@@ -8,9 +8,9 @@ import { z } from "zod";
 // ============================================
 
 export async function GET() {
-  const userId = await getAuthUserId();
+  const { userId } = await auth();
   if (!userId) {
-    return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const rules = await prisma.alertRule.findMany({
@@ -43,9 +43,9 @@ const createAlertSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const userId = await getAuthUserId();
+  const { userId } = await auth();
   if (!userId) {
-    return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -91,9 +91,9 @@ export async function POST(req: NextRequest) {
 // ============================================
 
 export async function DELETE(req: NextRequest) {
-  const userId = await getAuthUserId();
+  const { userId } = await auth();
   if (!userId) {
-    return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { searchParams } = new URL(req.url);
