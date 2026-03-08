@@ -5,31 +5,7 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
-
-function detectMarketplace(url: string): string {
-  const lower = url.toLowerCase();
-  if (lower.includes("trendyol.com")) return "TRENDYOL";
-  if (lower.includes("hepsiburada.com")) return "HEPSIBURADA";
-  if (lower.includes("amazon.com.tr")) return "AMAZON_TR";
-  if (lower.includes("n11.com")) return "N11";
-  if (lower.includes("ciceksepeti.com")) return "CICEKSEPETI";
-  if (lower.includes("pttavm.com")) return "PTTAVM";
-  if (lower.includes("akakce.com")) return "AKAKCE";
-  if (lower.includes("cimri.com")) return "CIMRI";
-  if (lower.includes("epey.com")) return "EPEY";
-  if (lower.includes("boyner.com")) return "BOYNER";
-  if (lower.includes("gratis.com")) return "GRATIS";
-  if (lower.includes("watsons.com")) return "WATSONS";
-  if (lower.includes("kitapyurdu.com")) return "KITAPYURDU";
-  if (lower.includes("decathlon.com")) return "DECATHLON";
-  if (lower.includes("teknosa.com")) return "TEKNOSA";
-  if (lower.includes("mediamarkt.com")) return "MEDIAMARKT";
-  if (lower.includes("sephora.com")) return "SEPHORA";
-  if (lower.includes("koctas.com")) return "KOCTAS";
-  if (lower.includes("vatanbilgisayar.com")) return "VATAN";
-  if (lower.includes("itopya.com")) return "ITOPYA";
-  return "CUSTOM";
-}
+import { detectMarketplaceFromUrl } from "@/lib/marketplaces";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
@@ -80,7 +56,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Urun URL'si gerekli" }, { status: 400 });
     }
 
-    const marketplace = detectMarketplace(productUrl);
+    const marketplace = detectMarketplaceFromUrl(productUrl);
 
     const productCount = await prisma.$queryRaw<any[]>`
       SELECT COUNT(*) as count FROM tracked_products WHERE user_id = ${user.id}

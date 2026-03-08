@@ -44,9 +44,10 @@ cp .env.example .env
 npm install
 ```
 
-### 4. Veritabanını oluştur
+### 4. Prisma client ve migration
 ```bash
-npm run db:push
+npm run db:generate
+npm run db:migrate
 ```
 
 ### 5. Web uygulamasını başlat
@@ -81,3 +82,10 @@ npm run dev:worker
 - ✅ Hepsiburada
 - 🔜 Amazon TR
 - 🔜 N11
+
+
+## Veritabanı Disiplini
+
+- Şema değişiklikleri sadece `packages/database/prisma/schema.prisma` üzerinden yapılır.
+- Üretim ve geliştirme ortamında migration için Prisma CLI kullanılır (`prisma migrate dev` / `prisma migrate deploy`).
+- HTTP endpoint üzerinden tablo/enum oluşturma veya ALTER işlemi yapılmaz.
