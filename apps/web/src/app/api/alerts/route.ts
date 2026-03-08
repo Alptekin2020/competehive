@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthUserId } from "@/lib/auth";
 import { z } from "zod";
 
 // ============================================
@@ -8,7 +8,7 @@ import { z } from "zod";
 // ============================================
 
 export async function GET() {
-  const { userId } = await auth();
+  const userId = await getAuthUserId();
   if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
@@ -43,7 +43,7 @@ const createAlertSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  const userId = await getAuthUserId();
   if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
 // ============================================
 
 export async function DELETE(req: NextRequest) {
-  const { userId } = await auth();
+  const userId = await getAuthUserId();
   if (!userId) {
     return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
   }
