@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
 
@@ -17,23 +18,28 @@ export async function getCurrentUser() {
 
     const fallbackEmail = `${userId}@users.clerk.local`;
     const email = primaryEmail ?? fallbackEmail;
-    const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || clerkUser.username || null;
+    const name =
+      [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+      clerkUser.username ||
+      null;
 
+    // Incremental auth fix: preserve internal UUIDs and map Clerk IDs via `clerkId`.
     return prisma.user.upsert({
-      where: { id: userId },
+      where: { clerkId: userId },
       update: {
         email,
         name,
         isActive: true,
       },
       create: {
-        id: userId,
+        id: randomUUID(),
+        clerkId: userId,
         email,
         name,
       },
     });
   } catch (error) {
     console.error("Failed to provision Clerk user in database", error);
-    return prisma.user.findUnique({ where: { id: userId } });
+    return prisma.user.findUnique({ where: { clerkId: userId } });
   }
 }

@@ -22,9 +22,10 @@ enum Plan {
 }
 
 model User {
-  // Clerk user IDs are string values like "user_xxx" (not UUID).
-  // NOTE: existing databases require a migration for users.id/password_hash changes.
-  id               String   @id
+  // Internal user ID remains UUID for now.
+  // Incremental auth fix: map Clerk IDs into `clerkId` instead of overloading the primary key.
+  id               String   @id @default(uuid())
+  clerkId          String?  @unique @map("clerk_id")
   email            String   @unique
   name             String?
   plan             Plan     @default(FREE)
