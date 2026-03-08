@@ -1,6 +1,25 @@
 import { randomUUID } from "crypto";
+import { Prisma } from "@prisma/client";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
+
+function isMissingClerkIdColumnError(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2022" &&
+    error.message.includes("clerk_id")
+  );
+}
+
+function throwSchemaDriftError(error: unknown) {
+  console.error(
+    "Database schema is out of date: users.clerk_id is missing. Ensure deployment runs Prisma migrations before starting the web app.",
+    error
+  );
+  throw new Error(
+    "DATABASE_SCHEMA_OUT_OF_DATE: Missing users.clerk_id column. Automatic deployment must run Prisma migrations before serving requests."
+  );
+}
 
 export async function getCurrentUser() {
   const { userId } = await auth();
@@ -39,7 +58,19 @@ export async function getCurrentUser() {
       },
     });
   } catch (error) {
+    if (isMissingClerkIdColumnError(error)) {
+      throwSchemaDriftError(error);
+    }
+
     console.error("Failed to provision Clerk user in database", error);
-    return prisma.user.findUnique({ where: { clerkId: userId } });
+
+    try {
+      return await prisma.user.findUnique({ where: { clerkId: userId } });
+    } catch (fallbackError) {
+      if (isMissingClerkIdColumnError(fallbackError)) {
+        throwSchemaDriftError(fallbackError);
+      }
+      throw fallbackError;
+    }
   }
 }

@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm --workspace @competehive/database run generate && next build",
+    "build": "npm run db:migrate:deploy && npm run db:generate && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:migrate:deploy": "prisma migrate deploy --schema ../../packages/database/prisma/schema.prisma",
+    "db:generate": "prisma generate --schema ../../packages/database/prisma/schema.prisma"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.1",
