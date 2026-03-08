@@ -1,15 +1,15 @@
 import { Queue, Worker, Job } from "bullmq";
-import { PrismaClient, Marketplace } from "@prisma/client";
+import { PrismaClient, Prisma, Marketplace } from "@prisma/client";
 import { getScraper, ScrapedProduct } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
-import IORedis from "ioredis";
 
 const prisma = new PrismaClient();
 
-const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
+const connection = {
+  url: process.env.REDIS_URL || "redis://localhost:6379",
   maxRetriesPerRequest: null,
-});
+};
 
 // ============================================
 // QUEUES
@@ -86,7 +86,7 @@ export const scrapeWorker = new Worker(
           category: result.category || undefined,
           lastScrapedAt: new Date(),
           status: result.inStock ? "ACTIVE" : "OUT_OF_STOCK",
-          metadata: result.metadata || undefined,
+          metadata: result.metadata as Prisma.InputJsonValue | undefined,
         },
       });
 

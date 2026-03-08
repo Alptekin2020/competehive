@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate --schema=../../packages/database/prisma/schema.prisma && next build",
+    "build": "npm --workspace @competehive/database run generate && next build",
     "start": "next start",
     "lint": "next lint"
   },

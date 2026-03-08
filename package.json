@@ -8,15 +8,16 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:web": "cd apps/web && npm run dev",
-    "dev:worker": "cd apps/worker && npm run dev",
-    "build:web": "cd apps/web && npm run build",
-    "build:worker": "cd apps/worker && npm run build",
-    "db:generate": "cd packages/database && npx prisma generate",
-    "db:push": "cd packages/database && npx prisma db push",
-    "db:migrate": "cd packages/database && npx prisma migrate dev",
-    "db:studio": "cd packages/database && npx prisma studio",
-    "db:seed": "cd packages/database && npx prisma db seed"
+    "dev:web": "npm --workspace @competehive/web run dev",
+    "dev:worker": "npm --workspace @competehive/worker run dev",
+    "build": "npm run build:web && npm run build:worker",
+    "build:web": "npm --workspace @competehive/web run build",
+    "build:worker": "npm --workspace @competehive/worker run build",
+    "db:generate": "npm --workspace @competehive/database run generate",
+    "db:push": "npm --workspace @competehive/database run push",
+    "db:migrate": "npm --workspace @competehive/database run migrate",
+    "db:studio": "npm --workspace @competehive/database run studio",
+    "db:seed": "npm --workspace @competehive/database exec prisma db seed"
   },
   "author": "Alptekin Ayyavuz",
   "license": "UNLICENSED"

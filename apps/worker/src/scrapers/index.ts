@@ -73,7 +73,7 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 
       return await response.text();
     } catch (error) {
-      logger.warn(`Fetch attempt ${attempt}/${retries} failed for ${url}:`, error);
+      logger.warn({ error }, `Fetch attempt ${attempt}/${retries} failed for ${url}`);
       if (attempt === retries) throw error;
 
       // Exponential backoff
