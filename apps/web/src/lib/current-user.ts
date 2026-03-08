@@ -4,6 +4,9 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
 
 function isMissingClerkIdColumnError(error: unknown) {
+  if (error instanceof Error && error.message.includes("clerk_id") && error.message.includes("does not exist")) {
+    return true;
+  }
   return (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2022" &&
