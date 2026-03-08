@@ -6,64 +6,66 @@ export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.get("q") || "samsung televizyon";
   const results: any = {};
 
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml",
-    "Accept-Language": "tr-TR,tr;q=0.9",
-  };
+  // Serper.dev test
+  const serperKey = process.env.SERPER_API_KEY;
+  results.serperKeyExists = !!serperKey;
+  results.serperKeyPrefix = serperKey ? serperKey.substring(0, 8) + "..." : "MISSING";
 
-  // Akakçe test
-  try {
-    const res = await fetch(`https://www.akakce.com/arama/?q=${encodeURIComponent(query)}`, { headers, cache: "no-store" });
-    const html = await res.text();
-    results.akakce = {
-      status: res.status,
-      htmlLength: html.length,
-      title: html.match(/<title>(.*?)<\/title>/)?.[1] || "no title",
-      hasProducts: html.includes("p_w") || html.includes("product") || html.includes("pn_t"),
-      sampleHtml: html.substring(0, 3000),
-      containsClasses: {
-        p_w: html.includes("p_w"),
-        pn_t: html.includes("pn_t"),
-        pt_v8: html.includes("pt_v8"),
-        product: html.includes("product"),
-        search_result: html.includes("search-result"),
-        li_class: (html.match(/class="[^"]*"/g) || []).slice(0, 30),
-      }
-    };
-  } catch (e: any) {
-    results.akakce = { error: e.message };
+  if (serperKey) {
+    // Shopping arama
+    try {
+      const shoppingRes = await fetch("https://google.serper.dev/shopping", {
+        method: "POST",
+        headers: { "X-API-KEY": serperKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: query, gl: "tr", hl: "tr", num: 5 }),
+        cache: "no-store",
+      });
+      const shoppingData = await shoppingRes.json();
+      results.shopping = {
+        status: shoppingRes.status,
+        count: shoppingData.shopping?.length || 0,
+        items: (shoppingData.shopping || []).slice(0, 3).map((item: any) => ({
+          title: item.title,
+          price: item.price,
+          source: item.source,
+          link: item.link,
+        })),
+        error: shoppingData.message || null,
+      };
+    } catch (e: any) {
+      results.shopping = { error: e.message };
+    }
+
+    // Normal arama
+    try {
+      const searchRes = await fetch("https://google.serper.dev/search", {
+        method: "POST",
+        headers: { "X-API-KEY": serperKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: query + " fiyat", gl: "tr", hl: "tr", num: 5 }),
+        cache: "no-store",
+      });
+      const searchData = await searchRes.json();
+      results.organic = {
+        status: searchRes.status,
+        count: searchData.organic?.length || 0,
+        items: (searchData.organic || []).slice(0, 3).map((item: any) => ({
+          title: item.title,
+          link: item.link,
+          snippet: item.snippet?.substring(0, 100),
+        })),
+        error: searchData.message || null,
+      };
+    } catch (e: any) {
+      results.organic = { error: e.message };
+    }
   }
 
-  // Cimri test
-  try {
-    const res = await fetch(`https://www.cimri.com/arama?q=${encodeURIComponent(query)}`, { headers, cache: "no-store" });
-    const html = await res.text();
-    results.cimri = {
-      status: res.status,
-      htmlLength: html.length,
-      title: html.match(/<title>(.*?)<\/title>/)?.[1] || "no title",
-      hasNextData: html.includes("__NEXT_DATA__"),
-      hasJsonLd: html.includes("application/ld+json"),
-      sampleHtml: html.substring(0, 3000),
-    };
-  } catch (e: any) {
-    results.cimri = { error: e.message };
-  }
+  // OpenAI key test
+  results.openaiKeyExists = !!process.env.OPENAI_API_KEY;
 
-  // Google Shopping test
-  try {
-    const res = await fetch(`https://www.google.com.tr/search?tbm=shop&q=${encodeURIComponent(query)}&hl=tr&gl=tr`, { headers, cache: "no-store" });
-    const html = await res.text();
-    results.google = {
-      status: res.status,
-      htmlLength: html.length,
-      title: html.match(/<title>(.*?)<\/title>/)?.[1] || "no title",
-      sampleHtml: html.substring(0, 3000),
-    };
-  } catch (e: any) {
-    results.google = { error: e.message };
-  }
+  // Google Custom Search key test
+  results.googleKeyExists = !!process.env.GOOGLE_SEARCH_API_KEY;
+  results.googleCxExists = !!process.env.GOOGLE_SEARCH_ENGINE_ID;
 
   return NextResponse.json(results);
 }
