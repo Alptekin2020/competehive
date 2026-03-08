@@ -7,7 +7,8 @@
     "migrate": "prisma migrate dev",
     "push": "prisma db push",
     "studio": "prisma studio",
-    "deploy": "prisma migrate deploy"
+    "deploy": "prisma migrate deploy",
+    "deploy:with-generate": "npm run deploy && npm run generate"
   },
   "dependencies": {
     "@prisma/client": "^6.4.0"

@@ -18,7 +18,9 @@
     "db:migrate": "npm --workspace @competehive/database run migrate",
     "db:studio": "npm --workspace @competehive/database run studio",
     "db:seed": "npm --workspace @competehive/database exec prisma db seed",
-    "db:deploy": "npm --workspace @competehive/database run deploy"
+    "db:deploy": "npm --workspace @competehive/database run deploy",
+    "deploy:web": "npm run db:deploy && npm --workspace @competehive/web run build",
+    "deploy:worker": "npm run db:deploy && npm --workspace @competehive/worker run build"
   },
   "author": "Alptekin Ayyavuz",
   "license": "UNLICENSED"

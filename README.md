@@ -44,10 +44,9 @@ cp .env.example .env
 npm install
 ```
 
-### 4. Prisma client ve migration
+### 4. Prisma client
 ```bash
 npm run db:generate
-npm run db:migrate
 ```
 
 ### 5. Web uygulamasını başlat
@@ -87,5 +86,7 @@ npm run dev:worker
 ## Veritabanı Disiplini
 
 - Şema değişiklikleri sadece `packages/database/prisma/schema.prisma` üzerinden yapılır.
-- Üretim ve geliştirme ortamında migration için Prisma CLI kullanılır (`prisma migrate dev` / `prisma migrate deploy`).
+- Production deploy sırasında migration otomatik olarak build akışında uygulanır (`apps/web` build => managed `prisma migrate deploy`).
+- Vercel preview deploylarında migration adımı güvenli şekilde atlanır; production deploy migration uygular.
+- Geliştirme ortamında şema değişikliği için Prisma CLI kullanılabilir (`prisma migrate dev`).
 - HTTP endpoint üzerinden tablo/enum oluşturma veya ALTER işlemi yapılmaz.
