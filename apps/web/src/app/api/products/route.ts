@@ -1,7 +1,7 @@
 export const maxDuration = 15; // Vercel timeout 15 saniye
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthUserId } from "@/lib/auth";
+import { auth } from "@clerk/nextjs/server";
 import { PrismaClient } from "@prisma/client";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
@@ -44,12 +44,12 @@ async function getUser(userId: string) {
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
   try {
-    const authUserId = await getAuthUserId();
-    if (!authUserId) {
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUser(authUserId);
+    const user = await getUser(userId);
 
     const products = await prisma.$queryRaw<any[]>`
       SELECT * FROM tracked_products
@@ -80,12 +80,12 @@ export async function GET() {
 // POST - Yeni urun ekle + AI analiz + capraz marketplace arama
 export async function POST(req: NextRequest) {
   try {
-    const authUserId = await getAuthUserId();
-    if (!authUserId) {
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUser(authUserId);
+    const user = await getUser(userId);
     const body = await req.json();
     const { productUrl } = body;
 
@@ -199,12 +199,12 @@ export async function POST(req: NextRequest) {
 // DELETE - Urun sil
 export async function DELETE(req: NextRequest) {
   try {
-    const authUserId = await getAuthUserId();
-    if (!authUserId) {
-      return NextResponse.json({ error: "Giriş yapmanız gerekiyor" }, { status: 401 });
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUser(authUserId);
+    const user = await getUser(userId);
     const { searchParams } = new URL(req.url);
     const productId = searchParams.get("id");
 
