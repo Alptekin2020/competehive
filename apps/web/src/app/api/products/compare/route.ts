@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
 
     // Ürünü bul
     const products = await prisma.$queryRaw<any[]>`
-      SELECT * FROM tracked_products WHERE id = ${productId}::uuid AND user_id = ${user.id} LIMIT 1
+      SELECT * FROM tracked_products WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text) LIMIT 1
     `;
     if (!products?.length) {
       return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
