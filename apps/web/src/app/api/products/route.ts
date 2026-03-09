@@ -148,6 +148,21 @@ export async function POST(req: NextRequest) {
       `;
     }
 
+    // 6. Trigger scrape fallback — parse product name from URL if scraper returned a bad name
+    try {
+      const baseUrl = req.nextUrl.origin;
+      fetch(`${baseUrl}/api/scrape/trigger`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          cookie: req.headers.get("cookie") || "",
+        },
+        body: JSON.stringify({ productId: product[0].id }),
+      }).catch((err) => console.error("Scrape trigger fire-and-forget error:", err));
+    } catch (err) {
+      console.error("Scrape trigger setup error:", err);
+    }
+
     return NextResponse.json({
       success: true,
       product: product[0],

@@ -35,14 +35,17 @@ export default function ProductsPage() {
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
 
-  useEffect(() => {
-    fetch("/api/products")
+  const fetchProducts = () => {
+    return fetch("/api/products")
       .then(res => res.json())
       .then(data => {
         if (data.products) setProducts(data.products);
       })
-      .catch(console.error)
-      .finally(() => setPageLoading(false));
+      .catch(console.error);
+  };
+
+  useEffect(() => {
+    fetchProducts().finally(() => setPageLoading(false));
   }, []);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -59,11 +62,12 @@ export default function ProductsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      const newProduct = { ...data.product, competitors: [] };
-      setProducts([newProduct, ...products]);
       setUrl("");
       setShowModal(false);
-      setExpandedProduct(newProduct.id);
+
+      // Re-fetch the full product list to get latest DB data (including scrape trigger updates)
+      await fetchProducts();
+      setExpandedProduct(data.product.id);
 
       // Arka planda rakip araması başlat
       fetch("/api/products/compare", {
