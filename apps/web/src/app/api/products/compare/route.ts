@@ -5,6 +5,34 @@ import { searchAllResults } from "@/lib/marketplace-search";
 
 export const maxDuration = 60;
 
+const DOMAIN_LABELS: Record<string, { name: string; color: string }> = {
+  "trendyol.com": { name: "Trendyol", color: "#F27A1A" },
+  "hepsiburada.com": { name: "Hepsiburada", color: "#FF6000" },
+  "amazon.com.tr": { name: "Amazon TR", color: "#FF9900" },
+  "n11.com": { name: "N11", color: "#7B2D8E" },
+  "mediamarkt.com.tr": { name: "MediaMarkt", color: "#FF0000" },
+  "teknosa.com": { name: "Teknosa", color: "#0066CC" },
+  "vatanbilgisayar.com": { name: "Vatan", color: "#CC0000" },
+};
+
+function getRetailerInfo(url: string) {
+  try {
+    const domain = new URL(url).hostname.replace("www.", "");
+    const label = DOMAIN_LABELS[domain];
+    return {
+      retailerDomain: domain,
+      retailerName: label?.name ?? domain,
+      retailerColor: label?.color ?? "#6B7280",
+    };
+  } catch {
+    return {
+      retailerDomain: "unknown",
+      retailerName: "Unknown",
+      retailerColor: "#6B7280",
+    };
+  }
+}
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -84,7 +112,17 @@ export async function POST(req: NextRequest) {
             INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
             VALUES (${comp[0].id}::uuid, ${result.price}, 'TRY', true)
           `;
-          competitors.push({ marketplace: mp, name: compName, price: result.price, url: result.url });
+          const retailer = getRetailerInfo(result.url);
+          competitors.push({
+            marketplace: mp,
+            name: compName,
+            price: result.price,
+            url: result.url,
+            link: result.url,
+            retailerDomain: retailer.retailerDomain,
+            retailerName: retailer.retailerName,
+            retailerColor: retailer.retailerColor,
+          });
         }
       } catch (e) {
         console.error(`Competitor save error for ${mp}:`, e);

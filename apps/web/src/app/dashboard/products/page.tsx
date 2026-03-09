@@ -78,7 +78,7 @@ export default function ProductsPage() {
         if (compareData.competitors?.length > 0) {
           setProducts(prev => prev.map(p =>
             p.id === data.product.id
-              ? { ...p, competitors: compareData.competitors.map((c: any) => ({ marketplace: c.marketplace, competitor_name: c.name, current_price: c.price, competitor_url: c.url })) }
+              ? { ...p, competitors: compareData.competitors.map((c: any) => ({ marketplace: c.marketplace, competitor_name: c.name, current_price: c.price, competitor_url: c.url, link: c.link, retailerDomain: c.retailerDomain, retailerName: c.retailerName, retailerColor: c.retailerColor })) }
               : p
           ));
         }
@@ -262,25 +262,25 @@ export default function ProductsPage() {
                             const isHigher = diff !== null && diff > 0;
 
                             return (
-                              <a
+                              <div
                                 key={idx}
-                                href={comp.competitor_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
                                 className="flex items-center gap-3 p-3 bg-dark-900 rounded-xl hover:bg-dark-800 transition"
                               >
                                 <span
                                   className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
                                   style={{
-                                    backgroundColor: `${(MARKETPLACE_LABELS[comp.marketplace]?.color || "#666")}20`,
-                                    color: MARKETPLACE_LABELS[comp.marketplace]?.color || "#999",
+                                    backgroundColor: `${(comp.retailerColor || MARKETPLACE_LABELS[comp.marketplace]?.color || "#666")}20`,
+                                    color: comp.retailerColor || MARKETPLACE_LABELS[comp.marketplace]?.color || "#999",
                                   }}
                                 >
-                                  {comp.marketplace === "CUSTOM" && comp.competitor_url
-                                    ? (() => { try { return new URL(comp.competitor_url).hostname.replace("www.", ""); } catch { return "Diğer"; } })()
-                                    : (MARKETPLACE_LABELS[comp.marketplace]?.name || comp.marketplace)}
+                                  {comp.retailerName || MARKETPLACE_LABELS[comp.marketplace]?.name || comp.marketplace}
                                 </span>
-                                <span className="text-sm text-dark-300 flex-1 truncate">{comp.competitor_name}</span>
+                                <a
+                                  href={comp.link || comp.competitor_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-sm text-dark-300 flex-1 truncate hover:underline"
+                                >{comp.competitor_name}</a>
                                 <span className={`text-sm font-semibold ${isLower ? "text-green-400" : isHigher ? "text-red-400" : "text-white"}`}>
                                   {compPrice ? `${compPrice.toLocaleString("tr-TR")} TL` : "\u2014"}
                                 </span>
@@ -289,8 +289,10 @@ export default function ProductsPage() {
                                     {isLower ? "" : "+"}{diff.toLocaleString("tr-TR")} TL
                                   </span>
                                 )}
-                                <svg className="w-4 h-4 text-dark-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                              </a>
+                                <a href={comp.link || comp.competitor_url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
+                                  <svg className="w-4 h-4 text-dark-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                </a>
+                              </div>
                             );
                           })}
                       </div>
@@ -313,7 +315,7 @@ export default function ProductsPage() {
                                   setProducts(prev =>
                                     prev.map(p =>
                                       p.id === product.id
-                                        ? { ...p, competitors: compareData.competitors.map((c: any) => ({ marketplace: c.marketplace, competitor_name: c.name, current_price: c.price, competitor_url: c.url })) }
+                                        ? { ...p, competitors: compareData.competitors.map((c: any) => ({ marketplace: c.marketplace, competitor_name: c.name, current_price: c.price, competitor_url: c.url, link: c.link, retailerDomain: c.retailerDomain, retailerName: c.retailerName, retailerColor: c.retailerColor })) }
                                         : p
                                     )
                                   );
