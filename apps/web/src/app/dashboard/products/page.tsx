@@ -164,7 +164,17 @@ export default function ProductsPage() {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-white font-medium text-sm truncate">{product.product_name}</h3>
+                    <h3 className="text-white font-medium text-sm truncate">
+                      <a
+                        href={product.product_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {product.product_name}
+                      </a>
+                    </h3>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span
                         className="text-xs font-medium px-2 py-0.5 rounded-full"
@@ -226,7 +236,15 @@ export default function ProductsPage() {
                       >
                         {MARKETPLACE_LABELS[product.marketplace]?.name || product.marketplace}
                       </span>
-                      <span className="text-sm text-white flex-1 truncate">{product.product_name}</span>
+                      <a
+                        href={product.product_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-white flex-1 truncate hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {product.product_name}
+                      </a>
                       <span className="text-sm font-semibold text-hive-500">
                         {myPrice ? `${myPrice.toLocaleString("tr-TR")} TL` : "\u2014"}
                       </span>
@@ -258,7 +276,9 @@ export default function ProductsPage() {
                                     color: MARKETPLACE_LABELS[comp.marketplace]?.color || "#999",
                                   }}
                                 >
-                                  {MARKETPLACE_LABELS[comp.marketplace]?.name || comp.marketplace}
+                                  {comp.marketplace === "CUSTOM" && comp.competitor_url
+                                    ? (() => { try { return new URL(comp.competitor_url).hostname.replace("www.", ""); } catch { return "Diğer"; } })()
+                                    : (MARKETPLACE_LABELS[comp.marketplace]?.name || comp.marketplace)}
                                 </span>
                                 <span className="text-sm text-dark-300 flex-1 truncate">{comp.competitor_name}</span>
                                 <span className={`text-sm font-semibold ${isLower ? "text-green-400" : isHigher ? "text-red-400" : "text-white"}`}>
