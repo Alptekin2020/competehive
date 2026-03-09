@@ -17,6 +17,14 @@ function parsePrice(priceStr: string): number | null {
   return isNaN(num) ? null : num;
 }
 
+// Valid DB enum values for Marketplace
+const VALID_MARKETPLACES = new Set([
+  "TRENDYOL", "HEPSIBURADA", "AMAZON_TR", "N11", "CICEKSEPETI", "PTTAVM",
+  "AKAKCE", "CIMRI", "EPEY", "BOYNER", "GRATIS", "WATSONS", "KITAPYURDU",
+  "DECATHLON", "TEKNOSA", "MEDIAMARKT", "SEPHORA", "KOCTAS", "VATAN",
+  "ITOPYA", "SHOPIFY", "CUSTOM",
+]);
+
 function detectStore(url: string, title: string): { marketplace: string; storeName: string } {
   const lower = (url + " " + title).toLowerCase();
   const stores: [string, string, string][] = [
@@ -37,30 +45,33 @@ function detectStore(url: string, title: string): { marketplace: string; storeNa
     ["decathlon", "DECATHLON", "Decathlon"],
     ["vatanbilgisayar", "VATAN", "Vatan"],
     ["itopya", "ITOPYA", "İtopya"],
-    ["migros", "MIGROS", "Migros"],
-    ["carrefour", "CARREFOUR", "CarrefourSA"],
-    ["lcwaikiki", "LCWAIKIKI", "LC Waikiki"],
-    ["flo.com", "FLO", "FLO"],
-    ["nike.com", "NIKE", "Nike"],
-    ["adidas.com", "ADIDAS", "Adidas"],
-    ["ikea.com", "IKEA", "IKEA"],
-    ["karaca.com", "KARACA", "Karaca"],
-    ["dr.com.tr", "DR", "D&R"],
-    ["bkmkitap", "BKMKITAP", "BKM Kitap"],
-    ["idefix", "IDEFIX", "İdefix"],
-    ["rossmann", "ROSSMANN", "Rossmann"],
-    ["a101", "A101", "A101"],
-    ["sok.com", "SOK", "ŞOK"],
-    ["mavi.com", "MAVI", "Mavi"],
-    ["koton.com", "KOTON", "Koton"],
-    ["defacto", "DEFACTO", "DeFacto"],
-    ["superstep", "SUPERSTEP", "SuperStep"],
-    ["vivense", "VIVENSE", "Vivense"],
-    ["bellona", "BELLONA", "Bellona"],
-    ["madamecoco", "MADAMECOCO", "Madame Coco"],
-    ["morhipo", "MORHIPO", "Morhipo"],
-    ["evidea", "EVIDEA", "Evidea"],
-    ["electroworld", "ELECTROWORLD", "Electro World"],
+    ["akakce", "AKAKCE", "Akakçe"],
+    ["cimri.com", "CIMRI", "Cimri"],
+    ["epey.com", "EPEY", "Epey"],
+    ["migros", "CUSTOM", "Migros"],
+    ["carrefour", "CUSTOM", "CarrefourSA"],
+    ["lcwaikiki", "CUSTOM", "LC Waikiki"],
+    ["flo.com", "CUSTOM", "FLO"],
+    ["nike.com", "CUSTOM", "Nike"],
+    ["adidas.com", "CUSTOM", "Adidas"],
+    ["ikea.com", "CUSTOM", "IKEA"],
+    ["karaca.com", "CUSTOM", "Karaca"],
+    ["dr.com.tr", "CUSTOM", "D&R"],
+    ["bkmkitap", "CUSTOM", "BKM Kitap"],
+    ["idefix", "CUSTOM", "İdefix"],
+    ["rossmann", "CUSTOM", "Rossmann"],
+    ["a101", "CUSTOM", "A101"],
+    ["sok.com", "CUSTOM", "ŞOK"],
+    ["mavi.com", "CUSTOM", "Mavi"],
+    ["koton.com", "CUSTOM", "Koton"],
+    ["defacto", "CUSTOM", "DeFacto"],
+    ["superstep", "CUSTOM", "SuperStep"],
+    ["vivense", "CUSTOM", "Vivense"],
+    ["bellona", "CUSTOM", "Bellona"],
+    ["madamecoco", "CUSTOM", "Madame Coco"],
+    ["morhipo", "CUSTOM", "Morhipo"],
+    ["evidea", "CUSTOM", "Evidea"],
+    ["electroworld", "CUSTOM", "Electro World"],
   ];
   for (const [keyword, mp, name] of stores) {
     if (lower.includes(keyword)) return { marketplace: mp, storeName: name };
@@ -89,7 +100,7 @@ async function searchSerper(query: string): Promise<MarketplaceResult[]> {
     const shoppingRes = await fetch("https://google.serper.dev/shopping", {
       method: "POST",
       headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ q: query, gl: "tr", hl: "tr", num: 10 }),
+      body: JSON.stringify({ q: query, gl: "tr", hl: "tr", num: 20 }),
       cache: "no-store",
     });
 
@@ -126,7 +137,7 @@ async function searchSerper(query: string): Promise<MarketplaceResult[]> {
     const searchRes = await fetch("https://google.serper.dev/search", {
       method: "POST",
       headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ q: query + " fiyat satın al", gl: "tr", hl: "tr", num: 10 }),
+      body: JSON.stringify({ q: query + " fiyat satın al", gl: "tr", hl: "tr", num: 20 }),
       cache: "no-store",
     });
 
@@ -214,7 +225,36 @@ export function findBestMatch(results: MarketplaceResult[], originalProduct: str
   return results.length > 0 ? results[0] : null;
 }
 
-// ANA FONKSİYON
+// Return all matched results as a flat array, sorted by price ascending
+export async function searchAllResults(
+  keywords: string[],
+  sourceMarketplace: string
+): Promise<MarketplaceResult[]> {
+  const query = keywords.join(" ");
+  console.log(`[CompeteHive] Searching: "${query}" (source: ${sourceMarketplace})`);
+
+  const allResults = await searchSerper(query);
+  console.log(`[CompeteHive] Total: ${allResults.length} results`);
+
+  const bestMatches = await selectBestMatches(allResults, query);
+  console.log(`[CompeteHive] AI matched: ${bestMatches.length}`);
+
+  // Filter out source marketplace, keep all others (no domain whitelist)
+  const filtered = bestMatches.filter(r => r.marketplace !== sourceMarketplace);
+
+  // Sort by price ascending (null prices at end)
+  filtered.sort((a, b) => {
+    if (a.price === null && b.price === null) return 0;
+    if (a.price === null) return 1;
+    if (b.price === null) return -1;
+    return a.price - b.price;
+  });
+
+  console.log(`[CompeteHive] Final: ${filtered.length} results from all sources`);
+  return filtered;
+}
+
+// ANA FONKSİYON (legacy, grouped by marketplace)
 export async function searchAllMarketplaces(
   keywords: string[],
   sourceMarketplace: string

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { searchAllMarketplaces, findBestMatch } from "@/lib/marketplace-search";
+import { searchAllResults } from "@/lib/marketplace-search";
 
 export const maxDuration = 60;
 
@@ -45,63 +45,54 @@ export async function POST(req: NextRequest) {
 
     console.log("Compare searching for:", keywords, "excluding:", product.marketplace);
 
-    // Tüm marketplace'lerde ara
-    const allResults = await searchAllMarketplaces(keywords, product.marketplace);
-    console.log("[CompeteHive Compare] Results:", JSON.stringify(Object.keys(allResults)));
+    // Tüm web'de ara (marketplace filtresi yok)
+    const allResults = await searchAllResults(keywords, product.marketplace);
+    console.log("[CompeteHive Compare] Total results:", allResults.length);
     const competitors: any[] = [];
 
-    console.log("Search results:", Object.keys(allResults).map(k => `${k}: ${allResults[k].length} results`));
+    // Delete old competitors for this product before inserting fresh results
+    await prisma.$executeRaw`
+      DELETE FROM competitor_prices WHERE competitor_id IN (
+        SELECT id FROM competitors WHERE tracked_product_id = ${productId}::uuid
+      )
+    `;
+    await prisma.$executeRaw`
+      DELETE FROM competitors WHERE tracked_product_id = ${productId}::uuid
+    `;
 
-    for (const [mp, results] of Object.entries(allResults)) {
-      const best = findBestMatch(results, product.product_name);
-      if (best && best.price) {
-        const compName = best.storeName
-          ? `${best.storeName} — ${best.productName}`.substring(0, 200)
-          : best.productName.substring(0, 200);
-        try {
-          // Mevcut competitor varsa güncelle, yoksa ekle
-          const existing = await prisma.$queryRaw<any[]>`
-            SELECT id FROM competitors
-            WHERE tracked_product_id = ${productId}::uuid AND marketplace = ${mp}::"Marketplace"
-            LIMIT 1
+    for (const result of allResults) {
+      if (!result.price) continue;
+      const mp = result.marketplace;
+      const compName = result.storeName
+        ? `${result.storeName} — ${result.productName}`.substring(0, 200)
+        : result.productName.substring(0, 200);
+      try {
+        const comp = await prisma.$queryRaw<any[]>`
+          INSERT INTO competitors (tracked_product_id, competitor_url, competitor_name, marketplace, current_price, last_scraped_at)
+          VALUES (
+            ${productId}::uuid,
+            ${result.url.substring(0, 500)},
+            ${compName},
+            ${mp}::"Marketplace",
+            ${result.price},
+            NOW()
+          ) RETURNING *
+        `;
+
+        if (comp?.[0]) {
+          await prisma.$executeRaw`
+            INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
+            VALUES (${comp[0].id}::uuid, ${result.price}, 'TRY', true)
           `;
-
-          if (existing?.length) {
-            await prisma.$executeRaw`
-              UPDATE competitors SET
-                competitor_url = ${best.url.substring(0, 500)},
-                competitor_name = ${compName},
-                current_price = ${best.price},
-                last_scraped_at = NOW()
-              WHERE id = ${existing[0].id}::uuid
-            `;
-            competitors.push({ marketplace: mp, name: compName, price: best.price, url: best.url });
-          } else {
-            const comp = await prisma.$queryRaw<any[]>`
-              INSERT INTO competitors (tracked_product_id, competitor_url, competitor_name, marketplace, current_price, last_scraped_at)
-              VALUES (
-                ${productId}::uuid,
-                ${best.url.substring(0, 500)},
-                ${compName},
-                ${mp}::"Marketplace",
-                ${best.price},
-                NOW()
-              ) RETURNING *
-            `;
-
-            if (comp?.[0]) {
-              await prisma.$executeRaw`
-                INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
-                VALUES (${comp[0].id}::uuid, ${best.price}, 'TRY', true)
-              `;
-              competitors.push({ marketplace: mp, name: compName, price: best.price, url: best.url });
-            }
-          }
-        } catch (e) {
-          console.error(`Competitor save error for ${mp}:`, e);
+          competitors.push({ marketplace: mp, name: compName, price: result.price, url: result.url });
         }
+      } catch (e) {
+        console.error(`Competitor save error for ${mp}:`, e);
       }
     }
+
+    // Sort by price ascending
+    competitors.sort((a, b) => a.price - b.price);
 
     console.log("Found competitors:", competitors.length);
 
