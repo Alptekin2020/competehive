@@ -17,7 +17,7 @@ export async function GET() {
 
     const products = await prisma.$queryRaw<any[]>`
       SELECT * FROM tracked_products
-      WHERE user_id = ${user.id}
+      WHERE user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
       ORDER BY created_at DESC
     `;
 
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     const marketplace = detectMarketplaceFromUrl(productUrl);
 
     const productCount = await prisma.$queryRaw<any[]>`
-      SELECT COUNT(*) as count FROM tracked_products WHERE user_id = ${user.id}
+      SELECT COUNT(*) as count FROM tracked_products WHERE user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
     `;
     if (parseInt(productCount[0].count) >= user.maxProducts) {
       return NextResponse.json(
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
         product_image, seller_name, current_price, currency,
         status, last_scraped_at, metadata
       ) VALUES (
-        ${user.id},
+        (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text),
         ${productName},
         ${marketplace}::"Marketplace",
         ${productUrl},
@@ -194,7 +194,7 @@ export async function DELETE(req: NextRequest) {
       DELETE FROM competitors WHERE tracked_product_id = ${productId}::uuid
     `;
     await prisma.$queryRaw`
-      DELETE FROM tracked_products WHERE id = ${productId}::uuid AND user_id = ${user.id}
+      DELETE FROM tracked_products WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
     `;
 
     return NextResponse.json({ success: true });

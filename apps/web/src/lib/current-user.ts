@@ -1,30 +1,18 @@
 import { randomUUID } from "crypto";
-import { Prisma } from "@prisma/client";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import prisma from "@/lib/prisma";
+import pool from "@/lib/db-pool";
 
-function isMissingClerkIdColumnError(error: unknown) {
-  if (error instanceof Error && error.message.includes("clerk_id") && error.message.includes("does not exist")) {
-    return true;
-  }
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError &&
-    error.code === "P2022" &&
-    error.message.includes("clerk_id")
-  );
+export interface AppUser {
+  id: string;
+  clerkId: string;
+  email: string;
+  name: string | null;
+  plan: string;
+  maxProducts: number;
+  isActive: boolean;
 }
 
-function throwSchemaDriftError(error: unknown) {
-  console.error(
-    "Database schema is out of date: users.clerk_id is missing. Ensure deployment runs Prisma migrations before starting the web app.",
-    error
-  );
-  throw new Error(
-    "DATABASE_SCHEMA_OUT_OF_DATE: Missing users.clerk_id column. Automatic deployment must run Prisma migrations before serving requests."
-  );
-}
-
-export async function getCurrentUser() {
+export async function getCurrentUser(): Promise<AppUser | null> {
   const { userId } = await auth();
   if (!userId) {
     return null;
@@ -45,34 +33,53 @@ export async function getCurrentUser() {
       clerkUser.username ||
       null;
 
-    // Incremental auth fix: preserve internal UUIDs and map Clerk IDs via `clerkId`.
-    return prisma.user.upsert({
-      where: { clerkId: userId },
-      update: {
-        email,
-        name,
-        isActive: true,
-      },
-      create: {
-        id: randomUUID(),
-        clerkId: userId,
-        email,
-        name,
-      },
-    });
-  } catch (error) {
-    if (isMissingClerkIdColumnError(error)) {
-      throwSchemaDriftError(error);
-    }
+    const newId = randomUUID();
 
+    // Upsert user by clerk_id using pg directly
+    const result = await pool.query(
+      `INSERT INTO users (id, clerk_id, email, name, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       ON CONFLICT (clerk_id) DO UPDATE SET
+         email = EXCLUDED.email,
+         name = EXCLUDED.name,
+         is_active = true
+       RETURNING id, clerk_id, email, name, plan, max_products, is_active`,
+      [newId, userId, email, name]
+    );
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      clerkId: row.clerk_id,
+      email: row.email,
+      name: row.name,
+      plan: row.plan,
+      maxProducts: row.max_products,
+      isActive: row.is_active,
+    };
+  } catch (error) {
     console.error("Failed to provision Clerk user in database", error);
 
+    // Fallback: try to find existing user by clerk_id
     try {
-      return await prisma.user.findUnique({ where: { clerkId: userId } });
+      const result = await pool.query(
+        `SELECT id, clerk_id, email, name, plan, max_products, is_active
+         FROM users WHERE clerk_id = $1`,
+        [userId]
+      );
+      if (result.rows.length === 0) return null;
+      const row = result.rows[0];
+      return {
+        id: row.id,
+        clerkId: row.clerk_id,
+        email: row.email,
+        name: row.name,
+        plan: row.plan,
+        maxProducts: row.max_products,
+        isActive: row.is_active,
+      };
     } catch (fallbackError) {
-      if (isMissingClerkIdColumnError(fallbackError)) {
-        throwSchemaDriftError(fallbackError);
-      }
+      console.error("Fallback user lookup failed", fallbackError);
       throw fallbackError;
     }
   }

@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     const products = await prisma.$queryRaw<any[]>`
       SELECT id, product_url, product_name, marketplace, status
       FROM tracked_products
-      WHERE id = ${productId}::uuid AND user_id = ${user.id}
+      WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
     `;
 
     if (!products || products.length === 0) {
@@ -92,14 +92,14 @@ export async function POST(req: NextRequest) {
         UPDATE tracked_products
         SET product_name = ${parsedName},
             status = 'ACTIVE'::"ProductStatus"
-        WHERE id = ${productId}::uuid AND user_id = ${user.id}
+        WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
       `;
     } else if (product.status !== "ACTIVE") {
       // At minimum, set status to ACTIVE
       await prisma.$queryRaw`
         UPDATE tracked_products
         SET status = 'ACTIVE'::"ProductStatus"
-        WHERE id = ${productId}::uuid AND user_id = ${user.id}
+        WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
       `;
     }
 
