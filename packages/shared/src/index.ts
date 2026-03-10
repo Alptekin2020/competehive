@@ -65,3 +65,12 @@ export const MARKETPLACES: Record<string, MarketplaceInfo> = {
   AMAZON_TR: { id: "AMAZON_TR", name: "Amazon TR", domain: "amazon.com.tr", icon: "📦", color: "#FF9900" },
   N11: { id: "N11", name: "N11", domain: "n11.com", icon: "🟣", color: "#7B2D8E" },
 };
+
+export const SUPPORTED_SCRAPER_MARKETPLACES = [
+  "TRENDYOL",
+  "HEPSIBURADA",
+  "AMAZON_TR",
+  "N11",
+] as const;
+
+export type SupportedScraperMarketplace = (typeof SUPPORTED_SCRAPER_MARKETPLACES)[number];

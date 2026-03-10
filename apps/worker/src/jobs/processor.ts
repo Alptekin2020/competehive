@@ -1,6 +1,6 @@
 import { Queue, Worker, Job } from "bullmq";
-import { PrismaClient, Prisma, Marketplace } from "@prisma/client";
-import { getScraper, ScrapedProduct } from "../scrapers";
+import { PrismaClient } from "@prisma/client";
+import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
 
@@ -86,7 +86,7 @@ export const scrapeWorker = new Worker(
           category: result.category || undefined,
           lastScrapedAt: new Date(),
           status: result.inStock ? "ACTIVE" : "OUT_OF_STOCK",
-          metadata: result.metadata as Prisma.InputJsonValue | undefined,
+          metadata: result.metadata ?? undefined,
         },
       });
 
@@ -112,15 +112,49 @@ export const scrapeWorker = new Worker(
 
       return { success: true, price: result.price };
     } catch (error) {
-      logger.error({ productId, error }, "Scrape job failed");
+      const attemptsMade = job.attemptsMade + 1;
+      const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+      const scraperError = error instanceof ScraperError
+        ? error
+        : new ScraperError(error instanceof Error ? error.message : "Unknown scrape error", {
+          code: "SCRAPE_RUNTIME_ERROR",
+          retryable: true,
+        });
 
-      // Hata durumunu güncelle
+      const shouldRetry = scraperError.retryable && attemptsMade < maxAttempts;
+
+      logger.error({
+        productId,
+        attemptsMade,
+        maxAttempts,
+        code: scraperError.code,
+        retryable: scraperError.retryable,
+        softFail: scraperError.softFail,
+        error: scraperError,
+      }, "Scrape job failed");
+
+      if (shouldRetry) {
+        throw scraperError;
+      }
+
       await prisma.trackedProduct.update({
         where: { id: productId },
-        data: { status: "ERROR" },
+        data: {
+          lastScrapedAt: new Date(),
+        },
       });
 
-      throw error;
+      logger.warn({
+        productId,
+        attemptsMade,
+        code: scraperError.code,
+      }, "Scrape failed after retries; applying soft-fail policy without setting ERROR status");
+
+      return {
+        success: false,
+        softFailed: true,
+        code: scraperError.code,
+      };
     }
   },
   {
