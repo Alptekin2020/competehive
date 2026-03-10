@@ -85,11 +85,10 @@ npm run dev:worker
 
 ## Veritabanı Disiplini
 
-- Şema değişiklikleri sadece `packages/database/prisma/schema.prisma` üzerinden yapılır.
-- Production deploy sırasında migration otomatik olarak build akışında uygulanır (`apps/web` build => managed `prisma migrate deploy`).
-- Vercel preview deploylarında migration adımı güvenli şekilde atlanır; production deploy migration uygular.
-- Geliştirme ortamında şema değişikliği için Prisma CLI kullanılabilir (`prisma migrate dev`).
-- HTTP endpoint üzerinden tablo/enum oluşturma veya ALTER işlemi yapılmaz.
+- Şema değişiklikleri yalnızca Prisma migration dosyalarıyla yönetilir: `packages/database/prisma/migrations/*`.
+- Deployment akışında tek migration adımı vardır: `prisma migrate deploy`.
+- Uygulama runtime'ında (API route, server action vb.) DDL/ALTER çalıştırılmaz.
+- Geliştirme ortamında yeni migration üretmek için `prisma migrate dev` kullanılır; deploy'da yalnızca üretilmiş migration'lar uygulanır.
 
 ## Debug Endpoint Güvenlik Politikası
 
