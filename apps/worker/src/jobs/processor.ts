@@ -61,14 +61,22 @@ export const scrapeWorker = new Worker(
       // Mevcut fiyatı al
       const product = await prisma.trackedProduct.findUnique({
         where: { id: productId },
-        select: { currentPrice: true },
+        select: {
+          currentPrice: true,
+          status: true,
+        },
       });
 
       const previousPrice = product?.currentPrice ? Number(product.currentPrice) : null;
+      const previousInStock = product
+        ? product.status !== "OUT_OF_STOCK"
+        : null;
       const priceChange = previousPrice ? result.price - previousPrice : null;
       const priceChangePct = previousPrice && previousPrice > 0
         ? ((result.price - previousPrice) / previousPrice) * 100
         : null;
+      const priceChanged = priceChange !== null && priceChange !== 0;
+      const stockChanged = previousInStock !== null && previousInStock !== result.inStock;
 
       // Fiyat geçmişine kaydet
       await prisma.priceHistory.create({
@@ -99,15 +107,22 @@ export const scrapeWorker = new Worker(
         },
       });
 
-      // Fiyat değişikliği varsa alert kontrolü yap
-      if (priceChange !== null && priceChange !== 0) {
+      // Fiyat veya stok değişikliği varsa alert kontrolü yap
+      if (priceChanged || stockChanged) {
+        const eventTypes = [
+          ...(priceChanged ? ["price-change"] : []),
+          ...(stockChanged ? ["stock-change"] : []),
+        ];
+
         await alertQueue.add("check-alerts", {
           productId,
+          eventTypes,
           currentPrice: result.price,
           previousPrice,
           priceChange,
           priceChangePct,
           inStock: result.inStock,
+          previousInStock,
         });
       }
 
@@ -183,9 +198,43 @@ export const scrapeWorker = new Worker(
 export const alertWorker = new Worker(
   "alerts",
   async (job: Job) => {
-    const { productId, currentPrice, previousPrice, priceChange, priceChangePct, inStock } = job.data;
+    const {
+      productId,
+      currentPrice,
+      previousPrice,
+      priceChange,
+      priceChangePct,
+      inStock,
+      previousInStock,
+      eventTypes,
+    } = job.data;
 
-    logger.info({ productId, priceChange }, "Checking alerts");
+    const normalizedEventTypes: string[] = Array.isArray(eventTypes)
+      ? eventTypes
+      : [];
+    const isPriceEvent = normalizedEventTypes.includes("price-change")
+      || (priceChange !== null && priceChange !== 0);
+    const isStockEvent = normalizedEventTypes.includes("stock-change")
+      || (typeof previousInStock === "boolean" && previousInStock !== inStock);
+
+    logger.info({ productId, priceChange, isPriceEvent, isStockEvent }, "Checking alerts");
+
+    let previousStockState: boolean | null = typeof previousInStock === "boolean"
+      ? previousInStock
+      : null;
+
+    if (previousStockState === null && isStockEvent) {
+      const recentHistory = await prisma.priceHistory.findMany({
+        where: { trackedProductId: productId },
+        orderBy: { scrapedAt: "desc" },
+        take: 2,
+        select: { inStock: true },
+      });
+
+      if (recentHistory.length > 1) {
+        previousStockState = recentHistory[1].inStock;
+      }
+    }
 
     // Bu ürün için aktif kuralları al
     const rules = await prisma.alertRule.findMany({
@@ -213,12 +262,15 @@ export const alertWorker = new Worker(
       // Kural tipine göre kontrol
       switch (rule.ruleType) {
         case "PRICE_DROP":
+          if (!isPriceEvent || priceChange === null) break;
           shouldAlert = priceChange < 0;
           break;
         case "PRICE_INCREASE":
+          if (!isPriceEvent || priceChange === null) break;
           shouldAlert = priceChange > 0;
           break;
         case "PRICE_THRESHOLD":
+          if (!isPriceEvent) break;
           if (rule.direction === "below") {
             shouldAlert = currentPrice <= Number(rule.thresholdValue);
           } else {
@@ -226,13 +278,16 @@ export const alertWorker = new Worker(
           }
           break;
         case "PERCENTAGE_CHANGE":
+          if (!isPriceEvent || priceChangePct === null) break;
           shouldAlert = Math.abs(priceChangePct) >= Number(rule.thresholdValue);
           break;
         case "OUT_OF_STOCK":
-          shouldAlert = !inStock;
+          if (!isStockEvent || previousStockState === null) break;
+          shouldAlert = previousStockState && !inStock;
           break;
         case "BACK_IN_STOCK":
-          shouldAlert = inStock;
+          if (!isStockEvent || previousStockState === null) break;
+          shouldAlert = !previousStockState && inStock;
           break;
       }
 
