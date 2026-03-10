@@ -159,6 +159,7 @@ model Competitor {
   trackedProduct   TrackedProduct    @relation(fields: [trackedProductId], references: [id], onDelete: Cascade)
   competitorPrices CompetitorPrice[]
 
+  @@unique([trackedProductId, competitorUrl])
   @@map("competitors")
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { searchAllResults } from "@/lib/marketplace-search";
+import { searchAllResults, normalizeMarketplaceResult } from "@/lib/marketplace-search";
 
 export const maxDuration = 60;
 
@@ -77,56 +77,82 @@ export async function POST(req: NextRequest) {
     const allResults = await searchAllResults(keywords, product.marketplace);
     console.log("[CompeteHive Compare] Total results:", allResults.length);
     const competitors: any[] = [];
-
-    // Delete old competitors for this product before inserting fresh results
-    await prisma.$executeRaw`
-      DELETE FROM competitor_prices WHERE competitor_id IN (
-        SELECT id FROM competitors WHERE tracked_product_id = ${productId}::uuid
-      )
-    `;
-    await prisma.$executeRaw`
-      DELETE FROM competitors WHERE tracked_product_id = ${productId}::uuid
-    `;
+    const insertErrors: Array<Record<string, unknown>> = [];
+    let skippedCount = 0;
+    let errorCount = 0;
 
     for (const result of allResults) {
-      if (!result.price) continue;
-      const mp = result.marketplace;
-      const compName = result.storeName
-        ? `${result.storeName} — ${result.productName}`.substring(0, 200)
-        : result.productName.substring(0, 200);
+      if (!result.price || !result.url) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const normalizedResult = normalizeMarketplaceResult(result, "fallback-custom");
+      if (!normalizedResult) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const mp = normalizedResult.marketplace;
+      const normalizedUrl = normalizedResult.url.substring(0, 500);
+      const compName = normalizedResult.storeName
+        ? `${normalizedResult.storeName} — ${normalizedResult.productName}`.substring(0, 200)
+        : normalizedResult.productName.substring(0, 200);
+
       try {
         const comp = await prisma.$queryRaw<any[]>`
           INSERT INTO competitors (tracked_product_id, competitor_url, competitor_name, marketplace, current_price, last_scraped_at)
           VALUES (
             ${productId}::uuid,
-            ${result.url.substring(0, 500)},
+            ${normalizedUrl},
             ${compName},
             ${mp}::"Marketplace",
-            ${result.price},
+            ${normalizedResult.price},
             NOW()
-          ) RETURNING *
+          )
+          ON CONFLICT (tracked_product_id, competitor_url)
+          DO UPDATE SET
+            competitor_name = EXCLUDED.competitor_name,
+            marketplace = EXCLUDED.marketplace,
+            current_price = EXCLUDED.current_price,
+            last_scraped_at = EXCLUDED.last_scraped_at
+          RETURNING *
         `;
 
         if (comp?.[0]) {
           await prisma.$executeRaw`
             INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
-            VALUES (${comp[0].id}::uuid, ${result.price}, 'TRY', true)
+            VALUES (${comp[0].id}::uuid, ${normalizedResult.price}, 'TRY', true)
           `;
-          const retailer = getRetailerInfo(result.url);
+          const retailer = getRetailerInfo(normalizedResult.url);
           competitors.push({
             marketplace: mp,
             name: compName,
-            price: result.price,
-            url: result.url,
-            link: result.url,
+            price: normalizedResult.price,
+            url: normalizedResult.url,
+            link: normalizedResult.url,
             retailerDomain: retailer.retailerDomain,
             retailerName: retailer.retailerName,
             retailerColor: retailer.retailerColor,
           });
         }
-      } catch (e) {
-        console.error(`Competitor save error for ${mp}:`, e);
+      } catch (e: any) {
+        errorCount += 1;
+        insertErrors.push({
+          marketplace: mp,
+          url: normalizedUrl,
+          message: e?.message ?? "Unknown insert error",
+          code: e?.code ?? null,
+        });
       }
+    }
+
+    if (insertErrors.length) {
+      console.error("[CompeteHive Compare] Competitor insert errors", {
+        productId,
+        totalErrors: insertErrors.length,
+        errors: insertErrors,
+      });
     }
 
     // Sort by price ascending
@@ -134,7 +160,7 @@ export async function POST(req: NextRequest) {
 
     console.log("Found competitors:", competitors.length);
 
-    return NextResponse.json({ success: true, competitors });
+    return NextResponse.json({ success: true, competitors, skippedCount, errorCount });
   } catch (error: any) {
     console.error("Compare error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
