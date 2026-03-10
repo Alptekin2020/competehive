@@ -103,7 +103,7 @@ function extractFromTrendyolInitialState($: cheerio.CheerioAPI): { name: string;
     const content = $(el).html() || "";
     if (content.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__")) {
       try {
-        const match = content.match(/__PRODUCT_DETAIL_APP_INITIAL_STATE__\s*=\s*({.*?});/s);
+        const match = content.match(/__PRODUCT_DETAIL_APP_INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/);
         if (match) {
           const state = JSON.parse(match[1]);
           const product = state.product;
