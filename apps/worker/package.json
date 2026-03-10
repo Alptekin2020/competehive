@@ -15,7 +15,8 @@
     "node-telegram-bot-api": "^0.66.0",
     "nodemailer": "^6.9.0",
     "dotenv": "^16.4.0",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "@competehive/shared": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

@@ -1,8 +1,7 @@
+import { MARKETPLACES, SUPPORTED_SCRAPER_MARKETPLACES } from "@competehive/shared";
+
 export const MARKETPLACE_VALUES = [
-  "TRENDYOL",
-  "HEPSIBURADA",
-  "AMAZON_TR",
-  "N11",
+  ...SUPPORTED_SCRAPER_MARKETPLACES,
   "CICEKSEPETI",
   "PTTAVM",
   "AKAKCE",
@@ -25,11 +24,13 @@ export const MARKETPLACE_VALUES = [
 
 export type MarketplaceValue = (typeof MARKETPLACE_VALUES)[number];
 
+export const SUPPORTED_MARKETPLACES = [...SUPPORTED_SCRAPER_MARKETPLACES] as const;
+
 const MARKETPLACE_DOMAIN_MAP: Array<{ keyword: string; marketplace: MarketplaceValue }> = [
-  { keyword: "trendyol.com", marketplace: "TRENDYOL" },
-  { keyword: "hepsiburada.com", marketplace: "HEPSIBURADA" },
-  { keyword: "amazon.com.tr", marketplace: "AMAZON_TR" },
-  { keyword: "n11.com", marketplace: "N11" },
+  ...Object.values(MARKETPLACES).map((marketplace) => ({
+    keyword: marketplace.domain,
+    marketplace: marketplace.id as MarketplaceValue,
+  })),
   { keyword: "ciceksepeti.com", marketplace: "CICEKSEPETI" },
   { keyword: "pttavm.com", marketplace: "PTTAVM" },
   { keyword: "akakce.com", marketplace: "AKAKCE" },
