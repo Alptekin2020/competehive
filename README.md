@@ -90,3 +90,10 @@ npm run dev:worker
 - Vercel preview deploylarında migration adımı güvenli şekilde atlanır; production deploy migration uygular.
 - Geliştirme ortamında şema değişikliği için Prisma CLI kullanılabilir (`prisma migrate dev`).
 - HTTP endpoint üzerinden tablo/enum oluşturma veya ALTER işlemi yapılmaz.
+
+## Debug Endpoint Güvenlik Politikası
+
+- `GET /api/debug-search` endpointi **public route değildir** ve kimlik doğrulama katmanından geçer.
+- Endpoint yalnızca local/development amaçlıdır; `NODE_ENV === "production"` olduğunda `404` döndürerek erişimi kapatır.
+- API key, secret veya bu değerlere ait prefix/türetilmiş bilgiler response içinde asla döndürülmez.
+- Bu endpoint internetten herkese açık şekilde yayınlanmamalı, yalnızca güvenli geliştirme ortamlarında kullanılmalıdır.
