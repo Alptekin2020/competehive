@@ -2,17 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 30;
 
-export async function GET(req: NextRequest) {
-  const query = req.nextUrl.searchParams.get("q") || "samsung televizyon";
-  const results: any = {};
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
 
-  // Serper.dev test
+export async function GET(req: NextRequest) {
+  if (isProduction()) {
+    return NextResponse.json({ error: "Not Found" }, { status: 404 });
+  }
+
+  const query = req.nextUrl.searchParams.get("q") || "samsung televizyon";
+  const results: {
+    serperConfigured: boolean;
+    shopping?: unknown;
+    organic?: unknown;
+    openaiConfigured: boolean;
+    googleSearchConfigured: boolean;
+    googleSearchEngineConfigured: boolean;
+  } = {
+    serperConfigured: !!process.env.SERPER_API_KEY,
+    openaiConfigured: !!process.env.OPENAI_API_KEY,
+    googleSearchConfigured: !!process.env.GOOGLE_SEARCH_API_KEY,
+    googleSearchEngineConfigured: !!process.env.GOOGLE_SEARCH_ENGINE_ID,
+  };
+
   const serperKey = process.env.SERPER_API_KEY;
-  results.serperKeyExists = !!serperKey;
-  results.serperKeyPrefix = serperKey ? serperKey.substring(0, 8) + "..." : "MISSING";
 
   if (serperKey) {
-    // Shopping arama
     try {
       const shoppingRes = await fetch("https://google.serper.dev/shopping", {
         method: "POST",
@@ -36,7 +52,6 @@ export async function GET(req: NextRequest) {
       results.shopping = { error: e.message };
     }
 
-    // Normal arama
     try {
       const searchRes = await fetch("https://google.serper.dev/search", {
         method: "POST",
@@ -59,13 +74,6 @@ export async function GET(req: NextRequest) {
       results.organic = { error: e.message };
     }
   }
-
-  // OpenAI key test
-  results.openaiKeyExists = !!process.env.OPENAI_API_KEY;
-
-  // Google Custom Search key test
-  results.googleKeyExists = !!process.env.GOOGLE_SEARCH_API_KEY;
-  results.googleCxExists = !!process.env.GOOGLE_SEARCH_ENGINE_ID;
 
   return NextResponse.json(results);
 }
