@@ -1,10 +1,19 @@
 import { Queue, Worker, Job } from "bullmq";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
 
 const prisma = new PrismaClient();
+
+function toPrismaJsonObject(value?: Record<string, unknown>): Prisma.InputJsonValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  // Prisma JSON alanına yalnızca JSON-uyumlu değer gönder.
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
 
 const connection = {
   url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -86,7 +95,7 @@ export const scrapeWorker = new Worker(
           category: result.category || undefined,
           lastScrapedAt: new Date(),
           status: result.inStock ? "ACTIVE" : "OUT_OF_STOCK",
-          metadata: result.metadata ?? undefined,
+          metadata: toPrismaJsonObject(result.metadata),
         },
       });
 
