@@ -83,6 +83,47 @@ function extractFromMeta($: cheerio.CheerioAPI): { name: string; image: string |
   return { name, image };
 }
 
+// Trendyol başlığını temizle — "- Online Alışveriş" ve benzeri ekleri kaldır
+function cleanTrendyolTitle(title: string): string {
+  return title
+    .replace(/\s*[-–]\s*Online Alışveriş.*$/i, "")
+    .replace(/\s*[-–]\s*Trendyol\.com.*$/i, "")
+    .replace(/\s*\|\s*Trendyol.*$/i, "")
+    .trim();
+}
+
+// __PRODUCT_DETAIL_APP_INITIAL_STATE__ script'inden ürün bilgisi çek
+function extractFromTrendyolInitialState($: cheerio.CheerioAPI): { name: string; price: number | null; image: string | null; seller: string | null } {
+  let name = "";
+  let price: number | null = null;
+  let image: string | null = null;
+  let seller: string | null = null;
+
+  $("script").each((_, el) => {
+    const content = $(el).html() || "";
+    if (content.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__")) {
+      try {
+        const match = content.match(/__PRODUCT_DETAIL_APP_INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/);
+        if (match) {
+          const state = JSON.parse(match[1]);
+          const product = state.product;
+          if (product) {
+            if (!name && product.name) name = product.name;
+            if (!price && product.price?.sellingPrice?.value) price = product.price.sellingPrice.value;
+            if (!price && product.price?.discountedPrice?.value) price = product.price.discountedPrice.value;
+            if (!price && product.price?.originalPrice?.value) price = product.price.originalPrice.value;
+            if (!seller && product.merchant?.name) seller = product.merchant.name;
+            if (!image && product.images?.length > 0) image = product.images[0];
+            if (!image && product.mediaFiles?.length > 0) image = product.mediaFiles[0]?.url;
+          }
+        }
+      } catch {}
+    }
+  });
+
+  return { name, price, image, seller };
+}
+
 // TRENDYOL
 export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
   try {
@@ -94,20 +135,32 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
     // 1. JSON-LD
     const jsonLd = extractFromJsonLd($);
 
-    // 2. Meta tags
-    const meta = extractFromMeta($);
+    // 2. __PRODUCT_DETAIL_APP_INITIAL_STATE__ (Trendyol SSR hydration verisi)
+    const initialState = extractFromTrendyolInitialState($);
 
-    // 3. HTML fallback
-    const htmlName = $("h1.pr-new-br span").first().text().trim() || $("h1").first().text().trim();
+    // 3. Meta tags
+    const meta = extractFromMeta($);
+    const metaPriceStr = $("meta[property='product:price:amount']").attr("content");
+    const metaPrice = metaPriceStr ? parseFloat(metaPriceStr) : null;
+    const metaImage = $("meta[property='og:image']").attr("content") || null;
+
+    // 4. HTML fallback
+    const htmlName = $(".pr-new-br h1").text().trim() || $("h1.pr-new-br span").first().text().trim() || $("h1").first().text().trim();
     const htmlPrice = parsePrice($("span.prc-dsc").first().text().trim() || $("span.prc-slg").first().text().trim());
+    const htmlImage = $(".base-product-image img").attr("src") || $("img.detail-section-img").attr("src") || null;
+    const htmlSeller = $(".merchant-text").text().trim() || $(".seller-name").text().trim() || null;
+
+    // İsmi temizle — "- Online Alışveriş" gibi ekleri kaldır
+    const rawName = jsonLd.name || initialState.name || htmlName || cleanTrendyolTitle(meta.name) || "Trendyol ürünü";
+    const cleanName = cleanTrendyolTitle(rawName);
 
     return {
-      name: jsonLd.name || meta.name || htmlName || "Trendyol ürünü",
-      price: jsonLd.price || htmlPrice,
+      name: cleanName || "Trendyol ürünü",
+      price: jsonLd.price || initialState.price || htmlPrice || metaPrice,
       currency: "TRY",
-      image: jsonLd.image || meta.image,
-      seller: jsonLd.seller,
-      inStock: !html.includes("pr-out-of-stock"),
+      image: jsonLd.image || initialState.image || htmlImage || metaImage || meta.image,
+      seller: jsonLd.seller || initialState.seller || htmlSeller,
+      inStock: !html.includes("pr-out-of-stock") && !html.includes("out-of-stock-btn"),
     };
   } catch (e) {
     console.error("Trendyol scrape error:", e);
