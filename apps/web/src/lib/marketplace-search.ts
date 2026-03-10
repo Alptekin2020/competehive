@@ -25,6 +25,35 @@ const VALID_MARKETPLACES = new Set([
   "ITOPYA", "SHOPIFY", "CUSTOM",
 ]);
 
+type InvalidMarketplacePolicy = "fallback-custom" | "skip";
+
+export function normalizeMarketplaceResult(
+  result: MarketplaceResult,
+  invalidPolicy: InvalidMarketplacePolicy = "fallback-custom"
+): MarketplaceResult | null {
+  if (VALID_MARKETPLACES.has(result.marketplace)) {
+    return result;
+  }
+
+  if (invalidPolicy === "skip") {
+    return null;
+  }
+
+  return {
+    ...result,
+    marketplace: "CUSTOM",
+  };
+}
+
+export function normalizeMarketplaceResults(
+  results: MarketplaceResult[],
+  invalidPolicy: InvalidMarketplacePolicy = "fallback-custom"
+): MarketplaceResult[] {
+  return results
+    .map((result) => normalizeMarketplaceResult(result, invalidPolicy))
+    .filter((result): result is MarketplaceResult => result !== null);
+}
+
 function detectStore(url: string, title: string): { marketplace: string; storeName: string } {
   const lower = (url + " " + title).toLowerCase();
   const stores: [string, string, string][] = [
@@ -236,7 +265,10 @@ export async function searchAllResults(
   const allResults = await searchSerper(query);
   console.log(`[CompeteHive] Total: ${allResults.length} results`);
 
-  const bestMatches = await selectBestMatches(allResults, query);
+  const normalizedResults = normalizeMarketplaceResults(allResults, "fallback-custom");
+  console.log(`[CompeteHive] Normalized: ${normalizedResults.length} results`);
+
+  const bestMatches = await selectBestMatches(normalizedResults, query);
   console.log(`[CompeteHive] AI matched: ${bestMatches.length}`);
 
   // Filter out source marketplace, keep all others (no domain whitelist)
@@ -265,7 +297,10 @@ export async function searchAllMarketplaces(
   const allResults = await searchSerper(query);
   console.log(`[CompeteHive] Total: ${allResults.length} results`);
 
-  const bestMatches = await selectBestMatches(allResults, query);
+  const normalizedResults = normalizeMarketplaceResults(allResults, "fallback-custom");
+  console.log(`[CompeteHive] Normalized: ${normalizedResults.length} results`);
+
+  const bestMatches = await selectBestMatches(normalizedResults, query);
   console.log(`[CompeteHive] AI matched: ${bestMatches.length}`);
 
   // Kaynak marketplace filtrele + grupla
