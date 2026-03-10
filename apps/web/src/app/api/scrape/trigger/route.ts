@@ -81,11 +81,12 @@ export async function POST(req: NextRequest) {
     const parsedName = parseProductNameFromUrl(product.product_url);
 
     // Only update the name if the current one is the scraper fallback
-    const needsNameUpdate =
-      parsedName &&
-      (!product.product_name ||
-        product.product_name === "Urun adi alinamadi" ||
-        product.product_name.endsWith(" ürünü"));
+    const isFallbackName =
+      !product.product_name ||
+      product.product_name === "Urun adi alinamadi" ||
+      product.product_name.endsWith(" ürünü") ||
+      /ürünü\s*[-–]\s*Online/i.test(product.product_name);
+    const needsNameUpdate = parsedName && isFallbackName;
 
     if (needsNameUpdate) {
       await prisma.$queryRaw`
