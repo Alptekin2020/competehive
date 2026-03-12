@@ -1,18 +1,18 @@
 import { Queue, Worker, Job } from "bullmq";
-import { Prisma, PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 
-function toPrismaJsonObject(value?: Record<string, unknown>): Prisma.InputJsonValue | undefined {
+function toPrismaJsonObject(value?: Record<string, unknown>) {
   if (value === undefined) {
     return undefined;
   }
 
   // Prisma JSON alanına yalnızca JSON-uyumlu değer gönder.
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  return JSON.parse(JSON.stringify(value));
 }
 
 const connection = {
@@ -102,7 +102,7 @@ export const scrapeWorker = new Worker(
           category: result.category || undefined,
           lastScrapedAt: new Date(),
           status: result.inStock ? "ACTIVE" : "OUT_OF_STOCK",
-          metadata: toPrismaJsonObject(result.metadata),
+          metadata: toPrismaJsonObject(result.metadata) as never,
         },
       });
 
