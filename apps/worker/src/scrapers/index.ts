@@ -1,9 +1,6 @@
 import * as cheerio from "cheerio";
 import { logger } from "../utils/logger";
-import {
-  SUPPORTED_SCRAPER_MARKETPLACES,
-  type SupportedScraperMarketplace,
-} from "../shared";
+import { SUPPORTED_SCRAPER_MARKETPLACES, type SupportedScraperMarketplace } from "../shared";
 
 // ============================================
 // Scraper Types
