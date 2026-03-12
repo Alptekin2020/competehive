@@ -36,9 +36,16 @@ Su JSON formatinda yanit ver:
   "brand": "Marka adi (orn: Samsung, Apple, Bosch)",
   "model": "Model adi/numarasi (orn: Galaxy S24, iPhone 15 Pro)",
   "category": "Kategori (orn: Televizyon, Telefon, Laptop, Musluk Bataryasi)",
-  "searchKeywords": ["marketplace'lerde aranacak 2-4 anahtar kelime dizisi", "marka model ana ozellik"],
+  "searchKeywords": [
+    "tam arama sorgusu: marka + model kodu + urun tipi (orn: 'Samsung Galaxy S24 Ultra Telefon')",
+    "genel arama: marka + urun tipi + ana ozellik, model kodu OLMADAN (orn: 'Samsung 256GB Telefon')",
+    "model kodu ile arama: sadece model/stok kodu varsa (orn: 'SM-S928B')",
+    "alternatif: farkli kelime sirasi veya kisaltma (orn: 'Galaxy S24 Samsung')"
+  ],
   "shortTitle": "Kisa ve temiz urun basligi (marka + model + ana ozellik, max 80 karakter)"
-}`,
+}
+
+ONEMLI: searchKeywords icin 3-5 farkli arama varyasyonu uret. Amac: farkli marketplace'lerde (Trendyol, Hepsiburada, Amazon, N11) ayni urunu bulmak. Her marketplace farkli baslik kullanabilir, bu yuzden hem model kodlu hem model kodsuz arama kelimeleri olustur.`,
       },
     ],
     max_tokens: 300,
