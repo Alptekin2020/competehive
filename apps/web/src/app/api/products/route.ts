@@ -11,6 +11,7 @@ import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
@@ -151,6 +152,15 @@ export async function POST(req: NextRequest) {
         },
       },
     });
+
+    // Queue initial scrape and competitor search
+    try {
+      await addScrapeJob(product.id, marketplace, productUrl);
+      await addCompetitorSearchJob(product.id, product.productName || productUrl, marketplace);
+    } catch (queueError) {
+      // Log but don't fail the request - product was saved successfully
+      console.error("Queue error (non-fatal):", queueError);
+    }
 
     // 5. Fiyat gecmisine kaydet
     if (scraped.price) {
