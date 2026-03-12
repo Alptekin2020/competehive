@@ -158,9 +158,8 @@ export const scrapeWorker = new Worker(
           code: scraperError.code,
           retryable: scraperError.retryable,
           softFail: scraperError.softFail,
-          error: scraperError,
         },
-        "Scrape job failed",
+        `Scrape job failed: ${scraperError.message}`,
       );
 
       if (shouldRetry) {
@@ -383,9 +382,9 @@ export async function scheduleScans() {
 
 // Worker event listeners
 scrapeWorker.on("failed", (job, err) => {
-  logger.error({ jobId: job?.id, error: err.message }, "Scrape job failed");
+  logger.error({ jobId: job?.id }, `Scrape worker event - job failed: ${err.message}`);
 });
 
 alertWorker.on("failed", (job, err) => {
-  logger.error({ jobId: job?.id, error: err.message }, "Alert job failed");
+  logger.error({ jobId: job?.id }, `Alert worker event - job failed: ${err.message}`);
 });
