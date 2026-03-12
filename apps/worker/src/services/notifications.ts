@@ -1,6 +1,7 @@
 import TelegramBot from "node-telegram-bot-api";
 import nodemailer from "nodemailer";
 import { logger } from "../utils/logger";
+import type { AlertRuleWithUser, AlertUser } from "@competehive/shared";
 
 // ============================================
 // Telegram Bot
@@ -56,7 +57,7 @@ interface AlertData {
 // Send Alerts
 // ============================================
 
-export async function sendAlerts(rule: any, data: AlertData) {
+export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData) {
   const channels = rule.notifyVia || [];
 
   for (const channel of channels) {
@@ -82,7 +83,7 @@ export async function sendAlerts(rule: any, data: AlertData) {
 // Telegram Alert
 // ============================================
 
-async function sendTelegramAlert(user: any, data: AlertData) {
+async function sendTelegramAlert(user: AlertUser, data: AlertData) {
   const bot = getTelegramBot();
   if (!bot || !user.telegramChatId) return;
 
@@ -109,7 +110,7 @@ async function sendTelegramAlert(user: any, data: AlertData) {
 // Email Alert
 // ============================================
 
-async function sendEmailAlert(user: any, data: AlertData) {
+async function sendEmailAlert(user: AlertUser, data: AlertData) {
   const transporter = getEmailTransporter();
   if (!transporter) return;
 
@@ -170,7 +171,7 @@ async function sendEmailAlert(user: any, data: AlertData) {
 // Webhook Alert
 // ============================================
 
-async function sendWebhookAlert(user: any, data: AlertData) {
+async function sendWebhookAlert(user: AlertUser, data: AlertData) {
   if (!user.webhookUrl) return;
 
   await fetch(user.webhookUrl, {

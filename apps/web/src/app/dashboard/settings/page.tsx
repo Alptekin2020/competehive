@@ -6,7 +6,11 @@ const PLAN_DETAILS: Record<string, { name: string; desc: string; products: numbe
   FREE: { name: "Free", desc: "5 ürün takibi, günde 1 tarama", products: 5 },
   STARTER: { name: "Starter", desc: "50 ürün takibi, saatte 1 tarama", products: 50 },
   PRO: { name: "Pro", desc: "500 ürün takibi, 15 dk tarama", products: 500 },
-  ENTERPRISE: { name: "Enterprise", desc: "Sınırsız ürün, 5 dk tarama, API erişimi", products: 9999 },
+  ENTERPRISE: {
+    name: "Enterprise",
+    desc: "Sınırsız ürün, 5 dk tarama, API erişimi",
+    products: 9999,
+  },
 };
 
 export default function SettingsPage() {
@@ -22,8 +26,8 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetch("/api/settings")
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((data) => {
         if (!data.error) {
           setTelegramId(data.telegramChatId || "");
           setWebhookUrl(data.webhookUrl || "");
@@ -56,8 +60,8 @@ export default function SettingsPage() {
 
       setSuccess("Ayarlar başarıyla kaydedildi.");
       setTimeout(() => setSuccess(""), 3000);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
       setSaving(false);
     }
@@ -107,7 +111,9 @@ export default function SettingsPage() {
                   <p className="text-xs text-dark-500">Fiyat değişikliklerinde e-posta alın</p>
                   {email && <p className="text-xs text-hive-500 mt-1">{email}</p>}
                 </div>
-                <span className="text-xs text-green-400 bg-green-400/10 px-2 py-1 rounded-full">Aktif</span>
+                <span className="text-xs text-green-400 bg-green-400/10 px-2 py-1 rounded-full">
+                  Aktif
+                </span>
               </div>
             </div>
 
@@ -119,7 +125,9 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-white">Telegram</p>
                   <p className="text-xs text-dark-500">Anlık Telegram bildirimi alın</p>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${telegramId ? "text-green-400 bg-green-400/10" : "text-dark-500 bg-dark-800"}`}>
+                <span
+                  className={`text-xs px-2 py-1 rounded-full ${telegramId ? "text-green-400 bg-green-400/10" : "text-dark-500 bg-dark-800"}`}
+                >
                   {telegramId ? "Aktif" : "Pasif"}
                 </span>
               </div>
@@ -127,12 +135,14 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   value={telegramId}
-                  onChange={e => setTelegramId(e.target.value)}
+                  onChange={(e) => setTelegramId(e.target.value)}
                   className="flex-1 bg-dark-900 border border-dark-800 rounded-xl px-4 py-2.5 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm"
                   placeholder="Telegram Chat ID (sayısal)"
                 />
               </div>
-              <p className="text-dark-600 text-xs mt-2">@CompeteHiveBot&apos;a /start yazarak Chat ID&apos;nizi öğrenebilirsiniz.</p>
+              <p className="text-dark-600 text-xs mt-2">
+                @CompeteHiveBot&apos;a /start yazarak Chat ID&apos;nizi öğrenebilirsiniz.
+              </p>
             </div>
 
             {/* Webhook */}
@@ -141,16 +151,20 @@ export default function SettingsPage() {
                 <span className="text-xl">🔗</span>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-white">Webhook</p>
-                  <p className="text-xs text-dark-500">Fiyat değişikliklerinde webhook çağrısı alın</p>
+                  <p className="text-xs text-dark-500">
+                    Fiyat değişikliklerinde webhook çağrısı alın
+                  </p>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${webhookUrl ? "text-green-400 bg-green-400/10" : "text-dark-500 bg-dark-800"}`}>
+                <span
+                  className={`text-xs px-2 py-1 rounded-full ${webhookUrl ? "text-green-400 bg-green-400/10" : "text-dark-500 bg-dark-800"}`}
+                >
                   {webhookUrl ? "Aktif" : "Pasif"}
                 </span>
               </div>
               <input
                 type="url"
                 value={webhookUrl}
-                onChange={e => setWebhookUrl(e.target.value)}
+                onChange={(e) => setWebhookUrl(e.target.value)}
                 className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-2.5 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm"
                 placeholder="https://your-webhook-url.com/endpoint"
               />
@@ -164,10 +178,21 @@ export default function SettingsPage() {
           >
             {saving ? (
               <span className="flex items-center justify-center gap-2">
-                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeDasharray="30 70"
+                  />
+                </svg>
                 Kaydediliyor...
               </span>
-            ) : "Ayarları Kaydet"}
+            ) : (
+              "Ayarları Kaydet"
+            )}
           </button>
         </div>
 
