@@ -27,7 +27,7 @@
     "test:run": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "author": "Alptekin Ayyavuz",
   "license": "UNLICENSED",
