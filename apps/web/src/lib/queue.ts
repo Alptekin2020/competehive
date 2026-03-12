@@ -1,24 +1,16 @@
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
 
-let connection: IORedis | null = null;
-
-function getRedisConnection() {
-  if (!connection) {
-    connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-      maxRetriesPerRequest: null,
-      lazyConnect: true,
-    });
-  }
-  return connection;
-}
+const REDIS_CONNECTION = {
+  url: process.env.REDIS_URL || "redis://localhost:6379",
+  maxRetriesPerRequest: null,
+};
 
 export function getScrapeQueue() {
-  return new Queue("scrape", { connection: getRedisConnection() });
+  return new Queue("scrape", { connection: REDIS_CONNECTION });
 }
 
 export function getCompetitorQueue() {
-  return new Queue("competitors", { connection: getRedisConnection() });
+  return new Queue("competitors", { connection: REDIS_CONNECTION });
 }
 
 export async function addScrapeJob(productId: string, marketplace: string, productUrl: string) {
@@ -33,7 +25,11 @@ export async function addScrapeJob(productId: string, marketplace: string, produ
   );
 }
 
-export async function addCompetitorSearchJob(productId: string, productName: string, marketplace: string) {
+export async function addCompetitorSearchJob(
+  productId: string,
+  productName: string,
+  marketplace: string,
+) {
   const queue = getCompetitorQueue();
   await queue.add(
     "find-competitors",

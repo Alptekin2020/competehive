@@ -1,13 +1,13 @@
 import { Worker, Job } from "bullmq";
-import { PrismaClient } from "@prisma/client";
-import IORedis from "ioredis";
+import { Marketplace, PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 
-const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
+const connection = {
+  url: process.env.REDIS_URL || "redis://localhost:6379",
   maxRetriesPerRequest: null,
-});
+};
 
 const MARKETPLACE_DOMAINS: Record<string, string> = {
   "trendyol.com": "TRENDYOL",
@@ -15,6 +15,16 @@ const MARKETPLACE_DOMAINS: Record<string, string> = {
   "amazon.com.tr": "AMAZON_TR",
   "n11.com": "N11",
   "mediamarkt.com.tr": "MEDIAMARKT",
+};
+
+type SerperShoppingItem = {
+  link?: string;
+  title?: string;
+  price?: string;
+};
+
+type SerperShoppingResponse = {
+  shopping?: SerperShoppingItem[];
 };
 
 function detectMarketplaceFromUrl(url: string): string | null {
@@ -60,7 +70,7 @@ async function searchWithSerper(
     return [];
   }
 
-  const data = await serperResponse.json();
+  const data = (await serperResponse.json()) as SerperShoppingResponse;
   const results: Array<{ url: string; title: string; price: number; marketplace: string }> = [];
 
   for (const item of data.shopping || []) {
@@ -71,7 +81,7 @@ async function searchWithSerper(
     if (!marketplace || marketplace === excludeMarketplace) continue;
 
     // Parse price from Serper result
-    const priceStr = (item.price || "").replace(/[^\d,\.]/g, "").replace(",", ".");
+    const priceStr = (item.price || "").replace(/[^\d,.]/g, "").replace(",", ".");
     const price = parseFloat(priceStr) || 0;
 
     if (link && price > 0) {
@@ -110,7 +120,7 @@ export const competitorWorker = new Worker(
             trackedProductId: productId,
             competitorUrl: comp.url,
             competitorName: comp.title,
-            marketplace: comp.marketplace as any,
+            marketplace: comp.marketplace as Marketplace,
             currentPrice: comp.price,
             lastScrapedAt: new Date(),
           },
