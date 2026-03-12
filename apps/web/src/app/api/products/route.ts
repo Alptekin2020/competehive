@@ -9,6 +9,8 @@ import { analyzeProduct } from "@/lib/ai-analyzer";
 import { detectMarketplaceFromUrl } from "@/lib/marketplaces";
 import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
+import { addProductSchema } from "@/lib/validation";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
@@ -56,10 +58,15 @@ export async function POST(req: NextRequest) {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
 
-    const body = await req.json();
-    const { productUrl } = body;
+    // Rate limit: 10 products per minute per user
+    const rl = await rateLimit(`rate:products:${user.id}`, 10, 60);
+    if (!rl.success) return rateLimitResponse(rl.reset);
 
-    if (!productUrl) return badRequest("Urun URL'si gerekli");
+    const body = await req.json();
+    const parsed = addProductSchema.safeParse(body);
+    if (!parsed.success) return badRequest(parsed.error.errors[0].message);
+
+    const { productUrl } = parsed.data;
 
     const marketplace = detectMarketplaceFromUrl(productUrl);
 

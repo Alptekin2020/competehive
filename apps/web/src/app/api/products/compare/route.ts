@@ -7,6 +7,8 @@ import { getRetailerInfoFromDomain } from "@competehive/shared";
 import type { CompareCompetitorResult } from "@competehive/shared";
 import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
+import { compareSchema } from "@/lib/validation";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 60;
 
@@ -17,11 +19,16 @@ export async function POST(req: NextRequest) {
       return unauthorized();
     }
 
-    const { productId } = await req.json();
+    // Rate limit: 5 compares per minute per user
+    const rl = await rateLimit(`rate:compare:${user.id}`, 5, 60);
+    if (!rl.success) return rateLimitResponse(rl.reset);
+
+    const body = await req.json();
+    const parsed = compareSchema.safeParse(body);
+    if (!parsed.success) return badRequest(parsed.error.errors[0].message);
+
+    const { productId } = parsed.data;
     logger.info({ productId }, "Compare called");
-    if (!productId) {
-      return badRequest("productId gerekli");
-    }
 
     // Ürünü bul
     const product = await prisma.trackedProduct.findFirst({

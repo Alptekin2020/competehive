@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
+import { scrapeTrigerSchema } from "@/lib/validation";
 
 /**
  * Parse a readable product name from a marketplace URL slug.
@@ -59,11 +60,10 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { productId } = body;
+    const parsed = scrapeTrigerSchema.safeParse(body);
+    if (!parsed.success) return badRequest(parsed.error.errors[0].message);
 
-    if (!productId) {
-      return badRequest("productId is required");
-    }
+    const { productId } = parsed.data;
 
     // Fetch the product from DB
     const product = await prisma.trackedProduct.findFirst({
