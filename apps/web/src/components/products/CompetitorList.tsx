@@ -1,6 +1,8 @@
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import { getMarketplaceInfo } from "@competehive/shared";
 
+import { useState } from "react";
+
 interface CompetitorItem {
   id?: string;
   marketplace: string;
@@ -11,6 +13,30 @@ interface CompetitorItem {
   retailerDomain?: string;
   retailerName?: string;
   retailerColor?: string;
+}
+
+interface CompareApiResult {
+  marketplace: string;
+  name: string;
+  price: number;
+  url: string;
+  link: string;
+  retailerDomain: string;
+  retailerName: string;
+  retailerColor: string;
+}
+
+function mapCompareResult(c: CompareApiResult): CompetitorItem {
+  return {
+    marketplace: c.marketplace,
+    competitor_name: c.name,
+    current_price: String(c.price),
+    competitor_url: c.url,
+    link: c.link,
+    retailerDomain: c.retailerDomain,
+    retailerName: c.retailerName,
+    retailerColor: c.retailerColor,
+  };
 }
 
 interface CompetitorListProps {
@@ -32,6 +58,35 @@ export function CompetitorList({
   marketplace,
   onCompareResults,
 }: CompetitorListProps) {
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+
+  const handleSearch = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSearching(true);
+    setSearchError("");
+
+    fetch("/api/products/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ productId }),
+    })
+      .then((res) => res.json())
+      .then((compareData) => {
+        if (compareData.competitors?.length > 0) {
+          const mapped = compareData.competitors.map((c: CompareApiResult) => mapCompareResult(c));
+          onCompareResults(mapped);
+        } else {
+          setSearchError("Rakip bulunamadi. Farkli bir urun deneyin.");
+        }
+      })
+      .catch((err) => {
+        console.error("Compare error:", err);
+        setSearchError("Arama sirasinda hata olustu. Tekrar deneyin.");
+      })
+      .finally(() => setSearching(false));
+  };
+
   return (
     <div className="border-t border-dark-800 px-5 py-4 bg-dark-950/50">
       <h4 className="text-sm font-medium text-dark-300 mb-3">Marketplace Fiyat Karsilastirmasi</h4>
@@ -124,26 +179,17 @@ export function CompetitorList({
         </div>
       ) : (
         <div className="text-center py-6">
-          <p className="text-dark-500 text-sm mb-3">Rakipler araniyor veya bulunamadi...</p>
+          <p className="text-dark-500 text-sm mb-3">
+            {searching
+              ? "Rakipler araniyor..."
+              : searchError || "Rakipler araniyor veya bulunamadi..."}
+          </p>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              fetch("/api/products/compare", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productId }),
-              })
-                .then((res) => res.json())
-                .then((compareData) => {
-                  if (compareData.competitors?.length > 0) {
-                    onCompareResults(compareData.competitors);
-                  }
-                })
-                .catch((err) => console.error("Compare error:", err));
-            }}
-            className="text-xs bg-hive-500/10 text-hive-500 px-4 py-2 rounded-lg hover:bg-hive-500/20 transition"
+            onClick={handleSearch}
+            disabled={searching}
+            className="text-xs bg-hive-500/10 text-hive-500 px-4 py-2 rounded-lg hover:bg-hive-500/20 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Diger Marketplace&apos;lerde Ara
+            {searching ? "Araniyor..." : "Diger Marketplace\u2019lerde Ara"}
           </button>
         </div>
       )}
