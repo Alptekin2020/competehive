@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
 
 /**
  * Parse a readable product name from a marketplace URL slug.
@@ -54,14 +55,14 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const body = await req.json();
     const { productId } = body;
 
     if (!productId) {
-      return NextResponse.json({ error: "productId is required" }, { status: 400 });
+      return badRequest("productId is required");
     }
 
     // Fetch the product from DB
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!product) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      return notFound("Product not found");
     }
 
     // Parse a readable name from the URL slug as fallback
@@ -103,12 +104,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({
+    return apiSuccess({
       success: true,
       updatedName: needsNameUpdate ? parsedName : product.productName,
     });
   } catch (error) {
-    console.error("POST /api/scrape/trigger error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "POST /api/scrape/trigger");
   }
 }

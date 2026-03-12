@@ -101,12 +101,13 @@ export default function AlertsPage() {
       };
 
       if (ruleType === "PRICE_THRESHOLD" || ruleType === "PERCENTAGE_CHANGE") {
-        body.thresholdValue = parseFloat(thresholdValue);
-        if (isNaN(body.thresholdValue)) {
+        const parsed = parseFloat(thresholdValue);
+        if (isNaN(parsed)) {
           setError("Eşik değeri geçerli bir sayı olmalıdır.");
           setSaving(false);
           return;
         }
+        body.thresholdValue = parsed;
       }
 
       if (ruleType === "PRICE_THRESHOLD") {

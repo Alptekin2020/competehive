@@ -1,12 +1,12 @@
-import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, serverError } from "@/lib/api-response";
 
 export async function GET() {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -33,14 +33,13 @@ export async function GET() {
       ],
     );
 
-    return NextResponse.json({
+    return apiSuccess({
       trackedProducts,
       priceChanges24h,
       activeAlerts,
       unreadNotifications,
     });
   } catch (error) {
-    console.error("GET /api/dashboard/stats error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "GET /api/dashboard/stats");
   }
 }

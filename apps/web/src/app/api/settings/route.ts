@@ -1,13 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
 
 // GET /api/settings - Kullanıcı ayarlarını getir
 export async function GET() {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const dbUser = await prisma.user.findUnique({
@@ -24,10 +25,10 @@ export async function GET() {
     });
 
     if (!dbUser) {
-      return NextResponse.json({ error: "Kullanıcı bulunamadı" }, { status: 404 });
+      return notFound("Kullanıcı bulunamadı");
     }
 
-    return NextResponse.json({
+    return apiSuccess({
       email: dbUser.email,
       name: dbUser.name,
       plan: dbUser.plan,
@@ -37,8 +38,7 @@ export async function GET() {
       isActive: dbUser.isActive,
     });
   } catch (error) {
-    console.error("GET /api/settings error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "GET /api/settings");
   }
 }
 
@@ -47,7 +47,7 @@ export async function PUT(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const body = await req.json();
@@ -57,10 +57,7 @@ export async function PUT(req: NextRequest) {
     if (telegramChatId !== undefined && telegramChatId !== null && telegramChatId !== "") {
       const chatId = String(telegramChatId).trim();
       if (chatId && !/^-?\d+$/.test(chatId)) {
-        return NextResponse.json(
-          { error: "Geçersiz Telegram Chat ID formatı. Sayısal bir değer olmalıdır." },
-          { status: 400 },
-        );
+        return badRequest("Geçersiz Telegram Chat ID formatı. Sayısal bir değer olmalıdır.");
       }
     }
 
@@ -69,7 +66,7 @@ export async function PUT(req: NextRequest) {
       try {
         new URL(webhookUrl);
       } catch {
-        return NextResponse.json({ error: "Geçersiz webhook URL formatı." }, { status: 400 });
+        return badRequest("Geçersiz webhook URL formatı.");
       }
     }
 
@@ -85,13 +82,12 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({
+    return apiSuccess({
       success: true,
       telegramChatId: updated.telegramChatId,
       webhookUrl: updated.webhookUrl,
     });
   } catch (error) {
-    console.error("PUT /api/settings error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "PUT /api/settings");
   }
 }

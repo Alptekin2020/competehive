@@ -88,7 +88,9 @@ function extractFromJsonLd($: cheerio.CheerioAPI): {
         if (!price && offers?.price) price = parseFloat(offers.price);
         if (!seller && offers?.seller?.name) seller = offers.seller.name;
       }
-    } catch {}
+    } catch {
+      // Invalid JSON-LD block — skip silently (common on marketplace pages)
+    }
   });
 
   return { name, price, image, seller };
@@ -144,7 +146,9 @@ function extractFromTrendyolInitialState($: cheerio.CheerioAPI): {
             if (!image && product.mediaFiles?.length > 0) image = product.mediaFiles[0]?.url;
           }
         }
-      } catch {}
+      } catch {
+        // Malformed initial state JSON — skip silently
+      }
     }
   });
 

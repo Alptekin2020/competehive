@@ -1,20 +1,20 @@
 export const maxDuration = 15; // Vercel timeout 15 saniye
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { Marketplace, ProductStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
 import { detectMarketplaceFromUrl } from "@/lib/marketplaces";
+import { logger } from "@/lib/logger";
+import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return unauthorized();
 
     const products = await prisma.trackedProduct.findMany({
       where: { userId: user.id },
@@ -44,10 +44,9 @@ export async function GET() {
       })),
     }));
 
-    return NextResponse.json({ products: mapped });
+    return apiSuccess({ products: mapped });
   } catch (error) {
-    console.error("GET /api/products error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "GET /api/products error");
   }
 }
 
@@ -55,16 +54,12 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return unauthorized();
 
     const body = await req.json();
     const { productUrl } = body;
 
-    if (!productUrl) {
-      return NextResponse.json({ error: "Urun URL'si gerekli" }, { status: 400 });
-    }
+    if (!productUrl) return badRequest("Urun URL'si gerekli");
 
     const marketplace = detectMarketplaceFromUrl(productUrl);
 
@@ -72,10 +67,7 @@ export async function POST(req: NextRequest) {
       where: { userId: user.id },
     });
     if (productCount >= user.maxProducts) {
-      return NextResponse.json(
-        { error: `Urun limitinize ulastiniz (${user.maxProducts}). Planinizi yukseltin.` },
-        { status: 403 },
-      );
+      return forbidden(`Urun limitinize ulastiniz (${user.maxProducts}). Planinizi yukseltin.`);
     }
 
     // 1. Urun sayfasini scrape et
@@ -83,7 +75,7 @@ export async function POST(req: NextRequest) {
     try {
       scraped = await scrapeProduct(productUrl, marketplace);
     } catch (err) {
-      console.error("Scrape error:", err);
+      logger.error({ err }, "Scrape error");
       scraped = {
         name: "Urun adi alinamadi",
         price: null,
@@ -99,7 +91,7 @@ export async function POST(req: NextRequest) {
     try {
       analysis = await analyzeProduct(scraped.name, marketplace, scraped.price);
     } catch (err) {
-      console.error("AI analysis error:", err);
+      logger.error({ err }, "AI analysis error");
       analysis = {
         brand: "Bilinmiyor",
         model: scraped.name.substring(0, 50),
@@ -176,12 +168,12 @@ export async function POST(req: NextRequest) {
           cookie: req.headers.get("cookie") || "",
         },
         body: JSON.stringify({ productId: product.id }),
-      }).catch((err) => console.error("Scrape trigger fire-and-forget error:", err));
+      }).catch((err) => logger.error({ err }, "Scrape trigger fire-and-forget error"));
     } catch (err) {
-      console.error("Scrape trigger setup error:", err);
+      logger.error({ err }, "Scrape trigger setup error");
     }
 
-    return NextResponse.json({
+    return apiSuccess({
       success: true,
       product: {
         id: product.id,
@@ -194,8 +186,7 @@ export async function POST(req: NextRequest) {
       analysis,
     });
   } catch (error) {
-    console.error("POST /api/products error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "POST /api/products error");
   }
 }
 
@@ -203,25 +194,20 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return unauthorized();
 
     const { searchParams } = new URL(req.url);
     const productId = searchParams.get("id");
 
-    if (!productId) {
-      return NextResponse.json({ error: "Urun ID gerekli" }, { status: 400 });
-    }
+    if (!productId) return badRequest("Urun ID gerekli");
 
     // Cascade handles competitors automatically
     await prisma.trackedProduct.deleteMany({
       where: { id: productId, userId: user.id },
     });
 
-    return NextResponse.json({ success: true });
+    return apiSuccess({ success: true });
   } catch (error) {
-    console.error("DELETE /api/products error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "DELETE /api/products error");
   }
 }

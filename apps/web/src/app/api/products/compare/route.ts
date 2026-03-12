@@ -1,10 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { Marketplace } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { searchAllResults, normalizeMarketplaceResult } from "@/lib/marketplace-search";
 import { getRetailerInfoFromDomain } from "@competehive/shared";
 import type { CompareCompetitorResult } from "@competehive/shared";
+import { logger } from "@/lib/logger";
+import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
 
 export const maxDuration = 60;
 
@@ -12,13 +14,13 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const { productId } = await req.json();
-    console.log("[CompeteHive Compare] Called with productId:", productId);
+    logger.info({ productId }, "Compare called");
     if (!productId) {
-      return NextResponse.json({ error: "productId gerekli" }, { status: 400 });
+      return badRequest("productId gerekli");
     }
 
     // Ürünü bul
@@ -26,7 +28,7 @@ export async function POST(req: NextRequest) {
       where: { id: productId, userId: user.id },
     });
     if (!product) {
-      return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
+      return notFound("Ürün bulunamadı");
     }
 
     // Anahtar kelimeler — metadata'dan veya ürün adından
@@ -51,11 +53,11 @@ export async function POST(req: NextRequest) {
       keywords = [product.productName.split(" ").slice(0, 5).join(" ")];
     }
 
-    console.log("Compare searching for:", keywords, "excluding:", product.marketplace);
+    logger.info({ keywords, excludeMarketplace: product.marketplace }, "Compare searching");
 
     // Tüm web'de ara (marketplace filtresi yok)
     const allResults = await searchAllResults(keywords, product.marketplace);
-    console.log("[CompeteHive Compare] Total results:", allResults.length);
+    logger.info({ totalResults: allResults.length }, "Compare results found");
     const competitors: CompareCompetitorResult[] = [];
     const insertErrors: Array<Record<string, unknown>> = [];
     let skippedCount = 0;
@@ -106,7 +108,7 @@ export async function POST(req: NextRequest) {
         await prisma.competitorPrice.create({
           data: {
             competitorId: comp.id,
-            price: normalizedResult.price,
+            price: normalizedResult.price!,
             currency: "TRY",
             inStock: true,
           },
@@ -122,7 +124,7 @@ export async function POST(req: NextRequest) {
         competitors.push({
           marketplace: mp,
           name: compName,
-          price: normalizedResult.price,
+          price: normalizedResult.price!,
           url: normalizedResult.url,
           link: normalizedResult.url,
           retailerDomain: retailer.retailerDomain,
@@ -142,21 +144,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (insertErrors.length) {
-      console.error("[CompeteHive Compare] Competitor insert errors", {
-        productId,
-        totalErrors: insertErrors.length,
-        errors: insertErrors,
-      });
+      logger.error(
+        { productId, totalErrors: insertErrors.length, errors: insertErrors },
+        "Competitor insert errors",
+      );
     }
 
     // Sort by price ascending
     competitors.sort((a, b) => a.price - b.price);
 
-    console.log("Found competitors:", competitors.length);
+    logger.info({ competitorCount: competitors.length }, "Compare complete");
 
-    return NextResponse.json({ success: true, competitors, skippedCount, errorCount });
+    return apiSuccess({ success: true, competitors, skippedCount, errorCount });
   } catch (error) {
-    console.error("Compare error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "POST /api/products/compare");
   }
 }

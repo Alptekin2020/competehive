@@ -1,13 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
 
 // GET /api/notifications - Kullanıcının bildirimlerini listele
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const { searchParams } = new URL(req.url);
@@ -50,10 +51,9 @@ export async function GET(req: NextRequest) {
       marketplace: n.alertRule?.trackedProduct?.marketplace ?? null,
     }));
 
-    return NextResponse.json({ notifications: mapped });
+    return apiSuccess({ notifications: mapped });
   } catch (error) {
-    console.error("GET /api/notifications error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "GET /api/notifications");
   }
 }
 
@@ -62,7 +62,7 @@ export async function PATCH(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const body = await req.json();
@@ -82,15 +82,11 @@ export async function PATCH(req: NextRequest) {
         data: { isRead: true },
       });
     } else {
-      return NextResponse.json(
-        { error: "notificationIds veya markAllRead gerekli" },
-        { status: 400 },
-      );
+      return badRequest("notificationIds veya markAllRead gerekli");
     }
 
-    return NextResponse.json({ success: true });
+    return apiSuccess({ success: true });
   } catch (error) {
-    console.error("PATCH /api/notifications error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return serverError(error, "PATCH /api/notifications");
   }
 }
