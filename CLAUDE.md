@@ -77,18 +77,18 @@ npm run deploy:worker    # db:deploy + build worker
 
 ### Models
 
-| Model | Purpose |
-|-------|---------|
-| **User** | Clerk-synced user with plan, limits, notification settings |
-| **ApiKey** | User API key authentication |
-| **TrackedProduct** | Core entity: URL, marketplace, pricing, scrape status |
-| **PriceHistory** | Historical price records with change tracking |
-| **Competitor** | Competitor product linked to a tracked product |
-| **CompetitorPrice** | Competitor price history |
-| **AlertRule** | Configurable rules (7 types) with cooldowns, channels |
-| **Notification** | Alert notification delivery records |
-| **ScrapeJob** | Job execution status tracking |
-| **SystemLog** | Structured application logs |
+| Model               | Purpose                                                    |
+| ------------------- | ---------------------------------------------------------- |
+| **User**            | Clerk-synced user with plan, limits, notification settings |
+| **ApiKey**          | User API key authentication                                |
+| **TrackedProduct**  | Core entity: URL, marketplace, pricing, scrape status      |
+| **PriceHistory**    | Historical price records with change tracking              |
+| **Competitor**      | Competitor product linked to a tracked product             |
+| **CompetitorPrice** | Competitor price history                                   |
+| **AlertRule**       | Configurable rules (7 types) with cooldowns, channels      |
+| **Notification**    | Alert notification delivery records                        |
+| **ScrapeJob**       | Job execution status tracking                              |
+| **SystemLog**       | Structured application logs                                |
 
 ### Key Enums
 
@@ -122,18 +122,19 @@ npm run deploy:worker    # db:deploy + build worker
 
 Located in `apps/web/src/app/api/`:
 
-| Route | Purpose |
-|-------|---------|
-| `/products` | CRUD for tracked products |
-| `/products/compare` | Compare product with competitors |
-| `/alerts` | CRUD for alert rules |
-| `/notifications` | Get user notifications |
-| `/scrape/trigger` | Manually trigger product scrape |
-| `/dashboard/stats` | Dashboard statistics |
-| `/settings` | User settings (Telegram, webhook, preferences) |
-| `/health` | Health check |
+| Route               | Purpose                                        |
+| ------------------- | ---------------------------------------------- |
+| `/products`         | CRUD for tracked products                      |
+| `/products/compare` | Compare product with competitors               |
+| `/alerts`           | CRUD for alert rules                           |
+| `/notifications`    | Get user notifications                         |
+| `/scrape/trigger`   | Manually trigger product scrape                |
+| `/dashboard/stats`  | Dashboard statistics                           |
+| `/settings`         | User settings (Telegram, webhook, preferences) |
+| `/health`           | Health check                                   |
 
 **Conventions:**
+
 - Use standardized response helpers from `apps/web/src/lib/api-response.ts` (`apiSuccess`, `apiError`, `unauthorized`, `badRequest`, `notFound`, `forbidden`, `serverError`)
 - User-facing error messages in Turkish, internal logs in English
 - All POST/PUT endpoints validate input with Zod schemas from `apps/web/src/lib/validation.ts`
@@ -150,12 +151,12 @@ Located in `apps/web/src/app/api/`:
 
 Defined in `packages/shared/src/index.ts` (`PLAN_LIMITS`):
 
-| Plan | Products | Min Interval | Marketplaces | History | Channels |
-|------|----------|-------------|-------------|---------|----------|
-| FREE | 5 | 1440 min | 1 | 7 days | EMAIL |
-| STARTER | 50 | 60 min | 2 | 30 days | EMAIL, TELEGRAM |
-| PRO | 500 | 15 min | 99 | 365 days | All + auto rules |
-| ENTERPRISE | 99999 | 5 min | 99 | Unlimited | All features |
+| Plan       | Products | Min Interval | Marketplaces | History   | Channels         |
+| ---------- | -------- | ------------ | ------------ | --------- | ---------------- |
+| FREE       | 5        | 1440 min     | 1            | 7 days    | EMAIL            |
+| STARTER    | 50       | 60 min       | 2            | 30 days   | EMAIL, TELEGRAM  |
+| PRO        | 500      | 15 min       | 99           | 365 days  | All + auto rules |
+| ENTERPRISE | 99999    | 5 min        | 99           | Unlimited | All features     |
 
 ### Worker Jobs
 
@@ -209,32 +210,35 @@ Located in `apps/web/src/app/dashboard/`:
 
 Located in `apps/web/src/lib/`:
 
-| File | Purpose |
-|------|---------|
-| `prisma.ts` | Prisma client singleton (global reference in dev) |
-| `current-user.ts` | Clerk → DB user resolution with upsert |
-| `api-response.ts` | Standardized API response helpers |
-| `validation.ts` | Zod schemas for API input validation |
-| `redis.ts` | Redis client singleton (ioredis) |
-| `logger.ts` | Pino logger instance |
-| `rate-limit.ts` | Rate limiting utility |
-| `scraper.ts` | Web-side scraping utilities |
-| `marketplace-search.ts` | Marketplace search logic |
-| `marketplaces.ts` | Marketplace helpers |
-| `ai-analyzer.ts` | AI-powered product analysis |
+| File                    | Purpose                                           |
+| ----------------------- | ------------------------------------------------- |
+| `prisma.ts`             | Prisma client singleton (global reference in dev) |
+| `current-user.ts`       | Clerk → DB user resolution with upsert            |
+| `api-response.ts`       | Standardized API response helpers                 |
+| `validation.ts`         | Zod schemas for API input validation              |
+| `redis.ts`              | Redis client singleton (ioredis)                  |
+| `logger.ts`             | Pino logger instance                              |
+| `rate-limit.ts`         | Rate limiting utility                             |
+| `scraper.ts`            | Web-side scraping utilities                       |
+| `marketplace-search.ts` | Marketplace search logic                          |
+| `marketplaces.ts`       | Marketplace helpers                               |
+| `ai-analyzer.ts`        | AI-powered product analysis                       |
 
 ## Environment Variables
 
 Validated at startup via Zod schemas in `packages/shared/src/env.ts`.
 
 **Required (all environments):**
+
 - `DATABASE_URL` — PostgreSQL connection string
 - `REDIS_URL` — Redis connection string (default: `redis://localhost:6379`)
 
 **Required (web only):**
+
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
 
 **Optional:**
+
 - `TELEGRAM_BOT_TOKEN` — Telegram notification bot
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` — Email notifications
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_*_PRICE_ID` — Payment integration
@@ -275,6 +279,7 @@ See `.env.example` for full list with defaults.
 ## CI/CD Pipeline
 
 **GitHub Actions** (`.github/workflows/pr-checks.yml`):
+
 - Triggers on PRs to `main` and manual dispatch
 - Node 22 with npm cache
 - Steps: `npm ci` → `db:generate` → `format:check` → `typecheck` → `lint` → `test:run`
@@ -283,6 +288,7 @@ See `.env.example` for full list with defaults.
 ## Docker (Worker)
 
 The worker runs in Docker (`apps/worker/Dockerfile`):
+
 - Base image: `node:20-slim`
 - Installs Chromium and fonts for Puppeteer
 - Sets `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`
