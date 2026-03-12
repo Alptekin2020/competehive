@@ -187,7 +187,7 @@ async function searchTrendyolDirect(query: string): Promise<MarketplaceResult[]>
   const $ = cheerio.load(html);
 
   // Trendyol arama sonuçları: __SEARCH_APP_INITIAL_STATE__ JSON verisi
-  $("script").each((_: number, el: cheerio.Element) => {
+  $("script").each((_, el) => {
     const content = $(el).html() || "";
     if (content.includes("__SEARCH_APP_INITIAL_STATE__")) {
       try {
@@ -228,7 +228,7 @@ async function searchTrendyolDirect(query: string): Promise<MarketplaceResult[]>
 
   // HTML fallback: ürün kartlarını parse et
   if (results.length === 0) {
-    $(".p-card-wrppr").each((_: number, el: cheerio.Element) => {
+    $(".p-card-wrppr").each((_, el) => {
       const $card = $(el);
       const link = $card.find("a").first().attr("href");
       const name =
@@ -272,7 +272,7 @@ async function searchHepsiburadaDirect(query: string): Promise<MarketplaceResult
   const $ = cheerio.load(html);
 
   // Hepsiburada JSON-LD arama sonuçları
-  $('script[type="application/ld+json"]').each((_: number, el: cheerio.Element) => {
+  $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const json = JSON.parse($(el).html() || "");
       if (json["@type"] === "ItemList" && Array.isArray(json.itemListElement)) {
@@ -301,7 +301,7 @@ async function searchHepsiburadaDirect(query: string): Promise<MarketplaceResult
   if (results.length === 0) {
     $(
       "[data-test-id='product-card-item'], .productListContent-item, li[class*='productListContent']",
-    ).each((_: number, el: cheerio.Element) => {
+    ).each((_, el) => {
       const $card = $(el);
       const link =
         $card.find("a[href*='/p-']").first().attr("href") || $card.find("a").first().attr("href");
@@ -349,7 +349,7 @@ async function searchAmazonTRDirect(query: string): Promise<MarketplaceResult[]>
   const $ = cheerio.load(html);
 
   // Amazon arama sonuçları: div[data-component-type="s-search-result"]
-  $('div[data-component-type="s-search-result"]').each((_: number, el: cheerio.Element) => {
+  $('div[data-component-type="s-search-result"]').each((_, el) => {
     const $card = $(el);
     const asin = $card.attr("data-asin");
     if (!asin) return;
@@ -399,7 +399,7 @@ async function searchN11Direct(query: string): Promise<MarketplaceResult[]> {
   const $ = cheerio.load(html);
 
   // N11 JSON-LD arama sonuçları
-  $('script[type="application/ld+json"]').each((_: number, el: cheerio.Element) => {
+  $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const json = JSON.parse($(el).html() || "");
       if (json["@type"] === "ItemList" && Array.isArray(json.itemListElement)) {
@@ -426,36 +426,32 @@ async function searchN11Direct(query: string): Promise<MarketplaceResult[]> {
 
   // HTML fallback: ürün kartları
   if (results.length === 0) {
-    $(".columnContent .pro, .listView li.clone, .product-list-item").each(
-      (_: number, el: cheerio.Element) => {
-        const $card = $(el);
-        const link = $card.find("a").first().attr("href");
-        const name =
-          $card.find(".proName, h3.productName").text().trim() ||
-          $card.find("img").attr("alt") ||
-          "";
-        const priceText =
-          $card.find(".newPrice ins, .price ins").first().text().trim() ||
-          $card.find(".newPrice, .price").first().text().trim();
-        const image =
-          $card.find("img").attr("data-original") || $card.find("img").attr("src") || null;
+    $(".columnContent .pro, .listView li.clone, .product-list-item").each((_, el) => {
+      const $card = $(el);
+      const link = $card.find("a").first().attr("href");
+      const name =
+        $card.find(".proName, h3.productName").text().trim() || $card.find("img").attr("alt") || "";
+      const priceText =
+        $card.find(".newPrice ins, .price ins").first().text().trim() ||
+        $card.find(".newPrice, .price").first().text().trim();
+      const image =
+        $card.find("img").attr("data-original") || $card.find("img").attr("src") || null;
 
-        const price = parsePrice(priceText);
-        const fullUrl = link ? (link.startsWith("http") ? link : `https://www.n11.com${link}`) : "";
+      const price = parsePrice(priceText);
+      const fullUrl = link ? (link.startsWith("http") ? link : `https://www.n11.com${link}`) : "";
 
-        if (name && fullUrl) {
-          results.push({
-            marketplace: "N11",
-            storeName: "N11",
-            productName: name,
-            price,
-            url: fullUrl,
-            image,
-            inStock: true,
-          });
-        }
-      },
-    );
+      if (name && fullUrl) {
+        results.push({
+          marketplace: "N11",
+          storeName: "N11",
+          productName: name,
+          price,
+          url: fullUrl,
+          image,
+          inStock: true,
+        });
+      }
+    });
   }
 
   return results.slice(0, 10);
