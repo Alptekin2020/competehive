@@ -10,8 +10,9 @@ export interface ScrapedProduct {
 }
 
 const HEADERS: Record<string, string> = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
 };
 
@@ -19,7 +20,11 @@ async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Respons
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers: HEADERS, signal: controller.signal, cache: "no-store" });
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: controller.signal,
+      cache: "no-store",
+    });
     clearTimeout(timeout);
     return res;
   } catch (e) {
@@ -30,30 +35,43 @@ async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Respons
 
 function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
-  const cleaned = priceStr.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
+  const cleaned = priceStr
+    .replace(/[^\d.,]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
   const num = parseFloat(cleaned);
   return isNaN(num) ? null : num;
 }
 
 // Görsel URL'yi temizle — bazen JSON object geliyor, string olmalı
-function cleanImageUrl(img: any): string | null {
+function cleanImageUrl(img: unknown): string | null {
   if (!img) return null;
   if (typeof img === "string") return img;
-  if (typeof img === "object") {
+  if (typeof img === "object" && img !== null) {
+    const imgObj = img as Record<string, unknown>;
     // JSON-LD bazen {"@type": "ImageObject", "contentUrl": "..."} döndürür
-    if (img.contentUrl) {
-      return Array.isArray(img.contentUrl) ? img.contentUrl[0] : img.contentUrl;
+    if (imgObj.contentUrl) {
+      return Array.isArray(imgObj.contentUrl)
+        ? (imgObj.contentUrl[0] as string)
+        : (imgObj.contentUrl as string);
     }
-    if (img.url) return img.url;
+    if (imgObj.url) return imgObj.url as string;
     if (Array.isArray(img) && img.length > 0) {
-      return typeof img[0] === "string" ? img[0] : img[0]?.url || img[0]?.contentUrl || null;
+      if (typeof img[0] === "string") return img[0];
+      const first = img[0] as Record<string, unknown> | null;
+      return (first?.url as string) || (first?.contentUrl as string) || null;
     }
   }
   return null;
 }
 
 // JSON-LD'den ürün bilgisi çek
-function extractFromJsonLd($: cheerio.CheerioAPI): { name: string; price: number | null; image: string | null; seller: string | null } {
+function extractFromJsonLd($: cheerio.CheerioAPI): {
+  name: string;
+  price: number | null;
+  image: string | null;
+  seller: string | null;
+} {
   let name = "";
   let price: number | null = null;
   let image: string | null = null;
@@ -70,7 +88,9 @@ function extractFromJsonLd($: cheerio.CheerioAPI): { name: string; price: number
         if (!price && offers?.price) price = parseFloat(offers.price);
         if (!seller && offers?.seller?.name) seller = offers.seller.name;
       }
-    } catch {}
+    } catch {
+      // Invalid JSON-LD block — skip silently (common on marketplace pages)
+    }
   });
 
   return { name, price, image, seller };
@@ -78,7 +98,8 @@ function extractFromJsonLd($: cheerio.CheerioAPI): { name: string; price: number
 
 // Meta tag'lardan bilgi çek
 function extractFromMeta($: cheerio.CheerioAPI): { name: string; image: string | null } {
-  const name = $("meta[property='og:title']").attr("content") || $("meta[name='title']").attr("content") || "";
+  const name =
+    $("meta[property='og:title']").attr("content") || $("meta[name='title']").attr("content") || "";
   const image = $("meta[property='og:image']").attr("content") || null;
   return { name, image };
 }
@@ -93,7 +114,12 @@ function cleanTrendyolTitle(title: string): string {
 }
 
 // __PRODUCT_DETAIL_APP_INITIAL_STATE__ script'inden ürün bilgisi çek
-function extractFromTrendyolInitialState($: cheerio.CheerioAPI): { name: string; price: number | null; image: string | null; seller: string | null } {
+function extractFromTrendyolInitialState($: cheerio.CheerioAPI): {
+  name: string;
+  price: number | null;
+  image: string | null;
+  seller: string | null;
+} {
   let name = "";
   let price: number | null = null;
   let image: string | null = null;
@@ -109,15 +135,20 @@ function extractFromTrendyolInitialState($: cheerio.CheerioAPI): { name: string;
           const product = state.product;
           if (product) {
             if (!name && product.name) name = product.name;
-            if (!price && product.price?.sellingPrice?.value) price = product.price.sellingPrice.value;
-            if (!price && product.price?.discountedPrice?.value) price = product.price.discountedPrice.value;
-            if (!price && product.price?.originalPrice?.value) price = product.price.originalPrice.value;
+            if (!price && product.price?.sellingPrice?.value)
+              price = product.price.sellingPrice.value;
+            if (!price && product.price?.discountedPrice?.value)
+              price = product.price.discountedPrice.value;
+            if (!price && product.price?.originalPrice?.value)
+              price = product.price.originalPrice.value;
             if (!seller && product.merchant?.name) seller = product.merchant.name;
             if (!image && product.images?.length > 0) image = product.images[0];
             if (!image && product.mediaFiles?.length > 0) image = product.mediaFiles[0]?.url;
           }
         }
-      } catch {}
+      } catch {
+        // Malformed initial state JSON — skip silently
+      }
     }
   });
 
@@ -145,13 +176,24 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
     const metaImage = $("meta[property='og:image']").attr("content") || null;
 
     // 4. HTML fallback
-    const htmlName = $(".pr-new-br h1").text().trim() || $("h1.pr-new-br span").first().text().trim() || $("h1").first().text().trim();
-    const htmlPrice = parsePrice($("span.prc-dsc").first().text().trim() || $("span.prc-slg").first().text().trim());
-    const htmlImage = $(".base-product-image img").attr("src") || $("img.detail-section-img").attr("src") || null;
+    const htmlName =
+      $(".pr-new-br h1").text().trim() ||
+      $("h1.pr-new-br span").first().text().trim() ||
+      $("h1").first().text().trim();
+    const htmlPrice = parsePrice(
+      $("span.prc-dsc").first().text().trim() || $("span.prc-slg").first().text().trim(),
+    );
+    const htmlImage =
+      $(".base-product-image img").attr("src") || $("img.detail-section-img").attr("src") || null;
     const htmlSeller = $(".merchant-text").text().trim() || $(".seller-name").text().trim() || null;
 
     // İsmi temizle — "- Online Alışveriş" gibi ekleri kaldır
-    const rawName = jsonLd.name || initialState.name || htmlName || cleanTrendyolTitle(meta.name) || "Trendyol ürünü";
+    const rawName =
+      jsonLd.name ||
+      initialState.name ||
+      htmlName ||
+      cleanTrendyolTitle(meta.name) ||
+      "Trendyol ürünü";
     const cleanName = cleanTrendyolTitle(rawName);
 
     return {
@@ -164,7 +206,14 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
     };
   } catch (e) {
     console.error("Trendyol scrape error:", e);
-    return { name: "Trendyol ürünü", price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    return {
+      name: "Trendyol ürünü",
+      price: null,
+      currency: "TRY",
+      image: null,
+      seller: null,
+      inStock: true,
+    };
   }
 }
 
@@ -194,8 +243,15 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
     }
 
     // Title temizle — " - Hepsiburada" kısmını kaldır
-    let cleanTitle = (jsonLd.name || ogTitle).replace(/\s*[-–]\s*Hepsiburada.*$/i, "").replace(/\s*[-–]\s*Online Alışveriş.*$/i, "").trim();
-    if (!cleanTitle || cleanTitle === "Hepsiburada") cleanTitle = $("title").text().replace(/\s*[-–]\s*Hepsiburada.*$/i, "").trim();
+    let cleanTitle = (jsonLd.name || ogTitle)
+      .replace(/\s*[-–]\s*Hepsiburada.*$/i, "")
+      .replace(/\s*[-–]\s*Online Alışveriş.*$/i, "")
+      .trim();
+    if (!cleanTitle || cleanTitle === "Hepsiburada")
+      cleanTitle = $("title")
+        .text()
+        .replace(/\s*[-–]\s*Hepsiburada.*$/i, "")
+        .trim();
 
     return {
       name: cleanTitle || "Hepsiburada ürünü",
@@ -207,7 +263,14 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
     };
   } catch (e) {
     console.error("Hepsiburada scrape error:", e);
-    return { name: "Hepsiburada ürünü", price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    return {
+      name: "Hepsiburada ürünü",
+      price: null,
+      currency: "TRY",
+      image: null,
+      seller: null,
+      inStock: true,
+    };
   }
 }
 
@@ -234,7 +297,14 @@ export async function scrapeAmazonTR(url: string): Promise<ScrapedProduct> {
       inStock: !$("#outOfStock").length,
     };
   } catch {
-    return { name: "Amazon ürünü", price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    return {
+      name: "Amazon ürünü",
+      price: null,
+      currency: "TRY",
+      image: null,
+      seller: null,
+      inStock: true,
+    };
   }
 }
 
@@ -260,7 +330,14 @@ export async function scrapeN11(url: string): Promise<ScrapedProduct> {
       inStock: true,
     };
   } catch {
-    return { name: "N11 ürünü", price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    return {
+      name: "N11 ürünü",
+      price: null,
+      currency: "TRY",
+      image: null,
+      seller: null,
+      inStock: true,
+    };
   }
 }
 
@@ -284,17 +361,29 @@ export async function scrapeGeneric(url: string, label: string): Promise<Scraped
       inStock: true,
     };
   } catch {
-    return { name: `${label} ürünü`, price: null, currency: "TRY", image: null, seller: null, inStock: true };
+    return {
+      name: `${label} ürünü`,
+      price: null,
+      currency: "TRY",
+      image: null,
+      seller: null,
+      inStock: true,
+    };
   }
 }
 
 // ANA FONKSİYON
 export async function scrapeProduct(url: string, marketplace: string): Promise<ScrapedProduct> {
   switch (marketplace) {
-    case "TRENDYOL": return scrapeTrendyol(url);
-    case "HEPSIBURADA": return scrapeHepsiburada(url);
-    case "AMAZON_TR": return scrapeAmazonTR(url);
-    case "N11": return scrapeN11(url);
-    default: return scrapeGeneric(url, marketplace);
+    case "TRENDYOL":
+      return scrapeTrendyol(url);
+    case "HEPSIBURADA":
+      return scrapeHepsiburada(url);
+    case "AMAZON_TR":
+      return scrapeAmazonTR(url);
+    case "N11":
+      return scrapeN11(url);
+    default:
+      return scrapeGeneric(url, marketplace);
   }
 }

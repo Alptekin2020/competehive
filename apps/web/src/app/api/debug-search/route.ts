@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
       results.shopping = {
         status: shoppingRes.status,
         count: shoppingData.shopping?.length || 0,
-        items: (shoppingData.shopping || []).slice(0, 3).map((item: any) => ({
+        items: (shoppingData.shopping || []).slice(0, 3).map((item: Record<string, unknown>) => ({
           title: item.title,
           price: item.price,
           source: item.source,
@@ -48,8 +48,8 @@ export async function GET(req: NextRequest) {
         })),
         error: shoppingData.message || null,
       };
-    } catch (e: any) {
-      results.shopping = { error: e.message };
+    } catch (e: unknown) {
+      results.shopping = { error: e instanceof Error ? e.message : "Unknown error" };
     }
 
     try {
@@ -63,15 +63,15 @@ export async function GET(req: NextRequest) {
       results.organic = {
         status: searchRes.status,
         count: searchData.organic?.length || 0,
-        items: (searchData.organic || []).slice(0, 3).map((item: any) => ({
+        items: (searchData.organic || []).slice(0, 3).map((item: Record<string, unknown>) => ({
           title: item.title,
           link: item.link,
-          snippet: item.snippet?.substring(0, 100),
+          snippet: typeof item.snippet === "string" ? item.snippet.substring(0, 100) : null,
         })),
         error: searchData.message || null,
       };
-    } catch (e: any) {
-      results.organic = { error: e.message };
+    } catch (e: unknown) {
+      results.organic = { error: e instanceof Error ? e.message : "Unknown error" };
     }
   }
 

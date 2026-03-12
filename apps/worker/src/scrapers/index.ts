@@ -1,6 +1,9 @@
 import * as cheerio from "cheerio";
 import { logger } from "../utils/logger";
-import { SUPPORTED_SCRAPER_MARKETPLACES, type SupportedScraperMarketplace } from "@competehive/shared";
+import {
+  SUPPORTED_SCRAPER_MARKETPLACES,
+  type SupportedScraperMarketplace,
+} from "@competehive/shared";
 
 // ============================================
 // Scraper Types
@@ -49,7 +52,11 @@ export function createUnsupportedMarketplaceError(marketplace: string): ScraperE
 
 function parsePrice(raw?: string | null): number {
   if (!raw) return 0;
-  const normalized = raw.replace(/\u00a0/g, " ").replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
+  const normalized = raw
+    .replace(/\u00a0/g, " ")
+    .replace(/[^\d.,]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
   const value = parseFloat(normalized);
   return Number.isFinite(value) ? value : 0;
 }
@@ -82,11 +89,11 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 
       const headers: Record<string, string> = {
         "User-Agent": config.userAgent || getRandomUserAgent(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
         "Accept-Encoding": "gzip, deflate, br",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
       };
 
       const response = await fetch(url, {
@@ -117,7 +124,10 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 // TRENDYOL SCRAPER
 // ============================================
 
-export async function scrapeTrendyol(url: string, config: ScraperConfig = {}): Promise<ScrapedProduct> {
+export async function scrapeTrendyol(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
   logger.info(`Scraping Trendyol: ${url}`);
 
   const html = await fetchWithRetry(url, config);
@@ -138,8 +148,12 @@ export async function scrapeTrendyol(url: string, config: ScraperConfig = {}): P
           currency: ld.offers?.priceCurrency || "TRY",
           inStock: ld.offers?.availability?.includes("InStock") ?? true,
           imageUrl: ld.image?.[0] || ld.image || undefined,
-          rating: ld.aggregateRating?.ratingValue ? parseFloat(ld.aggregateRating.ratingValue) : undefined,
-          reviewCount: ld.aggregateRating?.reviewCount ? parseInt(ld.aggregateRating.reviewCount) : undefined,
+          rating: ld.aggregateRating?.ratingValue
+            ? parseFloat(ld.aggregateRating.ratingValue)
+            : undefined,
+          reviewCount: ld.aggregateRating?.reviewCount
+            ? parseInt(ld.aggregateRating.reviewCount)
+            : undefined,
           sellerName: ld.offers?.seller?.name || undefined,
           category: ld.category || undefined,
         };
@@ -152,10 +166,12 @@ export async function scrapeTrendyol(url: string, config: ScraperConfig = {}): P
   // Method 2: HTML parsing fallback
   if (!productData || productData.price === 0) {
     const name = $(".pr-new-br h1").text().trim() || $("h1.product-name").text().trim();
-    const priceText = $(".prc-dsc").first().text().trim() || $(".product-price-container .prc-slg").text().trim();
+    const priceText =
+      $(".prc-dsc").first().text().trim() || $(".product-price-container .prc-slg").text().trim();
     const price = parseFloat(priceText.replace(/[^\d,]/g, "").replace(",", ".")) || 0;
     const sellerName = $(".merchant-text").text().trim() || $(".seller-name").text().trim();
-    const imageUrl = $(".base-product-image img").attr("src") || $("img.detail-section-img").attr("src");
+    const imageUrl =
+      $(".base-product-image img").attr("src") || $("img.detail-section-img").attr("src");
     const inStock = !$(".out-of-stock-btn").length;
 
     productData = {
@@ -198,7 +214,9 @@ export async function scrapeTrendyol(url: string, config: ScraperConfig = {}): P
     throw new Error("Trendyol ürün bilgileri çekilemedi. Sayfa yapısı değişmiş olabilir.");
   }
 
-  logger.info(`Trendyol scraped: ${productData.name} - ${productData.price} ${productData.currency}`);
+  logger.info(
+    `Trendyol scraped: ${productData.name} - ${productData.price} ${productData.currency}`,
+  );
   return productData;
 }
 
@@ -206,7 +224,10 @@ export async function scrapeTrendyol(url: string, config: ScraperConfig = {}): P
 // HEPSIBURADA SCRAPER
 // ============================================
 
-export async function scrapeHepsiburada(url: string, config: ScraperConfig = {}): Promise<ScrapedProduct> {
+export async function scrapeHepsiburada(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
   logger.info(`Scraping Hepsiburada: ${url}`);
 
   const html = await fetchWithRetry(url, config);
@@ -227,8 +248,12 @@ export async function scrapeHepsiburada(url: string, config: ScraperConfig = {})
           inStock: ld.offers?.availability?.includes("InStock") ?? true,
           imageUrl: ld.image?.[0] || ld.image || undefined,
           sellerName: ld.offers?.seller?.name || undefined,
-          rating: ld.aggregateRating?.ratingValue ? parseFloat(ld.aggregateRating.ratingValue) : undefined,
-          reviewCount: ld.aggregateRating?.reviewCount ? parseInt(ld.aggregateRating.reviewCount) : undefined,
+          rating: ld.aggregateRating?.ratingValue
+            ? parseFloat(ld.aggregateRating.ratingValue)
+            : undefined,
+          reviewCount: ld.aggregateRating?.reviewCount
+            ? parseInt(ld.aggregateRating.reviewCount)
+            : undefined,
         };
       }
     } catch (e) {
@@ -239,7 +264,8 @@ export async function scrapeHepsiburada(url: string, config: ScraperConfig = {})
   // HTML fallback
   if (!productData || productData.price === 0) {
     const name = $("h1#product-name").text().trim() || $("h1.product-name").text().trim();
-    const priceText = $("[data-test-id='price-current-price']").text().trim() || $(".product-price").text().trim();
+    const priceText =
+      $("[data-test-id='price-current-price']").text().trim() || $(".product-price").text().trim();
     const price = parseFloat(priceText.replace(/[^\d,]/g, "").replace(",", ".")) || 0;
 
     productData = {
@@ -256,7 +282,9 @@ export async function scrapeHepsiburada(url: string, config: ScraperConfig = {})
     throw new Error("Hepsiburada ürün bilgileri çekilemedi.");
   }
 
-  logger.info(`Hepsiburada scraped: ${productData.name} - ${productData.price} ${productData.currency}`);
+  logger.info(
+    `Hepsiburada scraped: ${productData.name} - ${productData.price} ${productData.currency}`,
+  );
   return productData;
 }
 
@@ -264,7 +292,10 @@ export async function scrapeHepsiburada(url: string, config: ScraperConfig = {})
 // AMAZON TR SCRAPER
 // ============================================
 
-export async function scrapeAmazonTR(url: string, config: ScraperConfig = {}): Promise<ScrapedProduct> {
+export async function scrapeAmazonTR(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
   logger.info(`Scraping Amazon TR: ${url}`);
 
   const html = await fetchWithRetry(url, config);
@@ -347,8 +378,11 @@ export async function scrapeN11(url: string, config: ScraperConfig = {}): Promis
   }
 
   const htmlName = $("h1.proName").text().trim() || $("h1").first().text().trim();
-  const htmlPrice = parsePrice($(".newPrice ins").first().text().trim() || $(".priceContainer ins").first().text().trim());
-  const imageUrl = $(".imgObj").attr("data-original") || $("meta[property='og:image']").attr("content");
+  const htmlPrice = parsePrice(
+    $(".newPrice ins").first().text().trim() || $(".priceContainer ins").first().text().trim(),
+  );
+  const imageUrl =
+    $(".imgObj").attr("data-original") || $("meta[property='og:image']").attr("content");
   const sellerName = $(".unf-p-sellerInfo a").text().trim() || undefined;
   const inStock = !html.toLowerCase().includes("stokta yok");
 

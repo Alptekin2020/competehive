@@ -1,6 +1,5 @@
-import { randomUUID } from "crypto";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import pool from "@/lib/db-pool";
+import prisma from "@/lib/prisma";
 
 export interface AppUser {
   id: string;
@@ -23,7 +22,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     const clerkUser = await client.users.getUser(userId);
 
     const primaryEmail = clerkUser.emailAddresses.find(
-      (email) => email.id === clerkUser.primaryEmailAddressId
+      (email) => email.id === clerkUser.primaryEmailAddressId,
     )?.emailAddress;
 
     const fallbackEmail = `${userId}@users.clerk.local`;
@@ -33,50 +32,39 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       clerkUser.username ||
       null;
 
-    const newId = randomUUID();
+    const user = await prisma.user.upsert({
+      where: { clerkId: userId },
+      update: { email, name, isActive: true },
+      create: { clerkId: userId, email, name, isActive: true },
+    });
 
-    // Upsert user by clerk_id using pg directly
-    const result = await pool.query(
-      `INSERT INTO users (id, clerk_id, email, name, is_active)
-       VALUES ($1, $2, $3, $4, true)
-       ON CONFLICT (clerk_id) DO UPDATE SET
-         email = EXCLUDED.email,
-         name = EXCLUDED.name,
-         is_active = true
-       RETURNING id, clerk_id, email, name, plan, max_products, is_active`,
-      [newId, userId, email, name]
-    );
-
-    const row = result.rows[0];
     return {
-      id: row.id,
-      clerkId: row.clerk_id,
-      email: row.email,
-      name: row.name,
-      plan: row.plan,
-      maxProducts: row.max_products,
-      isActive: row.is_active,
+      id: user.id,
+      clerkId: user.clerkId!,
+      email: user.email,
+      name: user.name,
+      plan: user.plan,
+      maxProducts: user.maxProducts,
+      isActive: user.isActive,
     };
   } catch (error) {
     console.error("Failed to provision Clerk user in database", error);
 
     // Fallback: try to find existing user by clerk_id
     try {
-      const result = await pool.query(
-        `SELECT id, clerk_id, email, name, plan, max_products, is_active
-         FROM users WHERE clerk_id = $1`,
-        [userId]
-      );
-      if (result.rows.length === 0) return null;
-      const row = result.rows[0];
+      const user = await prisma.user.findUnique({
+        where: { clerkId: userId },
+      });
+      if (!user) return null;
+
       return {
-        id: row.id,
-        clerkId: row.clerk_id,
-        email: row.email,
-        name: row.name,
-        plan: row.plan,
-        maxProducts: row.max_products,
-        isActive: row.is_active,
+        id: user.id,
+        clerkId: user.clerkId!,
+        email: user.email,
+        name: user.name,
+        plan: user.plan,
+        maxProducts: user.maxProducts,
+        isActive: user.isActive,
       };
     } catch (fallbackError) {
       console.error("Fallback user lookup failed", fallbackError);

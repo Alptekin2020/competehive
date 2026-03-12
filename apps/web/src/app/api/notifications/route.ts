@@ -1,47 +1,59 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
 
 // GET /api/notifications - Kullanıcının bildirimlerini listele
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const { searchParams } = new URL(req.url);
     const unreadOnly = searchParams.get("unread") === "true";
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
 
-    let notifications;
-    if (unreadOnly) {
-      notifications = await prisma.$queryRaw<any[]>`
-        SELECT n.*, ar.rule_type, tp.product_name, tp.marketplace
-        FROM notifications n
-        LEFT JOIN alert_rules ar ON ar.id = n.alert_rule_id
-        LEFT JOIN tracked_products tp ON ar.tracked_product_id = tp.id
-        WHERE n.user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-          AND n.is_read = false
-        ORDER BY n.sent_at DESC
-        LIMIT ${limit}
-      `;
-    } else {
-      notifications = await prisma.$queryRaw<any[]>`
-        SELECT n.*, ar.rule_type, tp.product_name, tp.marketplace
-        FROM notifications n
-        LEFT JOIN alert_rules ar ON ar.id = n.alert_rule_id
-        LEFT JOIN tracked_products tp ON ar.tracked_product_id = tp.id
-        WHERE n.user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-        ORDER BY n.sent_at DESC
-        LIMIT ${limit}
-      `;
-    }
+    const notifications = await prisma.notification.findMany({
+      where: {
+        userId: user.id,
+        ...(unreadOnly ? { isRead: false } : {}),
+      },
+      include: {
+        alertRule: {
+          select: {
+            ruleType: true,
+            trackedProduct: {
+              select: {
+                productName: true,
+                marketplace: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { sentAt: "desc" },
+      take: limit,
+    });
 
-    return NextResponse.json({ notifications });
-  } catch (error: any) {
-    console.error("GET /api/notifications error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    // Map to flat format for frontend compatibility
+    const mapped = notifications.map((n) => ({
+      id: n.id,
+      channel: n.channel,
+      title: n.title,
+      message: n.message,
+      metadata: n.metadata,
+      is_read: n.isRead,
+      sent_at: n.sentAt,
+      rule_type: n.alertRule?.ruleType ?? null,
+      product_name: n.alertRule?.trackedProduct?.productName ?? null,
+      marketplace: n.alertRule?.trackedProduct?.marketplace ?? null,
+    }));
+
+    return apiSuccess({ notifications: mapped });
+  } catch (error) {
+    return serverError(error, "GET /api/notifications");
   }
 }
 
@@ -50,33 +62,31 @@ export async function PATCH(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const body = await req.json();
     const { notificationIds, markAllRead } = body;
 
     if (markAllRead) {
-      await prisma.$queryRaw`
-        UPDATE notifications SET is_read = true
-        WHERE user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-          AND is_read = false
-      `;
+      await prisma.notification.updateMany({
+        where: { userId: user.id, isRead: false },
+        data: { isRead: true },
+      });
     } else if (notificationIds && Array.isArray(notificationIds) && notificationIds.length > 0) {
-      for (const nId of notificationIds) {
-        await prisma.$queryRaw`
-          UPDATE notifications SET is_read = true
-          WHERE id = ${nId}::uuid
-            AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-        `;
-      }
+      await prisma.notification.updateMany({
+        where: {
+          id: { in: notificationIds },
+          userId: user.id,
+        },
+        data: { isRead: true },
+      });
     } else {
-      return NextResponse.json({ error: "notificationIds veya markAllRead gerekli" }, { status: 400 });
+      return badRequest("notificationIds veya markAllRead gerekli");
     }
 
-    return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error("PATCH /api/notifications error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    return apiSuccess({ success: true });
+  } catch (error) {
+    return serverError(error, "PATCH /api/notifications");
   }
 }

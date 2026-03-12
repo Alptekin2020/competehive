@@ -1,38 +1,44 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import pool from "@/lib/db-pool";
+import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
 
 // GET /api/settings - Kullanıcı ayarlarını getir
 export async function GET() {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
-    const result = await pool.query(
-      `SELECT email, name, plan, max_products, telegram_chat_id, webhook_url, is_active
-       FROM users WHERE clerk_id = $1`,
-      [user.clerkId]
-    );
-
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: "Kullanıcı bulunamadı" }, { status: 404 });
-    }
-
-    const row = result.rows[0];
-    return NextResponse.json({
-      email: row.email,
-      name: row.name,
-      plan: row.plan,
-      maxProducts: row.max_products,
-      telegramChatId: row.telegram_chat_id,
-      webhookUrl: row.webhook_url,
-      isActive: row.is_active,
+    const dbUser = await prisma.user.findUnique({
+      where: { clerkId: user.clerkId },
+      select: {
+        email: true,
+        name: true,
+        plan: true,
+        maxProducts: true,
+        telegramChatId: true,
+        webhookUrl: true,
+        isActive: true,
+      },
     });
-  } catch (error: any) {
-    console.error("GET /api/settings error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+
+    if (!dbUser) {
+      return notFound("Kullanıcı bulunamadı");
+    }
+
+    return apiSuccess({
+      email: dbUser.email,
+      name: dbUser.name,
+      plan: dbUser.plan,
+      maxProducts: dbUser.maxProducts,
+      telegramChatId: dbUser.telegramChatId,
+      webhookUrl: dbUser.webhookUrl,
+      isActive: dbUser.isActive,
+    });
+  } catch (error) {
+    return serverError(error, "GET /api/settings");
   }
 }
 
@@ -41,7 +47,7 @@ export async function PUT(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const body = await req.json();
@@ -51,10 +57,7 @@ export async function PUT(req: NextRequest) {
     if (telegramChatId !== undefined && telegramChatId !== null && telegramChatId !== "") {
       const chatId = String(telegramChatId).trim();
       if (chatId && !/^-?\d+$/.test(chatId)) {
-        return NextResponse.json(
-          { error: "Geçersiz Telegram Chat ID formatı. Sayısal bir değer olmalıdır." },
-          { status: 400 }
-        );
+        return badRequest("Geçersiz Telegram Chat ID formatı. Sayısal bir değer olmalıdır.");
       }
     }
 
@@ -63,39 +66,28 @@ export async function PUT(req: NextRequest) {
       try {
         new URL(webhookUrl);
       } catch {
-        return NextResponse.json(
-          { error: "Geçersiz webhook URL formatı." },
-          { status: 400 }
-        );
+        return badRequest("Geçersiz webhook URL formatı.");
       }
     }
 
-    const result = await pool.query(
-      `UPDATE users
-       SET telegram_chat_id = $1,
-           webhook_url = $2,
-           updated_at = NOW()
-       WHERE clerk_id = $3
-       RETURNING email, name, plan, max_products, telegram_chat_id, webhook_url`,
-      [
-        telegramChatId || null,
-        webhookUrl || null,
-        user.clerkId,
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: "Kullanıcı bulunamadı" }, { status: 404 });
-    }
-
-    const row = result.rows[0];
-    return NextResponse.json({
-      success: true,
-      telegramChatId: row.telegram_chat_id,
-      webhookUrl: row.webhook_url,
+    const updated = await prisma.user.update({
+      where: { clerkId: user.clerkId },
+      data: {
+        telegramChatId: telegramChatId || null,
+        webhookUrl: webhookUrl || null,
+      },
+      select: {
+        telegramChatId: true,
+        webhookUrl: true,
+      },
     });
-  } catch (error: any) {
-    console.error("PUT /api/settings error:", error);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+
+    return apiSuccess({
+      success: true,
+      telegramChatId: updated.telegramChatId,
+      webhookUrl: updated.webhookUrl,
+    });
+  } catch (error) {
+    return serverError(error, "PUT /api/settings");
   }
 }

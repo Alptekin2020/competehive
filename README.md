@@ -28,33 +28,39 @@ competehive/
 ## Hızlı Başlangıç
 
 ### 1. Repo'yu klonla
+
 ```bash
 git clone https://github.com/YOUR_USERNAME/competehive.git
 cd competehive
 ```
 
 ### 2. Environment variables
+
 ```bash
 cp .env.example .env
 # .env dosyasını düzenle - Railway bağlantı bilgilerini ekle
 ```
 
 ### 3. Bağımlılıkları yükle
+
 ```bash
 npm install
 ```
 
 ### 4. Prisma client
+
 ```bash
 npm run db:generate
 ```
 
 ### 5. Web uygulamasını başlat
+
 ```bash
 npm run dev:web
 ```
 
 ### 6. Worker'ı başlat (ayrı terminal)
+
 ```bash
 npm run dev:worker
 ```
@@ -81,7 +87,6 @@ npm run dev:worker
 - ✅ Hepsiburada
 - 🔜 Amazon TR
 - 🔜 N11
-
 
 ## Veritabanı Disiplini
 

@@ -1,82 +1,71 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { Marketplace } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { searchAllResults, normalizeMarketplaceResult } from "@/lib/marketplace-search";
+import { getRetailerInfoFromDomain } from "@competehive/shared";
+import type { CompareCompetitorResult } from "@competehive/shared";
+import { logger } from "@/lib/logger";
+import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
+import { compareSchema } from "@/lib/validation";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 60;
-
-const DOMAIN_LABELS: Record<string, { name: string; color: string }> = {
-  "trendyol.com": { name: "Trendyol", color: "#F27A1A" },
-  "hepsiburada.com": { name: "Hepsiburada", color: "#FF6000" },
-  "amazon.com.tr": { name: "Amazon TR", color: "#FF9900" },
-  "n11.com": { name: "N11", color: "#7B2D8E" },
-  "mediamarkt.com.tr": { name: "MediaMarkt", color: "#FF0000" },
-  "teknosa.com": { name: "Teknosa", color: "#0066CC" },
-  "vatanbilgisayar.com": { name: "Vatan", color: "#CC0000" },
-};
-
-function getRetailerInfo(url: string) {
-  try {
-    const domain = new URL(url).hostname.replace("www.", "");
-    const label = DOMAIN_LABELS[domain];
-    return {
-      retailerDomain: domain,
-      retailerName: label?.name ?? domain,
-      retailerColor: label?.color ?? "#6B7280",
-    };
-  } catch {
-    return {
-      retailerDomain: "unknown",
-      retailerName: "Unknown",
-      retailerColor: "#6B7280",
-    };
-  }
-}
-
 
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
-    const { productId } = await req.json();
-    console.log("[CompeteHive Compare] Called with productId:", productId);
-    if (!productId) {
-      return NextResponse.json({ error: "productId gerekli" }, { status: 400 });
-    }
+    // Rate limit: 5 compares per minute per user
+    const rl = await rateLimit(`rate:compare:${user.id}`, 5, 60);
+    if (!rl.success) return rateLimitResponse(rl.reset);
+
+    const body = await req.json();
+    const parsed = compareSchema.safeParse(body);
+    if (!parsed.success) return badRequest(parsed.error.errors[0].message);
+
+    const { productId } = parsed.data;
+    logger.info({ productId }, "Compare called");
 
     // Ürünü bul
-    const products = await prisma.$queryRaw<any[]>`
-      SELECT * FROM tracked_products WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text) LIMIT 1
-    `;
-    if (!products?.length) {
-      return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
+    const product = await prisma.trackedProduct.findFirst({
+      where: { id: productId, userId: user.id },
+    });
+    if (!product) {
+      return notFound("Ürün bulunamadı");
     }
-
-    const product = products[0];
 
     // Anahtar kelimeler — metadata'dan veya ürün adından
     let keywords: string[] = [];
     try {
-      const meta = typeof product.metadata === "string" ? JSON.parse(product.metadata) : product.metadata;
-      if (meta?.searchKeywords?.length) {
-        keywords = meta.searchKeywords;
+      const meta =
+        typeof product.metadata === "string"
+          ? JSON.parse(product.metadata)
+          : (product.metadata as Record<string, unknown> | null);
+      if (
+        meta?.searchKeywords &&
+        Array.isArray(meta.searchKeywords) &&
+        meta.searchKeywords.length
+      ) {
+        keywords = meta.searchKeywords as string[];
       }
-    } catch {}
-
-    if (keywords.length === 0) {
-      // Ürün adından anahtar kelimeler çıkar
-      keywords = [product.product_name.split(" ").slice(0, 5).join(" ")];
+    } catch {
+      // metadata parse failure, use fallback
     }
 
-    console.log("Compare searching for:", keywords, "excluding:", product.marketplace);
+    if (keywords.length === 0) {
+      keywords = [product.productName.split(" ").slice(0, 5).join(" ")];
+    }
+
+    logger.info({ keywords, excludeMarketplace: product.marketplace }, "Compare searching");
 
     // Tüm web'de ara (marketplace filtresi yok)
     const allResults = await searchAllResults(keywords, product.marketplace);
-    console.log("[CompeteHive Compare] Total results:", allResults.length);
-    const competitors: any[] = [];
+    logger.info({ totalResults: allResults.length }, "Compare results found");
+    const competitors: CompareCompetitorResult[] = [];
     const insertErrors: Array<Record<string, unknown>> = [];
     let skippedCount = 0;
     let errorCount = 0;
@@ -100,69 +89,81 @@ export async function POST(req: NextRequest) {
         : normalizedResult.productName.substring(0, 200);
 
       try {
-        const comp = await prisma.$queryRaw<any[]>`
-          INSERT INTO competitors (tracked_product_id, competitor_url, competitor_name, marketplace, current_price, last_scraped_at)
-          VALUES (
-            ${productId}::uuid,
-            ${normalizedUrl},
-            ${compName},
-            ${mp}::"Marketplace",
-            ${normalizedResult.price},
-            NOW()
-          )
-          ON CONFLICT (tracked_product_id, competitor_url)
-          DO UPDATE SET
-            competitor_name = EXCLUDED.competitor_name,
-            marketplace = EXCLUDED.marketplace,
-            current_price = EXCLUDED.current_price,
-            last_scraped_at = EXCLUDED.last_scraped_at
-          RETURNING *
-        `;
+        const comp = await prisma.competitor.upsert({
+          where: {
+            trackedProductId_competitorUrl: {
+              trackedProductId: productId,
+              competitorUrl: normalizedUrl,
+            },
+          },
+          update: {
+            competitorName: compName,
+            marketplace: mp as Marketplace,
+            currentPrice: normalizedResult.price,
+            lastScrapedAt: new Date(),
+          },
+          create: {
+            trackedProductId: productId,
+            competitorUrl: normalizedUrl,
+            competitorName: compName,
+            marketplace: mp as Marketplace,
+            currentPrice: normalizedResult.price,
+            lastScrapedAt: new Date(),
+          },
+        });
 
-        if (comp?.[0]) {
-          await prisma.$executeRaw`
-            INSERT INTO competitor_prices (competitor_id, price, currency, in_stock)
-            VALUES (${comp[0].id}::uuid, ${normalizedResult.price}, 'TRY', true)
-          `;
-          const retailer = getRetailerInfo(normalizedResult.url);
-          competitors.push({
-            marketplace: mp,
-            name: compName,
-            price: normalizedResult.price,
-            url: normalizedResult.url,
-            link: normalizedResult.url,
-            retailerDomain: retailer.retailerDomain,
-            retailerName: retailer.retailerName,
-            retailerColor: retailer.retailerColor,
-          });
+        await prisma.competitorPrice.create({
+          data: {
+            competitorId: comp.id,
+            price: normalizedResult.price!,
+            currency: "TRY",
+            inStock: true,
+          },
+        });
+
+        let retailerDomain = "unknown";
+        try {
+          retailerDomain = new URL(normalizedResult.url).hostname.replace("www.", "");
+        } catch {
+          // invalid URL
         }
-      } catch (e: any) {
+        const retailer = getRetailerInfoFromDomain(retailerDomain);
+        competitors.push({
+          marketplace: mp,
+          name: compName,
+          price: normalizedResult.price!,
+          url: normalizedResult.url,
+          link: normalizedResult.url,
+          retailerDomain: retailer.retailerDomain,
+          retailerName: retailer.retailerName,
+          retailerColor: retailer.retailerColor,
+        });
+      } catch (e: unknown) {
         errorCount += 1;
+        const err = e as Error & { code?: string };
         insertErrors.push({
           marketplace: mp,
           url: normalizedUrl,
-          message: e?.message ?? "Unknown insert error",
-          code: e?.code ?? null,
+          message: err?.message ?? "Unknown insert error",
+          code: err?.code ?? null,
         });
       }
     }
 
     if (insertErrors.length) {
-      console.error("[CompeteHive Compare] Competitor insert errors", {
-        productId,
-        totalErrors: insertErrors.length,
-        errors: insertErrors,
-      });
+      logger.error(
+        { productId, totalErrors: insertErrors.length, errors: insertErrors },
+        "Competitor insert errors",
+      );
     }
 
     // Sort by price ascending
     competitors.sort((a, b) => a.price - b.price);
 
-    console.log("Found competitors:", competitors.length);
+    logger.info({ competitorCount: competitors.length }, "Compare complete");
 
-    return NextResponse.json({ success: true, competitors, skippedCount, errorCount });
-  } catch (error: any) {
-    console.error("Compare error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiSuccess({ success: true, competitors, skippedCount, errorCount });
+  } catch (error) {
+    return serverError(error, "POST /api/products/compare");
   }
 }

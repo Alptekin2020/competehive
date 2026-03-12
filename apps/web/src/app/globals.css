@@ -2,22 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap");
 
 :root {
-  --background: #0A0A0B;
-  --foreground: #FFFFFF;
-  --hive: #F59E0B;
-  --hive-dark: #D97706;
-  --card: #18181B;
-  --card-border: #27272A;
-  --muted: #71717A;
+  --background: #0a0a0b;
+  --foreground: #ffffff;
+  --hive: #f59e0b;
+  --hive-dark: #d97706;
+  --card: #18181b;
+  --card-border: #27272a;
+  --muted: #71717a;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: "Inter", system-ui, sans-serif;
 }
 
 /* Scrollbar */
@@ -28,17 +28,17 @@ body {
   background: #111113;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3F3F46;
+  background: #3f3f46;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525B;
+  background: #52525b;
 }
 
 /* Input autofill dark theme */
 input:-webkit-autofill {
-  -webkit-box-shadow: 0 0 0 30px #18181B inset !important;
-  -webkit-text-fill-color: #FFFFFF !important;
+  -webkit-box-shadow: 0 0 0 30px #18181b inset !important;
+  -webkit-text-fill-color: #ffffff !important;
 }
 
 /* Clerk UI overrides */
@@ -48,7 +48,7 @@ input:-webkit-autofill {
 .cl-card {
   background-color: #111113 !important;
   border: 1px solid #1f1f23 !important;
-  box-shadow: 0 0 40px rgba(0,0,0,0.6) !important;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.6) !important;
   border-radius: 16px !important;
 }
 .cl-headerTitle,
@@ -62,16 +62,16 @@ input:-webkit-autofill {
   color: #e5e5e5 !important;
 }
 .cl-formFieldInput {
-  background-color: #0A0A0B !important;
+  background-color: #0a0a0b !important;
   border-color: #2a2a2e !important;
   color: #ffffff !important;
 }
 .cl-formFieldInput:focus {
-  border-color: #F59E0B !important;
+  border-color: #f59e0b !important;
 }
 .cl-formButtonPrimary {
-  background-color: #F59E0B !important;
-  color: #0A0A0B !important;
+  background-color: #f59e0b !important;
+  color: #0a0a0b !important;
   font-weight: 600 !important;
 }
 .cl-formButtonPrimary:hover {
@@ -80,7 +80,7 @@ input:-webkit-autofill {
 .cl-footerActionLink,
 .cl-footerPages__signUp a,
 .cl-footerPages__signIn a {
-  color: #F59E0B !important;
+  color: #f59e0b !important;
 }
 .cl-socialButtonsBlockButton {
   background-color: #1a1a1e !important;
@@ -96,4 +96,3 @@ input:-webkit-autofill {
 .cl-internal-b3fm6y {
   background: transparent !important;
 }
-

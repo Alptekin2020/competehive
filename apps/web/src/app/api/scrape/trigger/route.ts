@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
+import { scrapeTrigerSchema } from "@/lib/validation";
 
 /**
  * Parse a readable product name from a marketplace URL slug.
@@ -54,62 +56,59 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorized();
     }
 
     const body = await req.json();
-    const { productId } = body;
+    const parsed = scrapeTrigerSchema.safeParse(body);
+    if (!parsed.success) return badRequest(parsed.error.errors[0].message);
 
-    if (!productId) {
-      return NextResponse.json({ error: "productId is required" }, { status: 400 });
-    }
+    const { productId } = parsed.data;
 
     // Fetch the product from DB
-    const products = await prisma.$queryRaw<any[]>`
-      SELECT id, product_url, product_name, marketplace, status
-      FROM tracked_products
-      WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-    `;
+    const product = await prisma.trackedProduct.findFirst({
+      where: { id: productId, userId: user.id },
+      select: {
+        id: true,
+        productUrl: true,
+        productName: true,
+        marketplace: true,
+        status: true,
+      },
+    });
 
-    if (!products || products.length === 0) {
-      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    if (!product) {
+      return notFound("Product not found");
     }
 
-    const product = products[0];
-
     // Parse a readable name from the URL slug as fallback
-    const parsedName = parseProductNameFromUrl(product.product_url);
+    const parsedName = parseProductNameFromUrl(product.productUrl);
 
     // Only update the name if the current one is the scraper fallback
     const isFallbackName =
-      !product.product_name ||
-      product.product_name === "Urun adi alinamadi" ||
-      product.product_name.endsWith(" ürünü") ||
-      /ürünü\s*[-–]\s*Online/i.test(product.product_name);
+      !product.productName ||
+      product.productName === "Urun adi alinamadi" ||
+      product.productName.endsWith(" ürünü") ||
+      /ürünü\s*[-–]\s*Online/i.test(product.productName);
     const needsNameUpdate = parsedName && isFallbackName;
 
     if (needsNameUpdate) {
-      await prisma.$queryRaw`
-        UPDATE tracked_products
-        SET product_name = ${parsedName},
-            status = 'ACTIVE'::"ProductStatus"
-        WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-      `;
+      await prisma.trackedProduct.update({
+        where: { id: productId },
+        data: { productName: parsedName, status: "ACTIVE" },
+      });
     } else if (product.status !== "ACTIVE") {
-      // At minimum, set status to ACTIVE
-      await prisma.$queryRaw`
-        UPDATE tracked_products
-        SET status = 'ACTIVE'::"ProductStatus"
-        WHERE id = ${productId}::uuid AND user_id = (SELECT id FROM users WHERE clerk_id = ${user.clerkId}::text)
-      `;
+      await prisma.trackedProduct.update({
+        where: { id: productId },
+        data: { status: "ACTIVE" },
+      });
     }
 
-    return NextResponse.json({
+    return apiSuccess({
       success: true,
-      updatedName: needsNameUpdate ? parsedName : product.product_name,
+      updatedName: needsNameUpdate ? parsedName : product.productName,
     });
-  } catch (error: any) {
-    console.error("POST /api/scrape/trigger error:", error);
-    return NextResponse.json({ error: "Server error: " + error.message }, { status: 500 });
+  } catch (error) {
+    return serverError(error, "POST /api/scrape/trigger");
   }
 }

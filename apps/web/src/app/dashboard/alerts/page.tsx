@@ -93,7 +93,7 @@ export default function AlertsPage() {
     setSaving(true);
 
     try {
-      const body: any = {
+      const body: Record<string, unknown> = {
         trackedProductId: selectedProduct || undefined,
         ruleType,
         notifyVia,
@@ -101,12 +101,13 @@ export default function AlertsPage() {
       };
 
       if (ruleType === "PRICE_THRESHOLD" || ruleType === "PERCENTAGE_CHANGE") {
-        body.thresholdValue = parseFloat(thresholdValue);
-        if (isNaN(body.thresholdValue)) {
+        const parsed = parseFloat(thresholdValue);
+        if (isNaN(parsed)) {
           setError("Eşik değeri geçerli bir sayı olmalıdır.");
           setSaving(false);
           return;
         }
+        body.thresholdValue = parsed;
       }
 
       if (ruleType === "PRICE_THRESHOLD") {
@@ -125,8 +126,8 @@ export default function AlertsPage() {
       setShowModal(false);
       resetForm();
       await fetchRules();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
       setSaving(false);
     }
@@ -135,17 +136,15 @@ export default function AlertsPage() {
   const handleDelete = async (ruleId: string) => {
     try {
       await fetch(`/api/alerts?id=${ruleId}`, { method: "DELETE" });
-      setRules(rules.filter(r => r.id !== ruleId));
+      setRules(rules.filter((r) => r.id !== ruleId));
     } catch (err) {
       console.error("Delete alert error:", err);
     }
   };
 
   const toggleChannel = (channel: string) => {
-    setNotifyVia(prev =>
-      prev.includes(channel)
-        ? prev.filter(c => c !== channel)
-        : [...prev, channel]
+    setNotifyVia((prev) =>
+      prev.includes(channel) ? prev.filter((c) => c !== channel) : [...prev, channel],
     );
   };
 
@@ -178,10 +177,22 @@ export default function AlertsPage() {
         </div>
         {products.length > 0 && (
           <button
-            onClick={() => { resetForm(); setShowModal(true); }}
+            onClick={() => {
+              resetForm();
+              setShowModal(true);
+            }}
             className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
             Uyarı Ekle
           </button>
         )}
@@ -193,28 +204,49 @@ export default function AlertsPage() {
             const rt = rule.ruleType || rule.rule_type || "";
             const channels = rule.notifyVia || rule.notify_via || [];
             const active = rule.isActive ?? rule.is_active ?? true;
-            const productName = rule.trackedProduct?.productName || rule.product_name || "Tüm ürünler";
+            const productName =
+              rule.trackedProduct?.productName || rule.product_name || "Tüm ürünler";
             const tv = rule.thresholdValue ?? rule.threshold_value;
 
             return (
               <div key={rule.id} className="bg-dark-900 border border-dark-800 rounded-2xl p-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${active ? "bg-hive-500/10" : "bg-dark-800"}`}>
-                      <svg className={`w-5 h-5 ${active ? "text-hive-500" : "text-dark-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${active ? "bg-hive-500/10" : "bg-dark-800"}`}
+                    >
+                      <svg
+                        className={`w-5 h-5 ${active ? "text-hive-500" : "text-dark-500"}`}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                        <path d="M13.73 21a2 2 0 01-3.46 0" />
+                      </svg>
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-white font-medium text-sm">{RULE_TYPE_LABELS[rt] || rt}</h3>
+                        <h3 className="text-white font-medium text-sm">
+                          {RULE_TYPE_LABELS[rt] || rt}
+                        </h3>
                         {!active && (
-                          <span className="text-xs bg-dark-800 text-dark-500 px-2 py-0.5 rounded-full">Pasif</span>
+                          <span className="text-xs bg-dark-800 text-dark-500 px-2 py-0.5 rounded-full">
+                            Pasif
+                          </span>
                         )}
                       </div>
                       <p className="text-dark-500 text-xs mt-0.5 truncate">{productName}</p>
                       {tv != null && (
                         <p className="text-dark-500 text-xs">
-                          Eşik: {Number(tv)}{ruleType === "PERCENTAGE_CHANGE" ? "%" : " TL"}
-                          {rule.direction ? ` (${rule.direction === "above" ? "üstünde" : "altında"})` : ""}
+                          Eşik: {Number(tv)}
+                          {ruleType === "PERCENTAGE_CHANGE" ? "%" : " TL"}
+                          {rule.direction
+                            ? ` (${rule.direction === "above" ? "üstünde" : "altında"})`
+                            : ""}
                         </p>
                       )}
                     </div>
@@ -222,7 +254,10 @@ export default function AlertsPage() {
                   <div className="flex items-center gap-3 flex-shrink-0">
                     <div className="flex gap-1">
                       {channels.map((ch: string) => (
-                        <span key={ch} className="text-xs bg-dark-800 text-dark-400 px-2 py-0.5 rounded">
+                        <span
+                          key={ch}
+                          className="text-xs bg-dark-800 text-dark-400 px-2 py-0.5 rounded"
+                        >
                           {CHANNEL_LABELS[ch] || ch}
                         </span>
                       ))}
@@ -231,7 +266,16 @@ export default function AlertsPage() {
                       onClick={() => handleDelete(rule.id)}
                       className="text-dark-600 hover:text-red-400 transition p-1"
                     >
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      </svg>
                     </button>
                   </div>
                 </div>
@@ -252,7 +296,10 @@ export default function AlertsPage() {
           </p>
           {products.length > 0 && (
             <button
-              onClick={() => { resetForm(); setShowModal(true); }}
+              onClick={() => {
+                resetForm();
+                setShowModal(true);
+              }}
               className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-6 py-3 rounded-xl font-semibold text-sm transition"
             >
               İlk Uyarıyı Oluştur
@@ -264,17 +311,34 @@ export default function AlertsPage() {
       {/* Create Alert Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !saving && setShowModal(false)} />
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => !saving && setShowModal(false)}
+          />
           <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6 w-full max-w-lg relative z-10 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-lg font-bold text-white">Uyarı Kuralı Oluştur</h2>
-              <button onClick={() => !saving && setShowModal(false)} className="text-dark-500 hover:text-white transition">
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <button
+                onClick={() => !saving && setShowModal(false)}
+                className="text-dark-500 hover:text-white transition"
+              >
+                <svg
+                  className="w-5 h-5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
               </button>
             </div>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">{error}</div>
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">
+                {error}
+              </div>
             )}
 
             <form onSubmit={handleCreate} className="space-y-4">
@@ -283,13 +347,15 @@ export default function AlertsPage() {
                 <label className="block text-sm font-medium text-dark-300 mb-2">Ürün</label>
                 <select
                   value={selectedProduct}
-                  onChange={e => setSelectedProduct(e.target.value)}
+                  onChange={(e) => setSelectedProduct(e.target.value)}
                   className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-hive-500/50 transition text-sm appearance-none"
                   required
                 >
                   <option value="">Ürün seçin...</option>
-                  {products.map(p => (
-                    <option key={p.id} value={p.id}>{p.product_name}</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.product_name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -299,11 +365,13 @@ export default function AlertsPage() {
                 <label className="block text-sm font-medium text-dark-300 mb-2">Uyarı Tipi</label>
                 <select
                   value={ruleType}
-                  onChange={e => setRuleType(e.target.value)}
+                  onChange={(e) => setRuleType(e.target.value)}
                   className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-hive-500/50 transition text-sm appearance-none"
                 >
                   {Object.entries(RULE_TYPE_LABELS).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -318,7 +386,7 @@ export default function AlertsPage() {
                     type="number"
                     step="0.01"
                     value={thresholdValue}
-                    onChange={e => setThresholdValue(e.target.value)}
+                    onChange={(e) => setThresholdValue(e.target.value)}
                     className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm"
                     placeholder={ruleType === "PERCENTAGE_CHANGE" ? "Ör: 10" : "Ör: 500"}
                     required
@@ -351,9 +419,11 @@ export default function AlertsPage() {
 
               {/* Bildirim Kanalları */}
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-2">Bildirim Kanalları</label>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Bildirim Kanalları
+                </label>
                 <div className="flex gap-2">
-                  {(["EMAIL", "TELEGRAM", "WEBHOOK"] as const).map(ch => (
+                  {(["EMAIL", "TELEGRAM", "WEBHOOK"] as const).map((ch) => (
                     <button
                       key={ch}
                       type="button"
@@ -371,17 +441,21 @@ export default function AlertsPage() {
 
               {/* Cooldown */}
               <div>
-                <label className="block text-sm font-medium text-dark-300 mb-2">Bekleme Süresi (dakika)</label>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Bekleme Süresi (dakika)
+                </label>
                 <input
                   type="number"
                   min="5"
                   max="1440"
                   value={cooldownMinutes}
-                  onChange={e => setCooldownMinutes(e.target.value)}
+                  onChange={(e) => setCooldownMinutes(e.target.value)}
                   className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm"
                   placeholder="60"
                 />
-                <p className="text-dark-600 text-xs mt-1">Aynı uyarının tekrar tetiklenmesi için minimum bekleme süresi</p>
+                <p className="text-dark-600 text-xs mt-1">
+                  Aynı uyarının tekrar tetiklenmesi için minimum bekleme süresi
+                </p>
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -400,10 +474,21 @@ export default function AlertsPage() {
                 >
                   {saving ? (
                     <span className="flex items-center justify-center gap-2">
-                      <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="30 70" /></svg>
+                      <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeDasharray="30 70"
+                        />
+                      </svg>
                       Kaydediliyor...
                     </span>
-                  ) : "Oluştur"}
+                  ) : (
+                    "Oluştur"
+                  )}
                 </button>
               </div>
             </form>

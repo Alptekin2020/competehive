@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { validateWorkerEnv } from "@competehive/shared";
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { logger } from "./utils/logger";
 
@@ -9,6 +10,7 @@ import { logger } from "./utils/logger";
 const SCAN_INTERVAL_MS = 60 * 1000; // Her 1 dakikada scheduler çalışsın
 
 async function main() {
+  validateWorkerEnv();
   logger.info("🐝 CompeteHive Worker starting...");
 
   // Workers otomatik başlıyor (oluşturulduklarında)
