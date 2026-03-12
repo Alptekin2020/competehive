@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { validateWorkerEnv } from "@competehive/shared";
+import { validateWorkerEnv } from "./shared";
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { competitorWorker } from "./jobs/competitor-processor";
 import { logger } from "./utils/logger";
@@ -9,6 +9,27 @@ import { logger } from "./utils/logger";
 // ============================================
 
 const SCAN_INTERVAL_MS = 60 * 1000; // Her 1 dakikada scheduler çalışsın
+
+function toLoggableError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  return { value: String(error) };
+}
+
+async function runSchedulerTick(reason: "startup" | "interval") {
+  try {
+    await scheduleScans();
+    logger.info({ reason }, "Scheduler tick completed");
+  } catch (error) {
+    logger.error({ reason, error: toLoggableError(error) }, "Scheduler tick failed");
+  }
+}
 
 async function main() {
   validateWorkerEnv();
@@ -25,19 +46,15 @@ async function main() {
   });
 
   competitorWorker.on("failed", (job, err) => {
-    logger.error({ jobId: job?.id, error: err.message }, "Competitor job failed");
+    logger.error({ jobId: job?.id, error: toLoggableError(err) }, "Competitor job failed");
   });
 
-  // İlk taramayı hemen başlat
-  await scheduleScans();
+  // İlk taramayı hemen başlat (hata olursa process'i düşürme)
+  await runSchedulerTick("startup");
 
   // Periyodik tarama scheduler
-  setInterval(async () => {
-    try {
-      await scheduleScans();
-    } catch (error) {
-      logger.error({ error }, "Scheduler error");
-    }
+  setInterval(() => {
+    void runSchedulerTick("interval");
   }, SCAN_INTERVAL_MS);
 
   logger.info(`🔄 Scheduler running every ${SCAN_INTERVAL_MS / 1000}s`);
@@ -53,11 +70,15 @@ async function main() {
     process.exit(0);
   };
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
 }
 
 main().catch((error) => {
-  logger.fatal({ error }, "Worker failed to start");
+  logger.fatal({ error: toLoggableError(error) }, "Worker failed to start");
   process.exit(1);
 });

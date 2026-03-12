@@ -1,5 +1,5 @@
 import { Worker, Job } from "bullmq";
-import { Marketplace, PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
 
 const prisma = new PrismaClient();
@@ -120,7 +120,7 @@ export const competitorWorker = new Worker(
             trackedProductId: productId,
             competitorUrl: comp.url,
             competitorName: comp.title,
-            marketplace: comp.marketplace as Marketplace,
+            marketplace: comp.marketplace as never,
             currentPrice: comp.price,
             lastScrapedAt: new Date(),
           },
