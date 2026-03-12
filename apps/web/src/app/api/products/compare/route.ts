@@ -82,8 +82,13 @@ export async function POST(req: NextRequest) {
     logger.info({ keywords, excludeMarketplace: product.marketplace }, "Compare searching");
 
     // Tüm web'de ara (marketplace filtresi yok)
+    const searchStart = Date.now();
     const allResults = await searchAllResults(keywords, product.marketplace);
-    logger.info({ totalResults: allResults.length }, "Compare results found");
+    const searchMs = Date.now() - searchStart;
+    logger.info(
+      { totalResults: allResults.length, searchMs, productName: product.productName },
+      "Compare results found",
+    );
     const competitors: CompareCompetitorResult[] = [];
     const insertErrors: Array<Record<string, unknown>> = [];
     let skippedCount = 0;

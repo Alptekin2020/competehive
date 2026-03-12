@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import * as cheerio from "cheerio";
 
 export interface MarketplaceResult {
@@ -149,22 +148,43 @@ function detectStore(url: string, title: string): { marketplace: string; storeNa
 }
 
 // ============================================
-// DIRECT MARKETPLACE SEARCH (no API key needed)
+// DIRECT MARKETPLACE SEARCH (public APIs — works from serverless/cloud IPs)
 // ============================================
 
-const SEARCH_HEADERS: Record<string, string> = {
+const API_HEADERS: Record<string, string> = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  Accept: "application/json, text/html, */*",
   "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
 };
+
+async function fetchJson(url: string, headers?: Record<string, string>): Promise<unknown | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch(url, {
+      headers: { ...API_HEADERS, ...headers },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      console.warn(`[CompeteHive] fetchJson ${res.status} for ${url}`);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.warn(`[CompeteHive] fetchJson error for ${url}:`, (e as Error).message);
+    return null;
+  }
+}
 
 async function fetchSearchPage(url: string): Promise<string | null> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
     const res = await fetch(url, {
-      headers: SEARCH_HEADERS,
+      headers: API_HEADERS,
       signal: controller.signal,
       cache: "no-store",
       redirect: "follow",
@@ -177,178 +197,218 @@ async function fetchSearchPage(url: string): Promise<string | null> {
   }
 }
 
-// Trendyol arama sonuçları sayfasını scrape et
+// Trendyol public search API (JSON — works from cloud IPs)
 async function searchTrendyolDirect(query: string): Promise<MarketplaceResult[]> {
   const results: MarketplaceResult[] = [];
-  const url = `https://www.trendyol.com/sr?q=${encodeURIComponent(query)}&qt=${encodeURIComponent(query)}&st=${encodeURIComponent(query)}`;
-  const html = await fetchSearchPage(url);
-  if (!html) return results;
 
-  const $ = cheerio.load(html);
+  // Strategy 1: Trendyol public search API
+  try {
+    const apiUrl = `https://public.trendyol.com/discovery-web-searchgw-service/v2/api/infinite-scroll/sr?q=${encodeURIComponent(query)}&pi=1&culture=tr-TR&storefrontId=1&language=tr&scoringAlgorithmId=2&categoryRelevancyEnabled=false&isLegalRequirementConfirmed=false&searchStrategyType=DEFAULT&productStampSize=20`;
+    const data = (await fetchJson(apiUrl)) as {
+      result?: {
+        products?: Array<{
+          id?: number;
+          name?: string;
+          url?: string;
+          images?: string[];
+          price?: {
+            sellingPrice?: { value?: number };
+            discountedPrice?: { value?: number };
+            originalPrice?: { value?: number };
+          };
+          hasStock?: boolean;
+          merchantName?: string;
+        }>;
+      };
+    } | null;
 
-  // Trendyol arama sonuçları: __SEARCH_APP_INITIAL_STATE__ JSON verisi
-  $("script").each((_, el) => {
-    const content = $(el).html() || "";
-    if (content.includes("__SEARCH_APP_INITIAL_STATE__")) {
-      try {
-        const match = content.match(/__SEARCH_APP_INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/);
-        if (match) {
-          const state = JSON.parse(match[1]);
-          const products = state?.products || [];
-          for (const p of products) {
-            if (p.name && p.price) {
-              const productUrl = p.url
-                ? `https://www.trendyol.com${p.url.startsWith("/") ? "" : "/"}${p.url}`
-                : "";
-              const imageUrl = p.images?.[0]
-                ? p.images[0].startsWith("http")
-                  ? p.images[0]
-                  : `https://cdn.dsmcdn.com${p.images[0]}`
-                : null;
-              results.push({
-                marketplace: "TRENDYOL",
-                storeName: "Trendyol",
-                productName: p.name,
-                price:
-                  typeof p.price === "number"
-                    ? p.price
-                    : (p.price?.sellingPrice?.value ?? p.price?.discountedPrice?.value ?? null),
-                url: productUrl,
-                image: imageUrl,
-                inStock: p.hasStock !== false,
-              });
+    const products = data?.result?.products || [];
+    console.log(`[CompeteHive] Trendyol API search: ${products.length} products for "${query}"`);
+
+    for (const p of products) {
+      if (!p.name) continue;
+      const priceValue =
+        p.price?.discountedPrice?.value ??
+        p.price?.sellingPrice?.value ??
+        p.price?.originalPrice?.value ??
+        null;
+      const productUrl = p.url
+        ? `https://www.trendyol.com${p.url.startsWith("/") ? "" : "/"}${p.url}`
+        : "";
+      const imageUrl = p.images?.[0]
+        ? p.images[0].startsWith("http")
+          ? p.images[0]
+          : `https://cdn.dsmcdn.com/${p.images[0]}`
+        : null;
+
+      results.push({
+        marketplace: "TRENDYOL",
+        storeName: p.merchantName || "Trendyol",
+        productName: p.name,
+        price: priceValue,
+        url: productUrl,
+        image: imageUrl,
+        inStock: p.hasStock !== false,
+      });
+    }
+  } catch (e) {
+    console.error("[CompeteHive] Trendyol API search error:", (e as Error).message);
+  }
+
+  // Strategy 2: HTML fallback (in case API changes)
+  if (results.length === 0) {
+    try {
+      const htmlUrl = `https://www.trendyol.com/sr?q=${encodeURIComponent(query)}`;
+      const html = await fetchSearchPage(htmlUrl);
+      if (html) {
+        const $ = cheerio.load(html);
+        $("script").each((_, el) => {
+          const content = $(el).html() || "";
+          if (content.includes("__SEARCH_APP_INITIAL_STATE__")) {
+            try {
+              const match = content.match(/__SEARCH_APP_INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/);
+              if (match) {
+                const state = JSON.parse(match[1]);
+                const prods = state?.products || [];
+                for (const p of prods) {
+                  if (p.name && p.price) {
+                    const productUrl = p.url
+                      ? `https://www.trendyol.com${p.url.startsWith("/") ? "" : "/"}${p.url}`
+                      : "";
+                    results.push({
+                      marketplace: "TRENDYOL",
+                      storeName: "Trendyol",
+                      productName: p.name,
+                      price:
+                        typeof p.price === "number"
+                          ? p.price
+                          : (p.price?.sellingPrice?.value ??
+                            p.price?.discountedPrice?.value ??
+                            null),
+                      url: productUrl,
+                      image: null,
+                      inStock: p.hasStock !== false,
+                    });
+                  }
+                }
+              }
+            } catch {
+              // JSON parse error
             }
           }
-        }
-      } catch {
-        // JSON parse error
-      }
-    }
-  });
-
-  // HTML fallback: ürün kartlarını parse et
-  if (results.length === 0) {
-    $(".p-card-wrppr").each((_, el) => {
-      const $card = $(el);
-      const link = $card.find("a").first().attr("href");
-      const name =
-        $card.find(".prdct-desc-cntnr-name").text().trim() || $card.find("img").attr("alt") || "";
-      const priceText =
-        $card.find(".prc-box-dscntd").first().text().trim() ||
-        $card.find(".prc-box-sllng").first().text().trim();
-      const image = $card.find("img").attr("src") || null;
-
-      const price = parsePrice(priceText);
-      const fullUrl = link
-        ? link.startsWith("http")
-          ? link
-          : `https://www.trendyol.com${link}`
-        : "";
-
-      if (name && fullUrl) {
-        results.push({
-          marketplace: "TRENDYOL",
-          storeName: "Trendyol",
-          productName: name,
-          price,
-          url: fullUrl,
-          image,
-          inStock: true,
         });
-      }
-    });
-  }
-
-  return results.slice(0, 10);
-}
-
-// Hepsiburada arama sonuçları sayfasını scrape et
-async function searchHepsiburadaDirect(query: string): Promise<MarketplaceResult[]> {
-  const results: MarketplaceResult[] = [];
-  const url = `https://www.hepsiburada.com/ara?q=${encodeURIComponent(query)}`;
-  const html = await fetchSearchPage(url);
-  if (!html) return results;
-
-  const $ = cheerio.load(html);
-
-  // Hepsiburada JSON-LD arama sonuçları
-  $('script[type="application/ld+json"]').each((_, el) => {
-    try {
-      const json = JSON.parse($(el).html() || "");
-      if (json["@type"] === "ItemList" && Array.isArray(json.itemListElement)) {
-        for (const item of json.itemListElement) {
-          const product = item.item || item;
-          if (product?.name) {
-            const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
-            results.push({
-              marketplace: "HEPSIBURADA",
-              storeName: "Hepsiburada",
-              productName: product.name,
-              price: offers?.price ? parseFloat(offers.price) : null,
-              url: product.url || product["@id"] || "",
-              image: typeof product.image === "string" ? product.image : product.image?.[0] || null,
-              inStock: offers?.availability !== "https://schema.org/OutOfStock",
-            });
-          }
-        }
       }
     } catch {
-      // Invalid JSON-LD
+      // HTML fallback failed
     }
-  });
-
-  // HTML fallback: ürün kartları
-  if (results.length === 0) {
-    $(
-      "[data-test-id='product-card-item'], .productListContent-item, li[class*='productListContent']",
-    ).each((_, el) => {
-      const $card = $(el);
-      const link =
-        $card.find("a[href*='/p-']").first().attr("href") || $card.find("a").first().attr("href");
-      const name =
-        $card.find("[data-test-id='product-card-name']").text().trim() ||
-        $card.find("h3").text().trim() ||
-        $card.find("img").attr("alt") ||
-        "";
-      const priceText =
-        $card.find("[data-test-id='price-current-price']").text().trim() ||
-        $card.find("[class*='price']").first().text().trim();
-      const image = $card.find("img").attr("src") || null;
-
-      const price = parsePrice(priceText);
-      const fullUrl = link
-        ? link.startsWith("http")
-          ? link
-          : `https://www.hepsiburada.com${link}`
-        : "";
-
-      if (name && fullUrl) {
-        results.push({
-          marketplace: "HEPSIBURADA",
-          storeName: "Hepsiburada",
-          productName: name,
-          price,
-          url: fullUrl,
-          image,
-          inStock: true,
-        });
-      }
-    });
   }
 
   return results.slice(0, 10);
 }
 
-// Amazon TR arama sonuçları sayfasını scrape et
+// Hepsiburada — try product search API, then HTML fallback
+async function searchHepsiburadaDirect(query: string): Promise<MarketplaceResult[]> {
+  const results: MarketplaceResult[] = [];
+
+  // Strategy 1: Hepsiburada search API
+  try {
+    const apiUrl = `https://www.hepsiburada.com/api/search/products?q=${encodeURIComponent(query)}&page=1&silestirilmis=true`;
+    const data = (await fetchJson(apiUrl, {
+      Referer: "https://www.hepsiburada.com/",
+      Origin: "https://www.hepsiburada.com",
+    })) as {
+      products?: Array<{
+        productId?: string;
+        productName?: string;
+        slug?: string;
+        url?: string;
+        price?: number;
+        imageUrl?: string;
+        inStock?: boolean;
+      }>;
+    } | null;
+
+    const products = data?.products || [];
+    console.log(`[CompeteHive] Hepsiburada API search: ${products.length} products for "${query}"`);
+
+    for (const p of products) {
+      if (!p.productName) continue;
+      const productUrl = p.url
+        ? p.url.startsWith("http")
+          ? p.url
+          : `https://www.hepsiburada.com${p.url}`
+        : p.slug
+          ? `https://www.hepsiburada.com/${p.slug}`
+          : "";
+      results.push({
+        marketplace: "HEPSIBURADA",
+        storeName: "Hepsiburada",
+        productName: p.productName,
+        price: p.price ?? null,
+        url: productUrl,
+        image: p.imageUrl || null,
+        inStock: p.inStock ?? true,
+      });
+    }
+  } catch (e) {
+    console.warn("[CompeteHive] Hepsiburada API search error:", (e as Error).message);
+  }
+
+  // Strategy 2: HTML scraping fallback
+  if (results.length === 0) {
+    try {
+      const htmlUrl = `https://www.hepsiburada.com/ara?q=${encodeURIComponent(query)}`;
+      const html = await fetchSearchPage(htmlUrl);
+      if (html) {
+        const $ = cheerio.load(html);
+        $('script[type="application/ld+json"]').each((_, el) => {
+          try {
+            const json = JSON.parse($(el).html() || "");
+            if (json["@type"] === "ItemList" && Array.isArray(json.itemListElement)) {
+              for (const item of json.itemListElement) {
+                const product = item.item || item;
+                if (product?.name) {
+                  const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+                  results.push({
+                    marketplace: "HEPSIBURADA",
+                    storeName: "Hepsiburada",
+                    productName: product.name,
+                    price: offers?.price ? parseFloat(offers.price) : null,
+                    url: product.url || product["@id"] || "",
+                    image:
+                      typeof product.image === "string"
+                        ? product.image
+                        : product.image?.[0] || null,
+                    inStock: offers?.availability !== "https://schema.org/OutOfStock",
+                  });
+                }
+              }
+            }
+          } catch {
+            // Invalid JSON-LD
+          }
+        });
+      }
+    } catch {
+      // HTML fallback failed
+    }
+  }
+
+  return results.slice(0, 10);
+}
+
+// Amazon TR — HTML scraping (no public API available)
 async function searchAmazonTRDirect(query: string): Promise<MarketplaceResult[]> {
   const results: MarketplaceResult[] = [];
   const url = `https://www.amazon.com.tr/s?k=${encodeURIComponent(query)}`;
   const html = await fetchSearchPage(url);
-  if (!html) return results;
+  if (!html) {
+    console.warn("[CompeteHive] Amazon TR HTML fetch returned null");
+    return results;
+  }
 
   const $ = cheerio.load(html);
 
-  // Amazon arama sonuçları: div[data-component-type="s-search-result"]
   $('div[data-component-type="s-search-result"]').each((_, el) => {
     const $card = $(el);
     const asin = $card.attr("data-asin");
@@ -386,19 +446,22 @@ async function searchAmazonTRDirect(query: string): Promise<MarketplaceResult[]>
     }
   });
 
+  console.log(`[CompeteHive] Amazon TR HTML search: ${results.length} products for "${query}"`);
   return results.slice(0, 10);
 }
 
-// N11 arama sonuçları sayfasını scrape et
+// N11 — HTML scraping (no public API available)
 async function searchN11Direct(query: string): Promise<MarketplaceResult[]> {
   const results: MarketplaceResult[] = [];
   const url = `https://www.n11.com/arama?q=${encodeURIComponent(query)}`;
   const html = await fetchSearchPage(url);
-  if (!html) return results;
+  if (!html) {
+    console.warn("[CompeteHive] N11 HTML fetch returned null");
+    return results;
+  }
 
   const $ = cheerio.load(html);
 
-  // N11 JSON-LD arama sonuçları
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const json = JSON.parse($(el).html() || "");
@@ -424,7 +487,6 @@ async function searchN11Direct(query: string): Promise<MarketplaceResult[]> {
     }
   });
 
-  // HTML fallback: ürün kartları
   if (results.length === 0) {
     $(".columnContent .pro, .listView li.clone, .product-list-item").each((_, el) => {
       const $card = $(el);
@@ -454,10 +516,11 @@ async function searchN11Direct(query: string): Promise<MarketplaceResult[]> {
     });
   }
 
+  console.log(`[CompeteHive] N11 HTML search: ${results.length} products for "${query}"`);
   return results.slice(0, 10);
 }
 
-// Tüm marketplace'lerde doğrudan arama yap (API key gerekmez)
+// Tüm marketplace'lerde doğrudan arama yap (public API + HTML fallback)
 async function searchMarketplacesDirect(
   query: string,
   excludeMarketplace: string,
@@ -695,6 +758,7 @@ async function selectBestMatches(
   }
 
   try {
+    const { default: OpenAI } = await import("openai");
     const openai = new OpenAI({ apiKey: openaiKey });
     const productList = results
       .map((r, i) => `${i}: [${r.storeName}] ${r.productName}${r.price ? ` — ${r.price} TL` : ""}`)

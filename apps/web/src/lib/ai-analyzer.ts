@@ -1,8 +1,14 @@
-import OpenAI from "openai";
+import type OpenAIType from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let _openai: OpenAIType | null = null;
+
+async function getOpenAI(): Promise<OpenAIType> {
+  if (!_openai) {
+    const { default: OpenAI } = await import("openai");
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 export interface ProductAnalysis {
   brand: string;
@@ -17,6 +23,7 @@ export async function analyzeProduct(
   marketplace: string,
   price: number | null,
 ): Promise<ProductAnalysis> {
+  const openai = await getOpenAI();
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0,
