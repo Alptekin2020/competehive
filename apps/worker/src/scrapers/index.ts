@@ -3,7 +3,7 @@ import { logger } from "../utils/logger";
 import {
   SUPPORTED_SCRAPER_MARKETPLACES,
   type SupportedScraperMarketplace,
-} from "@competehive/shared";
+} from "../shared";
 
 // ============================================
 // Scraper Types

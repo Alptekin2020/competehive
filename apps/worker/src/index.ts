@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { validateWorkerEnv } from "@competehive/shared";
+import { validateWorkerEnv } from "./shared";
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { competitorWorker } from "./jobs/competitor-processor";
 import { logger } from "./utils/logger";

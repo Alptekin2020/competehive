@@ -1,7 +1,7 @@
 import TelegramBot from "node-telegram-bot-api";
 import nodemailer from "nodemailer";
 import { logger } from "../utils/logger";
-import type { AlertRuleWithUser, AlertUser } from "@competehive/shared";
+import type { AlertRuleWithUser, AlertUser } from "../shared";
 
 // ============================================
 // Telegram Bot
