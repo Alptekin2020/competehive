@@ -57,7 +57,26 @@ export async function POST(req: NextRequest) {
     }
 
     if (keywords.length === 0) {
-      keywords = [product.productName.split(" ").slice(0, 5).join(" ")];
+      // Akıllı fallback: tam isim + model numarası olmadan versiyon
+      const fullName = product.productName;
+      keywords = [fullName];
+
+      // Model numarasını tespit et ve kaldırılmış versiyonu da ekle
+      const modelPattern = /\b[A-Z0-9](?:[A-Z0-9-/]){4,}[A-Z0-9]\b/i;
+      const modelMatch = fullName.match(modelPattern);
+      if (modelMatch) {
+        const withoutModel = fullName
+          .replace(modelPattern, "")
+          .replace(/\s{2,}/g, " ")
+          .trim();
+        if (withoutModel.length >= 5) {
+          keywords.push(withoutModel);
+        }
+        // Sadece model kodu ile de ara
+        if (modelMatch[0].length >= 5) {
+          keywords.push(modelMatch[0]);
+        }
+      }
     }
 
     logger.info({ keywords, excludeMarketplace: product.marketplace }, "Compare searching");
