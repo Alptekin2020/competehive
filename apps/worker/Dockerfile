@@ -1,3 +1,21 @@
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Build dependencies (includes TypeScript + @types from devDependencies)
+COPY package.json ./
+COPY prisma ./prisma
+RUN npm install
+RUN npx prisma generate --schema ./prisma/schema.prisma
+
+# Copy source and compile
+COPY . .
+RUN npm run build
+
+# Keep only runtime deps for final image
+RUN npm prune --omit=dev
+
+
 FROM node:20-slim
 
 WORKDIR /app
@@ -23,14 +41,8 @@ RUN apt-get update && apt-get install -y \
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Copy package files
-COPY package.json ./
-RUN npm install --production
-
-# Copy source
-COPY . .
-
-# Build
-RUN npm run build
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
 
 CMD ["npm", "start"]
