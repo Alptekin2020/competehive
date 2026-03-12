@@ -5,6 +5,7 @@ WORKDIR /app
 # Build dependencies (includes TypeScript + @types from devDependencies)
 COPY package.json ./
 COPY prisma ./prisma
+ENV PUPPETEER_SKIP_DOWNLOAD=1
 RUN npm install
 RUN npx prisma generate --schema ./prisma/schema.prisma
 

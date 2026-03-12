@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import puppeteer from "puppeteer";
 import { logger } from "../utils/logger";
 import { SUPPORTED_SCRAPER_MARKETPLACES, type SupportedScraperMarketplace } from "../shared";
 
@@ -58,6 +59,11 @@ function parsePrice(raw?: string | null): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 // ============================================
 // User Agent Rotasyonu
 // ============================================
@@ -107,7 +113,7 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 
       return await response.text();
     } catch (error) {
-      logger.warn({ error }, `Fetch attempt ${attempt}/${retries} failed for ${url}`);
+      logger.warn(`Fetch attempt ${attempt}/${retries} failed for ${url}: ${errorMessage(error)}`);
       if (attempt === retries) throw error;
 
       // Exponential backoff
@@ -118,32 +124,152 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 }
 
 // ============================================
-// TRENDYOL SCRAPER
+// JSON Fetch with retry (for API endpoints)
 // ============================================
 
-export async function scrapeTrendyol(
+async function fetchJsonWithRetry(
   url: string,
-  config: ScraperConfig = {},
-): Promise<ScrapedProduct> {
-  logger.info(`Scraping Trendyol: ${url}`);
+  config: ScraperConfig,
+  retries = 2,
+): Promise<unknown> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), config.timeout || 15000);
 
-  const html = await fetchWithRetry(url, config);
+      const headers: Record<string, string> = {
+        "User-Agent": config.userAgent || getRandomUserAgent(),
+        Accept: "application/json, text/plain, */*",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        Referer: "https://www.trendyol.com/",
+        Origin: "https://www.trendyol.com",
+      };
+
+      const response = await fetch(url, {
+        headers,
+        signal: controller.signal,
+        redirect: "follow",
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      logger.warn(
+        `JSON fetch attempt ${attempt}/${retries} failed for ${url}: ${errorMessage(error)}`,
+      );
+      if (attempt === retries) throw error;
+      await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+    }
+  }
+  throw new Error("All JSON fetch attempts failed");
+}
+
+// ============================================
+// Puppeteer-based scraping fallback
+// ============================================
+
+let browserInstance: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+
+async function getBrowser() {
+  if (browserInstance && browserInstance.connected) {
+    return browserInstance;
+  }
+
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
+
+  browserInstance = await puppeteer.launch({
+    headless: true,
+    executablePath,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--single-process",
+    ],
+  });
+
+  return browserInstance;
+}
+
+async function scrapeWithPuppeteer(url: string, config: ScraperConfig): Promise<string> {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+
+  try {
+    await page.setUserAgent(config.userAgent || getRandomUserAgent());
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+    });
+
+    // Block unnecessary resources for speed
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const resourceType = req.resourceType();
+      if (["image", "stylesheet", "font", "media"].includes(resourceType)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: config.timeout || 30000,
+    });
+
+    // Wait a bit for JS to render product data
+    await new Promise((r) => setTimeout(r, 3000));
+
+    const html = await page.content();
+    return html;
+  } finally {
+    await page.close();
+  }
+}
+
+// ============================================
+// Extract Trendyol content ID from URL
+// ============================================
+
+function extractTrendyolContentId(url: string): string | null {
+  // Trendyol URLs have pattern: ...p-{contentId}...
+  const match = url.match(/p-(\d+)/);
+  return match ? match[1] : null;
+}
+
+// ============================================
+// Parse HTML for Trendyol product data
+// ============================================
+
+function parseTrendyolHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
-  // Trendyol ürün verisi genelde __PRODUCT_DETAIL_APP_INITIAL_STATE__ içinde JSON olarak bulunur
-  let productData: ScrapedProduct | null = null;
+  // Use a mutable holder to avoid TS narrowing issues inside callbacks
+  const holder: { data: ScrapedProduct | null } = { data: null };
 
   // Method 1: JSON-LD structured data
-  const jsonLd = $('script[type="application/ld+json"]').first().html();
-  if (jsonLd) {
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (holder.data && holder.data.price > 0) return;
+    const jsonLd = $(el).html();
+    if (!jsonLd) return;
     try {
       const ld = JSON.parse(jsonLd);
       if (ld["@type"] === "Product") {
-        productData = {
+        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        holder.data = {
           name: ld.name || "",
-          price: parseFloat(ld.offers?.price || ld.offers?.[0]?.price || "0"),
-          currency: ld.offers?.priceCurrency || "TRY",
-          inStock: ld.offers?.availability?.includes("InStock") ?? true,
+          price: parseFloat(offer?.price || "0"),
+          currency: offer?.priceCurrency || "TRY",
+          inStock: offer?.availability?.includes("InStock") ?? true,
           imageUrl: ld.image?.[0] || ld.image || undefined,
           rating: ld.aggregateRating?.ratingValue
             ? parseFloat(ld.aggregateRating.ratingValue)
@@ -151,14 +277,16 @@ export async function scrapeTrendyol(
           reviewCount: ld.aggregateRating?.reviewCount
             ? parseInt(ld.aggregateRating.reviewCount)
             : undefined,
-          sellerName: ld.offers?.seller?.name || undefined,
+          sellerName: offer?.seller?.name || undefined,
           category: ld.category || undefined,
         };
       }
-    } catch (e) {
-      logger.warn("JSON-LD parse failed, falling back to HTML parsing");
+    } catch {
+      // continue to next script tag
     }
-  }
+  });
+
+  let productData = holder.data;
 
   // Method 2: HTML parsing fallback
   if (!productData || productData.price === 0) {
@@ -183,8 +311,9 @@ export async function scrapeTrendyol(
     };
   }
 
-  // Method 3: Script tag'lerden veri çekme
+  // Method 3: Script tag state extraction
   if (!productData.name || productData.price === 0) {
+    const pd = productData;
     $("script").each((_, el) => {
       const content = $(el).html() || "";
       if (content.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__")) {
@@ -194,57 +323,200 @@ export async function scrapeTrendyol(
             const state = JSON.parse(match[1]);
             const product = state.product;
             if (product) {
-              productData!.name = productData!.name || product.name;
-              productData!.price = productData!.price || product.price?.sellingPrice?.value;
-              productData!.sellerName = productData!.sellerName || product.merchant?.name;
-              productData!.category = productData!.category || product.category?.name;
+              pd.name = pd.name || product.name;
+              pd.price = pd.price || product.price?.sellingPrice?.value;
+              pd.sellerName = pd.sellerName || product.merchant?.name;
+              pd.category = pd.category || product.category?.name;
             }
           }
-        } catch (e) {
-          logger.warn("Script state parse failed");
+        } catch {
+          // continue
         }
       }
     });
+    productData = pd;
   }
 
-  if (!productData.name && productData.price === 0) {
-    throw new Error("Trendyol ürün bilgileri çekilemedi. Sayfa yapısı değişmiş olabilir.");
+  if (productData && (productData.name || productData.price > 0)) {
+    return productData;
   }
 
-  logger.info(
-    `Trendyol scraped: ${productData.name} - ${productData.price} ${productData.currency}`,
+  return null;
+}
+
+// ============================================
+// TRENDYOL SCRAPER
+// ============================================
+
+export async function scrapeTrendyol(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  logger.info(`Scraping Trendyol: ${url}`);
+
+  // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
+  const contentId = extractTrendyolContentId(url);
+  if (contentId) {
+    try {
+      const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}`;
+      logger.info(`Trying Trendyol API: contentId=${contentId}`);
+      const data = (await fetchJsonWithRetry(apiUrl, config)) as Record<string, unknown>;
+
+      const result = data?.result as Record<string, unknown> | undefined;
+      if (result) {
+        const price = result.price as Record<string, unknown> | undefined;
+        const sellingPrice = price?.sellingPrice as Record<string, unknown> | undefined;
+        const discountedPrice = price?.discountedPrice as Record<string, unknown> | undefined;
+        const originalPrice = price?.originalPrice as Record<string, unknown> | undefined;
+        const priceValue =
+          (discountedPrice?.value as number) ||
+          (sellingPrice?.value as number) ||
+          (originalPrice?.value as number) ||
+          0;
+
+        const images = result.images as string[] | undefined;
+        const category = result.category as Record<string, unknown> | undefined;
+        const ratingScore = result.ratingScore as Record<string, unknown> | undefined;
+        const merchant = result.merchant as Record<string, unknown> | undefined;
+
+        if (priceValue > 0) {
+          const product: ScrapedProduct = {
+            name: (result.name as string) || (result.productName as string) || "",
+            price: priceValue,
+            currency: "TRY",
+            inStock: (result.inStock as boolean) ?? true,
+            imageUrl: images?.[0] ? `https://cdn.dsmcdn.com/${images[0]}` : undefined,
+            category: (category?.name as string) || undefined,
+            sellerName: (merchant?.name as string) || undefined,
+            rating: ratingScore?.averageRating
+              ? parseFloat(String(ratingScore.averageRating))
+              : undefined,
+            reviewCount: ratingScore?.totalRatingCount
+              ? parseInt(String(ratingScore.totalRatingCount))
+              : undefined,
+          };
+
+          logger.info(
+            `Trendyol API success: ${product.name} - ${product.price} ${product.currency}`,
+          );
+          return product;
+        }
+      }
+
+      logger.warn("Trendyol API returned data but no valid price, trying other methods");
+    } catch (error) {
+      logger.warn(`Trendyol API failed: ${errorMessage(error)}, trying fetch+HTML`);
+    }
+  }
+
+  // Strategy 2: Direct HTML fetch
+  try {
+    const html = await fetchWithRetry(url, config);
+    const product = parseTrendyolHtml(html);
+    if (product && product.price > 0) {
+      logger.info(`Trendyol HTML scraped: ${product.name} - ${product.price} ${product.currency}`);
+      return product;
+    }
+    logger.warn("Trendyol HTML fetch returned no product data, trying Puppeteer");
+  } catch (error) {
+    logger.warn(`Trendyol HTML fetch failed: ${errorMessage(error)}, trying Puppeteer`);
+  }
+
+  // Strategy 3: Puppeteer (handles JS-rendered pages and bot protection)
+  try {
+    logger.info("Attempting Trendyol scrape with Puppeteer");
+    const html = await scrapeWithPuppeteer(url, config);
+    const product = parseTrendyolHtml(html);
+    if (product && product.price > 0) {
+      logger.info(
+        `Trendyol Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
+      );
+      return product;
+    }
+  } catch (error) {
+    logger.warn(`Trendyol Puppeteer scrape failed: ${errorMessage(error)}`);
+  }
+
+  throw new ScraperError(
+    "Trendyol urun bilgileri tum yontemlerle cekilemedi (API + HTML + Puppeteer)",
+    {
+      code: "SCRAPE_ALL_METHODS_FAILED",
+      retryable: true,
+    },
   );
-  return productData;
+}
+
+// ============================================
+// Generic HTML parse helper for other marketplaces
+// ============================================
+
+async function scrapeWithFallback(
+  url: string,
+  config: ScraperConfig,
+  parseHtml: (html: string) => ScrapedProduct | null,
+  marketplaceName: string,
+): Promise<ScrapedProduct> {
+  // Strategy 1: Direct HTML fetch
+  try {
+    const html = await fetchWithRetry(url, config);
+    const product = parseHtml(html);
+    if (product && product.price > 0) {
+      logger.info(
+        `${marketplaceName} HTML scraped: ${product.name} - ${product.price} ${product.currency}`,
+      );
+      return product;
+    }
+    logger.warn(`${marketplaceName} HTML fetch returned no product data, trying Puppeteer`);
+  } catch (error) {
+    logger.warn(`${marketplaceName} HTML fetch failed: ${errorMessage(error)}, trying Puppeteer`);
+  }
+
+  // Strategy 2: Puppeteer fallback
+  try {
+    logger.info(`Attempting ${marketplaceName} scrape with Puppeteer`);
+    const html = await scrapeWithPuppeteer(url, config);
+    const product = parseHtml(html);
+    if (product && product.price > 0) {
+      logger.info(
+        `${marketplaceName} Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
+      );
+      return product;
+    }
+  } catch (error) {
+    logger.warn(`${marketplaceName} Puppeteer scrape failed: ${errorMessage(error)}`);
+  }
+
+  throw new ScraperError(`${marketplaceName} urun bilgileri cekilemedi (HTML + Puppeteer)`, {
+    code: "SCRAPE_ALL_METHODS_FAILED",
+    retryable: true,
+  });
 }
 
 // ============================================
 // HEPSIBURADA SCRAPER
 // ============================================
 
-export async function scrapeHepsiburada(
-  url: string,
-  config: ScraperConfig = {},
-): Promise<ScrapedProduct> {
-  logger.info(`Scraping Hepsiburada: ${url}`);
-
-  const html = await fetchWithRetry(url, config);
+function parseHepsiburadaHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
-  let productData: ScrapedProduct | null = null;
+  const holder: { data: ScrapedProduct | null } = { data: null };
 
   // JSON-LD
-  const jsonLd = $('script[type="application/ld+json"]').first().html();
-  if (jsonLd) {
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (holder.data && holder.data.price > 0) return;
+    const jsonLd = $(el).html();
+    if (!jsonLd) return;
     try {
       const ld = JSON.parse(jsonLd);
       if (ld["@type"] === "Product") {
-        productData = {
+        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        holder.data = {
           name: ld.name || "",
-          price: parseFloat(ld.offers?.price || ld.offers?.[0]?.price || "0"),
-          currency: ld.offers?.priceCurrency || "TRY",
-          inStock: ld.offers?.availability?.includes("InStock") ?? true,
+          price: parseFloat(offer?.price || "0"),
+          currency: offer?.priceCurrency || "TRY",
+          inStock: offer?.availability?.includes("InStock") ?? true,
           imageUrl: ld.image?.[0] || ld.image || undefined,
-          sellerName: ld.offers?.seller?.name || undefined,
+          sellerName: offer?.seller?.name || undefined,
           rating: ld.aggregateRating?.ratingValue
             ? parseFloat(ld.aggregateRating.ratingValue)
             : undefined,
@@ -253,10 +525,12 @@ export async function scrapeHepsiburada(
             : undefined,
         };
       }
-    } catch (e) {
-      logger.warn("JSON-LD parse failed for Hepsiburada");
+    } catch {
+      // continue
     }
-  }
+  });
+
+  let productData = holder.data;
 
   // HTML fallback
   if (!productData || productData.price === 0) {
@@ -275,49 +549,52 @@ export async function scrapeHepsiburada(
     };
   }
 
-  if (!productData.name && productData.price === 0) {
-    throw new Error("Hepsiburada ürün bilgileri çekilemedi.");
+  if (productData && (productData.name || productData.price > 0)) {
+    return productData;
   }
+  return null;
+}
 
-  logger.info(
-    `Hepsiburada scraped: ${productData.name} - ${productData.price} ${productData.currency}`,
-  );
-  return productData;
+export async function scrapeHepsiburada(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  logger.info(`Scraping Hepsiburada: ${url}`);
+  return scrapeWithFallback(url, config, parseHepsiburadaHtml, "Hepsiburada");
 }
 
 // ============================================
 // AMAZON TR SCRAPER
 // ============================================
 
-export async function scrapeAmazonTR(
-  url: string,
-  config: ScraperConfig = {},
-): Promise<ScrapedProduct> {
-  logger.info(`Scraping Amazon TR: ${url}`);
-
-  const html = await fetchWithRetry(url, config);
+function parseAmazonTRHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
-  const jsonLd = $('script[type="application/ld+json"]').first().html();
-  let parsedFromLd: Partial<ScrapedProduct> = {};
+  const holder: { data: Partial<ScrapedProduct> } = { data: {} };
 
-  if (jsonLd) {
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (holder.data.price && holder.data.price > 0) return;
+    const jsonLd = $(el).html();
+    if (!jsonLd) return;
     try {
       const ld = JSON.parse(jsonLd);
       const offer = Array.isArray(ld?.offers) ? ld.offers[0] : ld?.offers;
-      parsedFromLd = {
-        name: ld?.name,
-        price: parseFloat(offer?.price || "0"),
-        currency: offer?.priceCurrency || "TRY",
-        sellerName: offer?.seller?.name,
-        imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
-        inStock: offer?.availability?.includes("InStock") ?? true,
-      };
+      if (offer?.price) {
+        holder.data = {
+          name: ld?.name,
+          price: parseFloat(offer.price || "0"),
+          currency: offer.priceCurrency || "TRY",
+          sellerName: offer.seller?.name,
+          imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
+          inStock: offer.availability?.includes("InStock") ?? true,
+        };
+      }
     } catch {
-      logger.warn("Amazon TR JSON-LD parse failed");
+      // continue
     }
-  }
+  });
 
+  const parsedFromLd = holder.data;
   const htmlName = $("#productTitle").text().trim();
   const htmlPrice = parsePrice($(".a-price .a-offscreen").first().text().trim());
   const sellerName = $("#sellerProfileTriggerId").text().trim() || $("#merchantInfo").text().trim();
@@ -333,47 +610,52 @@ export async function scrapeAmazonTR(
     imageUrl: parsedFromLd.imageUrl || imageUrl || undefined,
   };
 
-  if (!result.name || result.price === 0) {
-    throw new ScraperError("Amazon TR ürün bilgileri çekilemedi.", {
-      code: "SCRAPE_PARSE_FAILED",
-      retryable: true,
-    });
+  if (result.name || result.price > 0) {
+    return result;
   }
+  return null;
+}
 
-  logger.info(`Amazon TR scraped: ${result.name} - ${result.price} ${result.currency}`);
-  return result;
+export async function scrapeAmazonTR(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  logger.info(`Scraping Amazon TR: ${url}`);
+  return scrapeWithFallback(url, config, parseAmazonTRHtml, "Amazon TR");
 }
 
 // ============================================
 // N11 SCRAPER
 // ============================================
 
-export async function scrapeN11(url: string, config: ScraperConfig = {}): Promise<ScrapedProduct> {
-  logger.info(`Scraping N11: ${url}`);
-
-  const html = await fetchWithRetry(url, config);
+function parseN11Html(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
-  const jsonLd = $('script[type="application/ld+json"]').first().html();
-  let parsedFromLd: Partial<ScrapedProduct> = {};
+  const holder: { data: Partial<ScrapedProduct> } = { data: {} };
 
-  if (jsonLd) {
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (holder.data.price && holder.data.price > 0) return;
+    const jsonLd = $(el).html();
+    if (!jsonLd) return;
     try {
       const ld = JSON.parse(jsonLd);
       const offer = Array.isArray(ld?.offers) ? ld.offers[0] : ld?.offers;
-      parsedFromLd = {
-        name: ld?.name,
-        price: parseFloat(offer?.price || "0"),
-        currency: offer?.priceCurrency || "TRY",
-        sellerName: offer?.seller?.name,
-        imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
-        inStock: offer?.availability?.includes("InStock") ?? true,
-      };
+      if (offer?.price) {
+        holder.data = {
+          name: ld?.name,
+          price: parseFloat(offer.price || "0"),
+          currency: offer.priceCurrency || "TRY",
+          sellerName: offer.seller?.name,
+          imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
+          inStock: offer.availability?.includes("InStock") ?? true,
+        };
+      }
     } catch {
-      logger.warn("N11 JSON-LD parse failed");
+      // continue
     }
-  }
+  });
 
+  const parsedFromLd = holder.data;
   const htmlName = $("h1.proName").text().trim() || $("h1").first().text().trim();
   const htmlPrice = parsePrice(
     $(".newPrice ins").first().text().trim() || $(".priceContainer ins").first().text().trim(),
@@ -392,15 +674,15 @@ export async function scrapeN11(url: string, config: ScraperConfig = {}): Promis
     imageUrl: parsedFromLd.imageUrl || imageUrl || undefined,
   };
 
-  if (!result.name || result.price === 0) {
-    throw new ScraperError("N11 ürün bilgileri çekilemedi.", {
-      code: "SCRAPE_PARSE_FAILED",
-      retryable: true,
-    });
+  if (result.name || result.price > 0) {
+    return result;
   }
+  return null;
+}
 
-  logger.info(`N11 scraped: ${result.name} - ${result.price} ${result.currency}`);
-  return result;
+export async function scrapeN11(url: string, config: ScraperConfig = {}): Promise<ScrapedProduct> {
+  logger.info(`Scraping N11: ${url}`);
+  return scrapeWithFallback(url, config, parseN11Html, "N11");
 }
 
 // ============================================
@@ -425,7 +707,7 @@ export function getScraper(marketplace: string) {
       }
 
       return async () => {
-        throw new ScraperError(`Marketplace scraper tanımlı değil: ${marketplace}`, {
+        throw new ScraperError(`Marketplace scraper tanimli degil: ${marketplace}`, {
           code: "SCRAPER_NOT_IMPLEMENTED",
           retryable: false,
           softFail: true,
