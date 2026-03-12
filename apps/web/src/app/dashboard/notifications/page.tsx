@@ -49,7 +49,7 @@ export default function NotificationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ markAllRead: true }),
       });
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     } catch (err) {
       console.error("Mark all read error:", err);
     }
@@ -62,13 +62,13 @@ export default function NotificationsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notificationIds: [id] }),
       });
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
     } catch (err) {
       console.error("Mark read error:", err);
     }
   };
 
-  const unreadCount = notifications.filter(n => !n.is_read).length;
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   if (loading) {
     return (
@@ -84,7 +84,9 @@ export default function NotificationsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white mb-1">Bildirimler</h1>
           <p className="text-dark-500 text-sm">
-            {unreadCount > 0 ? `${unreadCount} okunmamış bildiriminiz var.` : "Tüm bildirimleriniz okundu."}
+            {unreadCount > 0
+              ? `${unreadCount} okunmamış bildiriminiz var.`
+              : "Tüm bildirimleriniz okundu."}
           </p>
         </div>
         {unreadCount > 0 && (
@@ -99,11 +101,13 @@ export default function NotificationsPage() {
 
       {notifications.length > 0 ? (
         <div className="space-y-2">
-          {notifications.map(notif => (
+          {notifications.map((notif) => (
             <div
               key={notif.id}
               className={`bg-dark-900 border rounded-xl p-4 transition cursor-pointer ${
-                notif.is_read ? "border-dark-800 opacity-60" : "border-hive-500/20 hover:border-hive-500/40"
+                notif.is_read
+                  ? "border-dark-800 opacity-60"
+                  : "border-hive-500/20 hover:border-hive-500/40"
               }`}
               onClick={() => !notif.is_read && markAsRead(notif.id)}
             >
@@ -140,7 +144,8 @@ export default function NotificationsPage() {
           </div>
           <h2 className="text-lg font-bold text-white mb-2">Henüz bildirim yok</h2>
           <p className="text-dark-500 text-sm max-w-md mx-auto">
-            Uyarı kuralları oluşturduğunuzda ve fiyat değişiklikleri tespit edildiğinde bildirimleriniz burada görünecek.
+            Uyarı kuralları oluşturduğunuzda ve fiyat değişiklikleri tespit edildiğinde
+            bildirimleriniz burada görünecek.
           </p>
         </div>
       )}

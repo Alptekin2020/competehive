@@ -12,24 +12,45 @@ export interface MarketplaceResult {
 
 function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
-  const cleaned = priceStr.replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".");
+  const cleaned = priceStr
+    .replace(/[^\d.,]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
   const num = parseFloat(cleaned);
   return isNaN(num) ? null : num;
 }
 
 // Valid DB enum values for Marketplace
 const VALID_MARKETPLACES = new Set([
-  "TRENDYOL", "HEPSIBURADA", "AMAZON_TR", "N11", "CICEKSEPETI", "PTTAVM",
-  "AKAKCE", "CIMRI", "EPEY", "BOYNER", "GRATIS", "WATSONS", "KITAPYURDU",
-  "DECATHLON", "TEKNOSA", "MEDIAMARKT", "SEPHORA", "KOCTAS", "VATAN",
-  "ITOPYA", "SHOPIFY", "CUSTOM",
+  "TRENDYOL",
+  "HEPSIBURADA",
+  "AMAZON_TR",
+  "N11",
+  "CICEKSEPETI",
+  "PTTAVM",
+  "AKAKCE",
+  "CIMRI",
+  "EPEY",
+  "BOYNER",
+  "GRATIS",
+  "WATSONS",
+  "KITAPYURDU",
+  "DECATHLON",
+  "TEKNOSA",
+  "MEDIAMARKT",
+  "SEPHORA",
+  "KOCTAS",
+  "VATAN",
+  "ITOPYA",
+  "SHOPIFY",
+  "CUSTOM",
 ]);
 
 type InvalidMarketplacePolicy = "fallback-custom" | "skip";
 
 export function normalizeMarketplaceResult(
   result: MarketplaceResult,
-  invalidPolicy: InvalidMarketplacePolicy = "fallback-custom"
+  invalidPolicy: InvalidMarketplacePolicy = "fallback-custom",
 ): MarketplaceResult | null {
   if (VALID_MARKETPLACES.has(result.marketplace)) {
     return result;
@@ -47,7 +68,7 @@ export function normalizeMarketplaceResult(
 
 export function normalizeMarketplaceResults(
   results: MarketplaceResult[],
-  invalidPolicy: InvalidMarketplacePolicy = "fallback-custom"
+  invalidPolicy: InvalidMarketplacePolicy = "fallback-custom",
 ): MarketplaceResult[] {
   return results
     .map((result) => normalizeMarketplaceResult(result, invalidPolicy))
@@ -139,7 +160,10 @@ async function searchSerper(query: string): Promise<MarketplaceResult[]> {
       console.log("[CompeteHive] Serper Shopping results:", items.length);
 
       for (const item of items) {
-        const { marketplace, storeName } = detectStore(item.link || item.source || "", item.title || "");
+        const { marketplace, storeName } = detectStore(
+          item.link || item.source || "",
+          item.title || "",
+        );
         let price: number | null = null;
         if (item.price) {
           price = parsePrice(String(item.price).replace("TL", "").replace("₺", ""));
@@ -210,20 +234,20 @@ async function searchSerper(query: string): Promise<MarketplaceResult[]> {
 // GPT ile en iyi eşleşmeleri seç
 async function selectBestMatches(
   results: MarketplaceResult[],
-  originalProduct: string
+  originalProduct: string,
 ): Promise<MarketplaceResult[]> {
   if (results.length === 0) return [];
 
   const openaiKey = process.env.OPENAI_API_KEY;
   if (!openaiKey) {
-    return results.filter(r => r.price && r.price > 0).slice(0, 8);
+    return results.filter((r) => r.price && r.price > 0).slice(0, 8);
   }
 
   try {
     const openai = new OpenAI({ apiKey: openaiKey });
-    const productList = results.map((r, i) =>
-      `${i}: [${r.storeName}] ${r.productName}${r.price ? ` — ${r.price} TL` : ""}`
-    ).join("\n");
+    const productList = results
+      .map((r, i) => `${i}: [${r.storeName}] ${r.productName}${r.price ? ` — ${r.price} TL` : ""}`)
+      .join("\n");
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -232,32 +256,36 @@ async function selectBestMatches(
       messages: [
         {
           role: "system",
-          content: "E-ticaret ürün eşleştirme asistanısın. Orijinal ürünle AYNI veya ÇOK BENZER ürünlerin indekslerini seç. Sadece JSON array döndür."
+          content:
+            "E-ticaret ürün eşleştirme asistanısın. Orijinal ürünle AYNI veya ÇOK BENZER ürünlerin indekslerini seç. Sadece JSON array döndür.",
         },
         {
           role: "user",
-          content: `Orijinal: "${originalProduct}"\n\nSonuçlar:\n${productList}\n\nAynı/benzer ürün indeksleri (JSON array):`
-        }
+          content: `Orijinal: "${originalProduct}"\n\nSonuçlar:\n${productList}\n\nAynı/benzer ürün indeksleri (JSON array):`,
+        },
       ],
     });
 
     const text = response.choices[0]?.message?.content || "[]";
     const indices: number[] = JSON.parse(text.replace(/```json|```/g, "").trim());
-    return indices.filter(i => i >= 0 && i < results.length).map(i => results[i]);
+    return indices.filter((i) => i >= 0 && i < results.length).map((i) => results[i]);
   } catch (e) {
     console.error("[CompeteHive] GPT matching error:", e);
-    return results.filter(r => r.price && r.price > 0).slice(0, 8);
+    return results.filter((r) => r.price && r.price > 0).slice(0, 8);
   }
 }
 
-export function findBestMatch(results: MarketplaceResult[], originalProduct: string): MarketplaceResult | null {
+export function findBestMatch(
+  results: MarketplaceResult[],
+  _originalProduct: string,
+): MarketplaceResult | null {
   return results.length > 0 ? results[0] : null;
 }
 
 // Return all matched results as a flat array, sorted by price ascending
 export async function searchAllResults(
   keywords: string[],
-  sourceMarketplace: string
+  sourceMarketplace: string,
 ): Promise<MarketplaceResult[]> {
   const query = keywords.join(" ");
   console.log(`[CompeteHive] Searching: "${query}" (source: ${sourceMarketplace})`);
@@ -272,7 +300,7 @@ export async function searchAllResults(
   console.log(`[CompeteHive] AI matched: ${bestMatches.length}`);
 
   // Filter out source marketplace, keep all others (no domain whitelist)
-  const filtered = bestMatches.filter(r => r.marketplace !== sourceMarketplace);
+  const filtered = bestMatches.filter((r) => r.marketplace !== sourceMarketplace);
 
   // Sort by price ascending (null prices at end)
   filtered.sort((a, b) => {
@@ -289,7 +317,7 @@ export async function searchAllResults(
 // ANA FONKSİYON (legacy, grouped by marketplace)
 export async function searchAllMarketplaces(
   keywords: string[],
-  sourceMarketplace: string
+  sourceMarketplace: string,
 ): Promise<Record<string, MarketplaceResult[]>> {
   const query = keywords.join(" ");
   console.log(`[CompeteHive] Searching: "${query}" (source: ${sourceMarketplace})`);

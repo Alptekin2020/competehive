@@ -68,13 +68,12 @@ export const scrapeWorker = new Worker(
       });
 
       const previousPrice = product?.currentPrice ? Number(product.currentPrice) : null;
-      const previousInStock = product
-        ? product.status !== "OUT_OF_STOCK"
-        : null;
+      const previousInStock = product ? product.status !== "OUT_OF_STOCK" : null;
       const priceChange = previousPrice ? result.price - previousPrice : null;
-      const priceChangePct = previousPrice && previousPrice > 0
-        ? ((result.price - previousPrice) / previousPrice) * 100
-        : null;
+      const priceChangePct =
+        previousPrice && previousPrice > 0
+          ? ((result.price - previousPrice) / previousPrice) * 100
+          : null;
       const priceChanged = priceChange !== null && priceChange !== 0;
       const stockChanged = previousInStock !== null && previousInStock !== result.inStock;
 
@@ -126,36 +125,43 @@ export const scrapeWorker = new Worker(
         });
       }
 
-      logger.info({
-        productId,
-        name: result.name,
-        price: result.price,
-        change: priceChange,
-        changePct: priceChangePct?.toFixed(2),
-      }, "Scrape completed");
+      logger.info(
+        {
+          productId,
+          name: result.name,
+          price: result.price,
+          change: priceChange,
+          changePct: priceChangePct?.toFixed(2),
+        },
+        "Scrape completed",
+      );
 
       return { success: true, price: result.price };
     } catch (error) {
       const attemptsMade = job.attemptsMade + 1;
       const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
-      const scraperError = error instanceof ScraperError
-        ? error
-        : new ScraperError(error instanceof Error ? error.message : "Unknown scrape error", {
-          code: "SCRAPE_RUNTIME_ERROR",
-          retryable: true,
-        });
+      const scraperError =
+        error instanceof ScraperError
+          ? error
+          : new ScraperError(error instanceof Error ? error.message : "Unknown scrape error", {
+              code: "SCRAPE_RUNTIME_ERROR",
+              retryable: true,
+            });
 
       const shouldRetry = scraperError.retryable && attemptsMade < maxAttempts;
 
-      logger.error({
-        productId,
-        attemptsMade,
-        maxAttempts,
-        code: scraperError.code,
-        retryable: scraperError.retryable,
-        softFail: scraperError.softFail,
-        error: scraperError,
-      }, "Scrape job failed");
+      logger.error(
+        {
+          productId,
+          attemptsMade,
+          maxAttempts,
+          code: scraperError.code,
+          retryable: scraperError.retryable,
+          softFail: scraperError.softFail,
+          error: scraperError,
+        },
+        "Scrape job failed",
+      );
 
       if (shouldRetry) {
         throw scraperError;
@@ -168,11 +174,14 @@ export const scrapeWorker = new Worker(
         },
       });
 
-      logger.warn({
-        productId,
-        attemptsMade,
-        code: scraperError.code,
-      }, "Scrape failed after retries; applying soft-fail policy without setting ERROR status");
+      logger.warn(
+        {
+          productId,
+          attemptsMade,
+          code: scraperError.code,
+        },
+        "Scrape failed after retries; applying soft-fail policy without setting ERROR status",
+      );
 
       return {
         success: false,
@@ -185,10 +194,10 @@ export const scrapeWorker = new Worker(
     connection,
     concurrency: 5, // Aynı anda 5 scrape
     limiter: {
-      max: 10,      // 10 saniyede max 10 istek
+      max: 10, // 10 saniyede max 10 istek
       duration: 10000,
     },
-  }
+  },
 );
 
 // ============================================
@@ -209,19 +218,17 @@ export const alertWorker = new Worker(
       eventTypes,
     } = job.data;
 
-    const normalizedEventTypes: string[] = Array.isArray(eventTypes)
-      ? eventTypes
-      : [];
-    const isPriceEvent = normalizedEventTypes.includes("price-change")
-      || (priceChange !== null && priceChange !== 0);
-    const isStockEvent = normalizedEventTypes.includes("stock-change")
-      || (typeof previousInStock === "boolean" && previousInStock !== inStock);
+    const normalizedEventTypes: string[] = Array.isArray(eventTypes) ? eventTypes : [];
+    const isPriceEvent =
+      normalizedEventTypes.includes("price-change") || (priceChange !== null && priceChange !== 0);
+    const isStockEvent =
+      normalizedEventTypes.includes("stock-change") ||
+      (typeof previousInStock === "boolean" && previousInStock !== inStock);
 
     logger.info({ productId, priceChange, isPriceEvent, isStockEvent }, "Checking alerts");
 
-    let previousStockState: boolean | null = typeof previousInStock === "boolean"
-      ? previousInStock
-      : null;
+    let previousStockState: boolean | null =
+      typeof previousInStock === "boolean" ? previousInStock : null;
 
     if (previousStockState === null && isStockEvent) {
       const recentHistory = await prisma.priceHistory.findMany({
@@ -312,7 +319,7 @@ export const alertWorker = new Worker(
       }
     }
   },
-  { connection, concurrency: 10 }
+  { connection, concurrency: 10 },
 );
 
 // ============================================
@@ -365,7 +372,7 @@ export async function scheduleScans() {
       {
         jobId: `scrape-${product.id}-${Date.now()}`,
         priority: product.lastScrapedAt ? 2 : 1, // Hiç taranmamışlar öncelikli
-      }
+      },
     );
 
     scheduled++;

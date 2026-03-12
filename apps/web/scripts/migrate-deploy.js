@@ -9,20 +9,20 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   if (vercelEnv === "production") {
     console.error(
-      "[db:migrate] DATABASE_URL is missing in production deployment. Prisma migrations cannot run."
+      "[db:migrate] DATABASE_URL is missing in production deployment. Prisma migrations cannot run.",
     );
     process.exit(1);
   }
 
   console.log(
-    "[db:migrate] DATABASE_URL is not set; skipping Prisma migrate deploy for this build environment."
+    "[db:migrate] DATABASE_URL is not set; skipping Prisma migrate deploy for this build environment.",
   );
   process.exit(0);
 }
 
 if (isVercel && vercelEnv === "preview" && !databaseUrl) {
   console.log(
-    "[db:migrate] Vercel preview deployment without DATABASE_URL; skipping Prisma migrate deploy."
+    "[db:migrate] Vercel preview deployment without DATABASE_URL; skipping Prisma migrate deploy.",
   );
   process.exit(0);
 }
@@ -31,11 +31,10 @@ const schemaArg = ["--schema", "../../packages/database/prisma/schema.prisma"];
 const spawnOpts = { shell: process.platform === "win32" };
 
 console.log("[db:migrate] Running prisma migrate deploy...");
-const result = spawnSync(
-  "npx",
-  ["prisma", "migrate", "deploy", ...schemaArg],
-  { ...spawnOpts, stdio: ["inherit", "pipe", "pipe"] }
-);
+const result = spawnSync("npx", ["prisma", "migrate", "deploy", ...schemaArg], {
+  ...spawnOpts,
+  stdio: ["inherit", "pipe", "pipe"],
+});
 
 const stdout = result.stdout?.toString() ?? "";
 const stderr = result.stderr?.toString() ?? "";
@@ -48,9 +47,7 @@ if (result.status === 0) {
 
 // P3005: database schema is not empty – need to baseline existing migrations
 if (stdout.includes("P3005") || stderr.includes("P3005")) {
-  console.log(
-    "[db:migrate] Database already has tables but no migration history (P3005)."
-  );
+  console.log("[db:migrate] Database already has tables but no migration history (P3005).");
   console.log("[db:migrate] Baselining existing migrations...");
 
   // Only resolve the initial baseline migration as already applied.
@@ -59,30 +56,20 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
   console.log(`[db:migrate] Resolving baseline migration as applied: ${baselineMigration}`);
   const resolveResult = spawnSync(
     "npx",
-    [
-      "prisma",
-      "migrate",
-      "resolve",
-      "--applied",
-      baselineMigration,
-      ...schemaArg,
-    ],
-    { ...spawnOpts, stdio: "inherit" }
+    ["prisma", "migrate", "resolve", "--applied", baselineMigration, ...schemaArg],
+    { ...spawnOpts, stdio: "inherit" },
   );
   if (resolveResult.status !== 0) {
-    console.error(
-      `[db:migrate] Failed to resolve baseline migration: ${baselineMigration}`
-    );
+    console.error(`[db:migrate] Failed to resolve baseline migration: ${baselineMigration}`);
     process.exit(resolveResult.status ?? 1);
   }
 
   // Retry migrate deploy after baselining
   console.log("[db:migrate] Retrying prisma migrate deploy...");
-  const retryResult = spawnSync(
-    "npx",
-    ["prisma", "migrate", "deploy", ...schemaArg],
-    { ...spawnOpts, stdio: "inherit" }
-  );
+  const retryResult = spawnSync("npx", ["prisma", "migrate", "deploy", ...schemaArg], {
+    ...spawnOpts,
+    stdio: "inherit",
+  });
 
   if (retryResult.status !== 0) {
     console.error("[db:migrate] Prisma migrate deploy failed after baselining.");
@@ -92,9 +79,7 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
   console.log("[db:migrate] Prisma migrate deploy completed after baselining.");
 } else if (stdout.includes("P3009") || stderr.includes("P3009")) {
   // P3009: failed migrations exist – resolve them as rolled back, then re-apply
-  console.log(
-    "[db:migrate] Found failed migrations in the database (P3009). Resolving..."
-  );
+  console.log("[db:migrate] Found failed migrations in the database (P3009). Resolving...");
 
   const combined = stdout + stderr;
   // Extract failed migration name(s) from output like "The `0001_initial_baseline` migration started at ..."
@@ -113,7 +98,7 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
     const rollbackResult = spawnSync(
       "npx",
       ["prisma", "migrate", "resolve", "--rolled-back", migration, ...schemaArg],
-      { ...spawnOpts, stdio: "inherit" }
+      { ...spawnOpts, stdio: "inherit" },
     );
     if (rollbackResult.status !== 0) {
       console.error(`[db:migrate] Failed to roll back migration: ${migration}`);
@@ -124,11 +109,13 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
     // because its tables already exist in the database. Other migrations must
     // actually execute their SQL via migrate deploy.
     if (migration === baselineMigration) {
-      console.log(`[db:migrate] Marking baseline "${migration}" as applied (tables already exist)...`);
+      console.log(
+        `[db:migrate] Marking baseline "${migration}" as applied (tables already exist)...`,
+      );
       const applyResult = spawnSync(
         "npx",
         ["prisma", "migrate", "resolve", "--applied", migration, ...schemaArg],
-        { ...spawnOpts, stdio: "inherit" }
+        { ...spawnOpts, stdio: "inherit" },
       );
       if (applyResult.status !== 0) {
         console.error(`[db:migrate] Failed to mark migration as applied: ${migration}`);
@@ -139,11 +126,10 @@ if (stdout.includes("P3005") || stderr.includes("P3005")) {
 
   // Retry migrate deploy to apply pending (non-baseline) migrations
   console.log("[db:migrate] Retrying prisma migrate deploy...");
-  const retryResult = spawnSync(
-    "npx",
-    ["prisma", "migrate", "deploy", ...schemaArg],
-    { ...spawnOpts, stdio: "inherit" }
-  );
+  const retryResult = spawnSync("npx", ["prisma", "migrate", "deploy", ...schemaArg], {
+    ...spawnOpts,
+    stdio: "inherit",
+  });
 
   if (retryResult.status !== 0) {
     console.error("[db:migrate] Prisma migrate deploy failed after resolving P3009.");

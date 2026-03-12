@@ -13,7 +13,10 @@ export default function TermsPage() {
             <Link href="/login" className="text-dark-400 hover:text-white transition text-sm">
               Giriş Yap
             </Link>
-            <Link href="/register" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition">
+            <Link
+              href="/register"
+              className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition"
+            >
               Ücretsiz Başla
             </Link>
           </div>
@@ -28,18 +31,19 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">1. Hizmet Tanımı</h2>
               <p>
-                CompeteHive, e-ticaret satıcıları için otomatik fiyat takibi ve rakip analizi hizmeti
-                sunan bir platformdur. Platformumuz; ürün fiyatlarını izleme, rakip fiyatlarını karşılaştırma
-                ve fiyat değişikliği bildirimleri gönderme hizmetlerini kapsar.
+                CompeteHive, e-ticaret satıcıları için otomatik fiyat takibi ve rakip analizi
+                hizmeti sunan bir platformdur. Platformumuz; ürün fiyatlarını izleme, rakip
+                fiyatlarını karşılaştırma ve fiyat değişikliği bildirimleri gönderme hizmetlerini
+                kapsar.
               </p>
             </section>
 
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">2. Hesap Oluşturma</h2>
               <p>
-                Hizmeti kullanabilmek için geçerli bir e-posta adresi ile hesap oluşturmanız gerekmektedir.
-                Hesap bilgilerinizin güvenliğinden siz sorumlusunuz. Hesabınızda gerçekleşen tüm işlemlerden
-                siz sorumlu tutulursunuz.
+                Hizmeti kullanabilmek için geçerli bir e-posta adresi ile hesap oluşturmanız
+                gerekmektedir. Hesap bilgilerinizin güvenliğinden siz sorumlusunuz. Hesabınızda
+                gerçekleşen tüm işlemlerden siz sorumlu tutulursunuz.
               </p>
             </section>
 
@@ -65,17 +69,18 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">5. Veri Doğruluğu</h2>
               <p>
-                Fiyat verileri otomatik olarak toplanmaktadır ve %100 doğruluk garantisi verilmemektedir.
-                CompeteHive, fiyat verilerindeki olası hatalardan kaynaklanan zararlardan sorumlu tutulamaz.
-                Önemli iş kararları vermeden önce fiyat bilgilerini doğrulamanızı öneririz.
+                Fiyat verileri otomatik olarak toplanmaktadır ve %100 doğruluk garantisi
+                verilmemektedir. CompeteHive, fiyat verilerindeki olası hatalardan kaynaklanan
+                zararlardan sorumlu tutulamaz. Önemli iş kararları vermeden önce fiyat bilgilerini
+                doğrulamanızı öneririz.
               </p>
             </section>
 
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">6. Hizmet Değişiklikleri</h2>
               <p>
-                CompeteHive, hizmette değişiklik yapma, fiyatları güncelleme veya hizmeti sonlandırma
-                hakkını saklı tutar. Önemli değişiklikler önceden bildirilecektir.
+                CompeteHive, hizmette değişiklik yapma, fiyatları güncelleme veya hizmeti
+                sonlandırma hakkını saklı tutar. Önemli değişiklikler önceden bildirilecektir.
               </p>
             </section>
 
@@ -112,9 +117,15 @@ export default function TermsPage() {
             <span className="text-sm text-dark-400">&copy; 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
           <div className="flex gap-6 text-sm text-dark-500">
-            <Link href="/privacy" className="hover:text-white transition">Gizlilik</Link>
-            <Link href="/terms" className="hover:text-white transition text-white">Kullanım Şartları</Link>
-            <a href="mailto:support@competehive.com" className="hover:text-white transition">İletişim</a>
+            <Link href="/privacy" className="hover:text-white transition">
+              Gizlilik
+            </Link>
+            <Link href="/terms" className="hover:text-white transition text-white">
+              Kullanım Şartları
+            </Link>
+            <a href="mailto:support@competehive.com" className="hover:text-white transition">
+              İletişim
+            </a>
           </div>
         </div>
       </footer>

@@ -15,7 +15,7 @@ export interface ProductAnalysis {
 export async function analyzeProduct(
   productName: string,
   marketplace: string,
-  price: number | null
+  price: number | null,
 ): Promise<ProductAnalysis> {
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -23,7 +23,7 @@ export async function analyzeProduct(
     messages: [
       {
         role: "system",
-        content: `Sen bir e-ticaret urun analiz asistanisin. Verilen urun basligindan marka, model ve arama anahtar kelimelerini cikar. Yanitini sadece JSON formatinda ver, baska hicbir sey yazma.`
+        content: `Sen bir e-ticaret urun analiz asistanisin. Verilen urun basligindan marka, model ve arama anahtar kelimelerini cikar. Yanitini sadece JSON formatinda ver, baska hicbir sey yazma.`,
       },
       {
         role: "user",
@@ -38,8 +38,8 @@ Su JSON formatinda yanit ver:
   "category": "Kategori (orn: Televizyon, Telefon, Laptop, Musluk Bataryasi)",
   "searchKeywords": ["marketplace'lerde aranacak 2-4 anahtar kelime dizisi", "marka model ana ozellik"],
   "shortTitle": "Kisa ve temiz urun basligi (marka + model + ana ozellik, max 80 karakter)"
-}`
-      }
+}`,
+      },
     ],
     max_tokens: 300,
   });

@@ -13,7 +13,10 @@ export default function PrivacyPage() {
             <Link href="/login" className="text-dark-400 hover:text-white transition text-sm">
               Giriş Yap
             </Link>
-            <Link href="/register" className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition">
+            <Link
+              href="/register"
+              className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition"
+            >
               Ücretsiz Başla
             </Link>
           </div>
@@ -27,9 +30,7 @@ export default function PrivacyPage() {
           <div className="space-y-8 text-dark-300 text-sm leading-relaxed">
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">1. Toplanan Veriler</h2>
-              <p>
-                CompeteHive, hizmetlerimizi sunabilmek için aşağıdaki verileri toplar:
-              </p>
+              <p>CompeteHive, hizmetlerimizi sunabilmek için aşağıdaki verileri toplar:</p>
               <ul className="list-disc list-inside mt-2 space-y-1 text-dark-400">
                 <li>E-posta adresi ve ad bilgisi (hesap oluşturma için)</li>
                 <li>Takip ettiğiniz ürün URL&apos;leri ve fiyat verileri</li>
@@ -40,9 +41,7 @@ export default function PrivacyPage() {
 
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">2. Verilerin Kullanımı</h2>
-              <p>
-                Topladığımız veriler yalnızca aşağıdaki amaçlarla kullanılır:
-              </p>
+              <p>Topladığımız veriler yalnızca aşağıdaki amaçlarla kullanılır:</p>
               <ul className="list-disc list-inside mt-2 space-y-1 text-dark-400">
                 <li>Fiyat takip hizmetinin sağlanması</li>
                 <li>Fiyat değişikliği bildirimlerinin gönderilmesi</li>
@@ -54,13 +53,16 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">3. Veri Güvenliği</h2>
               <p>
-                Verileriniz endüstri standardı güvenlik önlemleriyle korunmaktadır. Şifrelenmiş bağlantılar (SSL/TLS) kullanılmakta
-                ve verileriniz güvenli sunucularda saklanmaktadır.
+                Verileriniz endüstri standardı güvenlik önlemleriyle korunmaktadır. Şifrelenmiş
+                bağlantılar (SSL/TLS) kullanılmakta ve verileriniz güvenli sunucularda
+                saklanmaktadır.
               </p>
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-3">4. Üçüncü Taraflarla Paylaşım</h2>
+              <h2 className="text-xl font-semibold text-white mb-3">
+                4. Üçüncü Taraflarla Paylaşım
+              </h2>
               <p>
                 Kişisel verileriniz, yasal zorunluluklar dışında üçüncü taraflarla paylaşılmaz.
                 Hizmet sağlayıcılarımız (kimlik doğrulama, e-posta gönderimi) yalnızca hizmet sunumu
@@ -101,9 +103,15 @@ export default function PrivacyPage() {
             <span className="text-sm text-dark-400">&copy; 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
           <div className="flex gap-6 text-sm text-dark-500">
-            <Link href="/privacy" className="hover:text-white transition text-white">Gizlilik</Link>
-            <Link href="/terms" className="hover:text-white transition">Kullanım Şartları</Link>
-            <a href="mailto:support@competehive.com" className="hover:text-white transition">İletişim</a>
+            <Link href="/privacy" className="hover:text-white transition text-white">
+              Gizlilik
+            </Link>
+            <Link href="/terms" className="hover:text-white transition">
+              Kullanım Şartları
+            </Link>
+            <a href="mailto:support@competehive.com" className="hover:text-white transition">
+              İletişim
+            </a>
           </div>
         </div>
       </footer>

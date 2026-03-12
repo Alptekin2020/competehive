@@ -1,10 +1,7 @@
 /** @type {import('eslint').Linter.Config} */
 module.exports = {
   root: true,
-  extends: [
-    "plugin:@typescript-eslint/recommended",
-    "next/core-web-vitals",
-  ],
+  extends: ["plugin:@typescript-eslint/recommended", "next/core-web-vitals"],
   parser: "@typescript-eslint/parser",
   plugins: ["@typescript-eslint"],
   rules: {
@@ -15,5 +12,5 @@ module.exports = {
     ],
     "no-console": ["warn", { allow: ["warn", "error"] }],
   },
-  ignorePatterns: [".next/", "node_modules/"],
+  ignorePatterns: [".next/", "node_modules/", "next-env.d.ts"],
 };
