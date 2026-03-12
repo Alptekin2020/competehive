@@ -22,8 +22,21 @@
     "deploy:web": "npm run db:deploy && npm --workspace @competehive/web run build",
     "deploy:worker": "npm run db:deploy && npm --workspace @competehive/worker run build",
     "typecheck": "npm run --workspaces --if-present typecheck",
-    "lint": "npm run --workspaces --if-present lint"
+    "lint": "npm run --workspaces --if-present lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
   },
   "author": "Alptekin Ayyavuz",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.12",
+    "eslint-plugin-import": "^2.32.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.3.3",
+    "prettier": "^3.8.1"
+  }
 }

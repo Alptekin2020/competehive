@@ -2,6 +2,9 @@
 // CompeteHive Shared Types
 // ============================================
 
+export { validateWebEnv, validateWorkerEnv, webEnvSchema, workerEnvSchema } from "./env";
+export type { WebEnv, WorkerEnv } from "./env";
+
 export interface PlanLimits {
   maxProducts: number;
   scrapeIntervalMinutes: number;
@@ -60,9 +63,27 @@ export interface MarketplaceInfo {
 }
 
 export const MARKETPLACES: Record<string, MarketplaceInfo> = {
-  TRENDYOL: { id: "TRENDYOL", name: "Trendyol", domain: "trendyol.com", icon: "🟠", color: "#F27A1A" },
-  HEPSIBURADA: { id: "HEPSIBURADA", name: "Hepsiburada", domain: "hepsiburada.com", icon: "🟡", color: "#FF6000" },
-  AMAZON_TR: { id: "AMAZON_TR", name: "Amazon TR", domain: "amazon.com.tr", icon: "📦", color: "#FF9900" },
+  TRENDYOL: {
+    id: "TRENDYOL",
+    name: "Trendyol",
+    domain: "trendyol.com",
+    icon: "🟠",
+    color: "#F27A1A",
+  },
+  HEPSIBURADA: {
+    id: "HEPSIBURADA",
+    name: "Hepsiburada",
+    domain: "hepsiburada.com",
+    icon: "🟡",
+    color: "#FF6000",
+  },
+  AMAZON_TR: {
+    id: "AMAZON_TR",
+    name: "Amazon TR",
+    domain: "amazon.com.tr",
+    icon: "📦",
+    color: "#FF9900",
+  },
   N11: { id: "N11", name: "N11", domain: "n11.com", icon: "🟣", color: "#7B2D8E" },
 };
 
