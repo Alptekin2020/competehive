@@ -55,7 +55,7 @@ async function start() {
     try {
       const { PrismaClient } = await import("@prisma/client");
       const prisma = new PrismaClient();
-      const products = await prisma.product.findMany({ select: { id: true } });
+      const products = await prisma.trackedProduct.findMany({ select: { id: true } });
 
       for (const product of products) {
         await productQueue.add(
