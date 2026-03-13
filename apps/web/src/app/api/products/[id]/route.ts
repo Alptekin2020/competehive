@@ -1,32 +1,37 @@
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/current-user";
+import { apiSuccess, unauthorized, notFound, serverError } from "@/lib/api-response";
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
-  }
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return unauthorized();
 
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const { id } = await params;
 
-  const product = await prisma.trackedProduct.findFirst({
-    where: { id: params.id, userId },
-    include: {
-      competitors: {
-        orderBy: { currentPrice: "asc" },
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const product = await prisma.trackedProduct.findFirst({
+      where: { id, userId: user.id },
+      include: {
+        competitors: {
+          orderBy: { currentPrice: "asc" },
+        },
+        priceHistory: {
+          where: { scrapedAt: { gte: thirtyDaysAgo } },
+          orderBy: { scrapedAt: "asc" },
+        },
       },
-      priceHistory: {
-        where: { scrapedAt: { gte: thirtyDaysAgo } },
-        orderBy: { scrapedAt: "asc" },
-      },
-    },
-  });
+    });
 
-  if (!product) {
-    return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
+    if (!product) {
+      return notFound("Ürün bulunamadı");
+    }
+
+    return apiSuccess({ product });
+  } catch (error) {
+    return serverError(error, "Product detail fetch failed");
   }
-
-  return NextResponse.json({ product });
 }
