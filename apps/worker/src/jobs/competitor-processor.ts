@@ -1,142 +1,82 @@
-import { Worker, Job } from "bullmq";
-import { PrismaClient } from "@prisma/client";
-import { logger } from "../utils/logger";
+import { Job } from "bullmq";
+import { prisma } from "../db";
+import { searchProduct, extractRetailer, parsePrice } from "../serper";
+import { verifyProductMatch } from "../matcher";
+import { randomUUID } from "crypto";
 
-const prisma = new PrismaClient();
-
-const connection = {
-  url: process.env.REDIS_URL || "redis://localhost:6379",
-  maxRetriesPerRequest: null,
-};
-
-const MARKETPLACE_DOMAINS: Record<string, string> = {
-  "trendyol.com": "TRENDYOL",
-  "hepsiburada.com": "HEPSIBURADA",
-  "amazon.com.tr": "AMAZON_TR",
-  "n11.com": "N11",
-  "mediamarkt.com.tr": "MEDIAMARKT",
-};
-
-type SerperShoppingItem = {
-  link?: string;
-  title?: string;
-  price?: string;
-};
-
-type SerperShoppingResponse = {
-  shopping?: SerperShoppingItem[];
-};
-
-function detectMarketplaceFromUrl(url: string): string | null {
-  for (const [domain, marketplace] of Object.entries(MARKETPLACE_DOMAINS)) {
-    if (url.includes(domain)) return marketplace;
-  }
-  return null;
+interface OnboardJobData {
+  productId: string;
+  title: string;
+  url: string;
 }
 
-async function searchWithSerper(
-  productName: string,
-  excludeMarketplace: string,
-): Promise<Array<{ url: string; title: string; price: number; marketplace: string }>> {
-  const apiKey = process.env.SERPER_API_KEY;
-  if (!apiKey) {
-    logger.warn("SERPER_API_KEY not set, skipping competitor search");
-    return [];
+export async function processCompetitorJob(job: Job<OnboardJobData>) {
+  const { productId, title, url } = job.data;
+  console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
+
+  // 1. Serper ile ürünü ara
+  let results;
+  try {
+    results = await searchProduct(title);
+  } catch (err) {
+    console.error(`Serper arama hatası (${productId}):`, err);
+    throw err;
   }
 
-  // Clean product name - remove brand codes and size info for better search
-  const cleanName = productName
-    .replace(/\s*\d+\s*(ml|gr|adet|cm|mm|gb|tb|gb)\b/gi, "")
-    .substring(0, 100)
-    .trim();
-
-  // Use Serper.dev API
-  const serperResponse = await fetch("https://google.serper.dev/shopping", {
-    method: "POST",
-    headers: {
-      "X-API-KEY": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      q: cleanName,
-      gl: "tr",
-      hl: "tr",
-      num: 20,
-    }),
-  });
-
-  if (!serperResponse.ok) {
-    logger.error(`Serper API error: ${serperResponse.status}`);
-    return [];
+  if (!results || results.length === 0) {
+    console.log(`⚠️ Sonuç bulunamadı: ${title}`);
+    return { found: 0 };
   }
 
-  const data = (await serperResponse.json()) as SerperShoppingResponse;
-  const results: Array<{ url: string; title: string; price: number; marketplace: string }> = [];
+  const now = new Date();
+  let savedCount = 0;
 
-  for (const item of data.shopping || []) {
-    const link = item.link || "";
-    const marketplace = detectMarketplaceFromUrl(link);
+  for (const result of results) {
+    // Kendi URL'imizi atla
+    if (result.link === url) continue;
 
-    // Skip if same marketplace as the tracked product
-    if (!marketplace || marketplace === excludeMarketplace) continue;
+    const price = parsePrice(result.price);
+    if (!price || price <= 0) continue;
 
-    // Parse price from Serper result
-    const priceStr = (item.price || "").replace(/[^\d,.]/g, "").replace(",", ".");
-    const price = parseFloat(priceStr) || 0;
+    const retailer = extractRetailer(result.link);
 
-    if (link && price > 0) {
-      results.push({
-        url: link,
-        title: item.title || "",
-        price,
-        marketplace,
-      });
-    }
-  }
-
-  return results;
-}
-
-export const competitorWorker = new Worker(
-  "competitors",
-  async (job: Job) => {
-    const { productId, productName, marketplace } = job.data;
-    logger.info({ productId, productName }, "Competitor search started");
-
+    // AI ile eşleştirme doğrula
+    let isMatch = false;
     try {
-      const competitors = await searchWithSerper(productName, marketplace);
-      logger.info(`Found ${competitors.length} potential competitors for ${productName}`);
-
-      // Save to DB - upsert to avoid duplicates
-      for (const comp of competitors) {
-        await prisma.competitor.upsert({
-          where: {
-            trackedProductId_competitorUrl: {
-              trackedProductId: productId,
-              competitorUrl: comp.url,
-            },
-          },
-          create: {
-            trackedProductId: productId,
-            competitorUrl: comp.url,
-            competitorName: comp.title,
-            marketplace: comp.marketplace as never,
-            currentPrice: comp.price,
-            lastScrapedAt: new Date(),
-          },
-          update: {
-            currentPrice: comp.price,
-            competitorName: comp.title,
-            lastScrapedAt: new Date(),
-          },
-        });
-      }
-
-      logger.info({ productId, count: competitors.length }, "Competitor search completed");
-    } catch (error) {
-      logger.error({ error, productId }, "Competitor search failed");
-      throw error;
+      isMatch = await verifyProductMatch(title, result.title);
+    } catch {
+      // Hata durumunda bu sonucu atla
+      continue;
     }
-  },
-  { connection },
-);
+
+    if (!isMatch) continue;
+
+    // Competitor kaydını upsert et (link unique)
+    try {
+      await prisma.$executeRaw`
+        INSERT INTO "Competitor" ("id", "productId", "title", "price", "currency", "link", "imageUrl", "retailer", "lastSeenAt")
+        VALUES (${randomUUID()}, ${productId}, ${result.title}, ${price}, 'TRY', ${result.link}, ${result.imageUrl ?? null}, ${retailer.name}, ${now})
+        ON CONFLICT ("productId", "link")
+        DO UPDATE SET
+          "price" = ${price},
+          "title" = ${result.title},
+          "retailer" = ${retailer.name},
+          "lastSeenAt" = ${now}
+      `;
+
+      // price_history'ye snapshot ekle
+      await prisma.$executeRaw`
+        INSERT INTO "PriceHistory" ("id", "productId", "retailer", "price", "currency", "recordedAt")
+        VALUES (${randomUUID()}, ${productId}, ${retailer.name}, ${price}, 'TRY', ${now})
+      `;
+
+      savedCount++;
+    } catch (err) {
+      console.error(`Competitor kaydetme hatası (${result.link}):`, err);
+      // Tek bir competitor hatasında tüm job'ı öldürme, devam et
+    }
+  }
+
+  console.log(`✅ ${productId}: ${savedCount} competitor bulundu ve kaydedildi`);
+  return { found: savedCount };
+}
