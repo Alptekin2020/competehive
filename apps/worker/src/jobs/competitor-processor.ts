@@ -2,7 +2,7 @@ import { Job } from "bullmq";
 import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import { verifyProductMatch } from "../matcher";
-import { randomUUID } from "crypto";
+import { Marketplace } from "@prisma/client";
 
 interface OnboardJobData {
   productId: string;
@@ -10,9 +10,37 @@ interface OnboardJobData {
   url: string;
 }
 
+/**
+ * Domain → Prisma Marketplace enum eşlemesi.
+ * extractRetailer name → Marketplace enum.
+ */
+function retailerToMarketplace(retailerName: string): Marketplace {
+  const map: Record<string, Marketplace> = {
+    Trendyol: "TRENDYOL",
+    Hepsiburada: "HEPSIBURADA",
+    "Amazon TR": "AMAZON_TR",
+    N11: "N11",
+    MediaMarkt: "MEDIAMARKT",
+    Teknosa: "TEKNOSA",
+    Vatan: "VATAN",
+    Decathlon: "DECATHLON",
+  };
+  return map[retailerName] ?? "CUSTOM";
+}
+
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
   const { productId, title, url } = job.data;
   console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
+
+  // Ürünün var olduğunu doğrula
+  const product = await prisma.trackedProduct.findUnique({
+    where: { id: productId },
+  });
+
+  if (!product) {
+    console.warn(`⚠️ Ürün bulunamadı: ${productId}`);
+    return { found: 0 };
+  }
 
   // 1. Serper ile ürünü ara
   let results;
@@ -51,29 +79,79 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     if (!isMatch) continue;
 
-    // Competitor kaydını upsert et (link unique)
-    try {
-      await prisma.$executeRaw`
-        INSERT INTO "Competitor" ("id", "productId", "title", "price", "currency", "link", "imageUrl", "retailer", "lastSeenAt")
-        VALUES (${randomUUID()}, ${productId}, ${result.title}, ${price}, 'TRY', ${result.link}, ${result.imageUrl ?? null}, ${retailer.name}, ${now})
-        ON CONFLICT ("productId", "link")
-        DO UPDATE SET
-          "price" = ${price},
-          "title" = ${result.title},
-          "retailer" = ${retailer.name},
-          "lastSeenAt" = ${now}
-      `;
+    const marketplace = retailerToMarketplace(retailer.name);
 
-      // price_history'ye snapshot ekle
-      await prisma.$executeRaw`
-        INSERT INTO "PriceHistory" ("id", "productId", "retailer", "price", "currency", "recordedAt")
-        VALUES (${randomUUID()}, ${productId}, ${retailer.name}, ${price}, 'TRY', ${now})
-      `;
+    // Competitor kaydını upsert et (Prisma ORM ile)
+    try {
+      const competitor = await prisma.competitor.upsert({
+        where: {
+          trackedProductId_competitorUrl: {
+            trackedProductId: productId,
+            competitorUrl: result.link,
+          },
+        },
+        update: {
+          competitorName: result.title,
+          currentPrice: price,
+          marketplace,
+          lastScrapedAt: now,
+        },
+        create: {
+          trackedProductId: productId,
+          competitorUrl: result.link,
+          competitorName: result.title,
+          marketplace,
+          currentPrice: price,
+          lastScrapedAt: now,
+        },
+      });
+
+      // CompetitorPrice tablosuna snapshot ekle
+      await prisma.competitorPrice.create({
+        data: {
+          competitorId: competitor.id,
+          price,
+          currency: "TRY",
+          inStock: true,
+          scrapedAt: now,
+        },
+      });
+
+      // PriceHistory tablosuna da snapshot ekle (detail sayfası için)
+      await prisma.priceHistory.create({
+        data: {
+          trackedProductId: productId,
+          price,
+          currency: "TRY",
+          inStock: true,
+          sellerName: retailer.name,
+          scrapedAt: now,
+        },
+      });
 
       savedCount++;
     } catch (err) {
       console.error(`Competitor kaydetme hatası (${result.link}):`, err);
       // Tek bir competitor hatasında tüm job'ı öldürme, devam et
+    }
+  }
+
+  // Kullanıcının kendi ürün fiyatını da PriceHistory'ye kaydet
+  if (product.currentPrice && Number(product.currentPrice) > 0) {
+    try {
+      const ownRetailer = extractRetailer(product.productUrl);
+      await prisma.priceHistory.create({
+        data: {
+          trackedProductId: productId,
+          price: Number(product.currentPrice),
+          currency: product.currency,
+          inStock: product.status !== "OUT_OF_STOCK",
+          sellerName: ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm",
+          scrapedAt: now,
+        },
+      });
+    } catch (err) {
+      console.error(`Kendi fiyatı kaydetme hatası:`, err);
     }
   }
 

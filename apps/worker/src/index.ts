@@ -1,86 +1,156 @@
 import "dotenv/config";
 import { Worker, Queue } from "bullmq";
-import { runMigrations } from "./migrate";
+import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
 import { processRefreshJob } from "./jobs/refresh-product";
+import { prisma } from "./db";
+import { logger } from "./utils/logger";
 
-export let productQueue: Queue;
+// Redis bağlantısı
+const connection = {
+  url: process.env.REDIS_URL || "redis://localhost:6379",
+  maxRetriesPerRequest: null,
+};
+
+// ============================================
+// PRODUCT-JOBS QUEUE (onboard + refresh)
+// ============================================
+
+export const productQueue = new Queue("product-jobs", {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5000 },
+    removeOnComplete: { count: 50 },
+    removeOnFail: { count: 20 },
+  },
+});
+
+const productWorker = new Worker(
+  "product-jobs",
+  async (job) => {
+    logger.info({ jobName: job.name, jobId: job.id }, "Product job received");
+
+    switch (job.name) {
+      case "onboard":
+        return processCompetitorJob(job);
+      case "refresh":
+        return processRefreshJob(job);
+      default:
+        logger.warn({ jobName: job.name }, "Unknown product job type");
+        return undefined;
+    }
+  },
+  {
+    connection,
+    concurrency: 3,
+  },
+);
+
+productWorker.on("completed", (job) => {
+  logger.info({ jobName: job.name, jobId: job.id }, "Product job completed");
+});
+
+productWorker.on("failed", (job, err) => {
+  logger.error({ jobName: job?.name, jobId: job?.id }, `Product job failed: ${err.message}`);
+});
+
+// ============================================
+// COMPETITOR QUEUE (web app'ten gelen find-competitors job'ları)
+// ============================================
+
+const competitorWorker = new Worker(
+  "competitors",
+  async (job) => {
+    logger.info({ jobName: job.name, jobId: job.id }, "Competitor search job received");
+
+    const { productId, productName, marketplace: _marketplace } = job.data;
+    return processCompetitorJob({
+      ...job,
+      data: { productId, title: productName, url: "" },
+    } as typeof job);
+  },
+  {
+    connection,
+    concurrency: 3,
+  },
+);
+
+competitorWorker.on("completed", (job) => {
+  logger.info({ jobName: job.name, jobId: job.id }, "Competitor search job completed");
+});
+
+competitorWorker.on("failed", (job, err) => {
+  logger.error(
+    { jobName: job?.name, jobId: job?.id },
+    `Competitor search job failed: ${err.message}`,
+  );
+});
+
+// ============================================
+// STARTUP
+// ============================================
 
 async function start() {
-  // 1. DB migration'ları çalıştır
-  console.log("🗄️  Migration başlıyor...");
-  await runMigrations();
+  logger.info("CompeteHive Worker starting...");
 
-  // 2. Redis bağlantısı
-  const redisUrl = process.env.REDIS_URL!;
-  const connection = { url: redisUrl, maxRetriesPerRequest: null };
-
-  console.log("✅ Redis bağlantısı yapılandırıldı");
-
-  // 3. Queue tanımı (web app'in job eklemesi için)
-  productQueue = new Queue("product-jobs", { connection });
-
-  // 4. Worker
-  const worker = new Worker(
-    "product-jobs",
-    async (job) => {
-      console.log(`📥 Job alındı: ${job.name} (${job.id})`);
-
-      switch (job.name) {
-        case "onboard":
-          return processCompetitorJob(job);
-        case "refresh":
-          return processRefreshJob(job);
-        default:
-          console.warn(`⚠️ Bilinmeyen job: ${job.name}`);
-          return undefined;
-      }
-    },
-    {
-      connection,
-      concurrency: 3,
-    },
-  );
-
-  worker.on("completed", (job) => {
-    console.log(`✅ Job tamamlandı: ${job.name} (${job.id})`);
-  });
-
-  worker.on("failed", (job, err) => {
-    console.error(`❌ Job başarısız: ${job?.name} (${job?.id}):`, err.message);
-  });
-
-  // 5. Periyodik refresh scheduler — her ürünü 6 saatte bir yenile
+  // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri kuyruğa ekle
   setInterval(async () => {
     try {
-      const { PrismaClient } = await import("@prisma/client");
-      const prisma = new PrismaClient();
-      const products = await prisma.product.findMany({ select: { id: true } });
-
-      for (const product of products) {
-        await productQueue.add(
-          "refresh",
-          { productId: product.id },
-          {
-            attempts: 3,
-            backoff: { type: "exponential", delay: 5000 },
-            removeOnComplete: { count: 50 },
-            removeOnFail: { count: 20 },
-          },
-        );
-      }
-
-      console.log(`🔄 ${products.length} ürün refresh kuyruğuna eklendi`);
-      await prisma.$disconnect();
+      await scheduleScans();
     } catch (err) {
-      console.error("Refresh scheduler hatası:", err);
+      logger.error({ err }, "Schedule scan error");
     }
-  }, 6 * 60 * 60 * 1000); // 6 saat
+  }, 60 * 1000);
 
-  console.log("🚀 CompeteHive Worker başlatıldı");
+  // İlk çalıştırmada da tarama planla
+  await scheduleScans();
+
+  // 6 saatlik periyodik refresh scheduler — tüm ürünleri competitor fiyatları ile güncelle
+  setInterval(
+    async () => {
+      try {
+        const products = await prisma.trackedProduct.findMany({
+          where: { status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+          select: { id: true },
+        });
+
+        for (const product of products) {
+          await productQueue.add("refresh", { productId: product.id });
+        }
+
+        logger.info(`Scheduled ${products.length} refresh jobs`);
+      } catch (err) {
+        logger.error({ err }, "Refresh scheduler error");
+      }
+    },
+    6 * 60 * 60 * 1000,
+  ); // 6 saat
+
+  logger.info("CompeteHive Worker started successfully");
 }
 
+// ============================================
+// GRACEFUL SHUTDOWN
+// ============================================
+
+async function shutdown() {
+  logger.info("Shutting down workers...");
+  await Promise.all([
+    scrapeWorker.close(),
+    alertWorker.close(),
+    productWorker.close(),
+    competitorWorker.close(),
+  ]);
+  await prisma.$disconnect();
+  logger.info("Workers shut down successfully");
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
 start().catch((err) => {
-  console.error("Worker başlatılamadı:", err);
+  logger.error({ err }, "Worker failed to start");
   process.exit(1);
 });
