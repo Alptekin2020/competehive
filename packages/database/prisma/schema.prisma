@@ -113,6 +113,12 @@ model TrackedProduct {
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
+  // Step 1.4: Refresh tracking
+  refreshStatus       String?    @map("refresh_status")
+  refreshRequestedAt  DateTime?  @map("refresh_requested_at")
+  refreshCompletedAt  DateTime?  @map("refresh_completed_at")
+  refreshError        String?    @map("refresh_error")
+
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   priceHistory PriceHistory[]
   alertRules   AlertRule[]

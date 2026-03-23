@@ -32,6 +32,16 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   const { productId, title, url } = job.data;
   console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
 
+  // Mark as processing
+  try {
+    await prisma.trackedProduct.update({
+      where: { id: productId },
+      data: { refreshStatus: "processing" },
+    });
+  } catch {
+    // Product may not exist yet, continue
+  }
+
   // Ürünün var olduğunu doğrula
   const product = await prisma.trackedProduct.findUnique({
     where: { id: productId },
@@ -42,119 +52,149 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     return { found: 0 };
   }
 
-  // 1. Serper ile ürünü ara
-  let results;
   try {
-    results = await searchProduct(title);
-  } catch (err) {
-    console.error(`Serper arama hatası (${productId}):`, err);
-    throw err;
-  }
+    // 1. Serper ile ürünü ara
+    const results = await searchProduct(title);
 
-  if (!results || results.length === 0) {
-    console.log(`⚠️ Sonuç bulunamadı: ${title}`);
-    return { found: 0 };
-  }
-
-  const now = new Date();
-  let savedCount = 0;
-
-  for (const result of results) {
-    // Kendi URL'imizi atla
-    if (result.link === url) continue;
-
-    const price = parsePrice(result.price);
-    if (!price || price <= 0) continue;
-
-    const retailer = extractRetailer(result.link);
-
-    // AI ile eşleştirme doğrula
-    let isMatch = false;
-    try {
-      isMatch = await verifyProductMatch(title, result.title);
-    } catch {
-      // Hata durumunda bu sonucu atla
-      continue;
+    if (!results || results.length === 0) {
+      console.log(`⚠️ Sonuç bulunamadı: ${title}`);
+      // Mark as completed even with 0 results
+      await prisma.trackedProduct.update({
+        where: { id: productId },
+        data: {
+          refreshStatus: "completed",
+          refreshCompletedAt: new Date(),
+          refreshError: null,
+        },
+      });
+      return { found: 0 };
     }
 
-    if (!isMatch) continue;
+    const now = new Date();
+    let savedCount = 0;
 
-    const marketplace = retailerToMarketplace(retailer.name);
+    for (const result of results) {
+      // Kendi URL'imizi atla
+      if (result.link === url) continue;
 
-    // Competitor kaydını upsert et (Prisma ORM ile)
-    try {
-      const competitor = await prisma.competitor.upsert({
-        where: {
-          trackedProductId_competitorUrl: {
+      const price = parsePrice(result.price);
+      if (!price || price <= 0) continue;
+
+      const retailer = extractRetailer(result.link);
+
+      // AI ile eşleştirme doğrula
+      let isMatch = false;
+      try {
+        isMatch = await verifyProductMatch(title, result.title);
+      } catch {
+        // Hata durumunda bu sonucu atla
+        continue;
+      }
+
+      if (!isMatch) continue;
+
+      const marketplace = retailerToMarketplace(retailer.name);
+
+      // Competitor kaydını upsert et (Prisma ORM ile)
+      try {
+        const competitor = await prisma.competitor.upsert({
+          where: {
+            trackedProductId_competitorUrl: {
+              trackedProductId: productId,
+              competitorUrl: result.link,
+            },
+          },
+          update: {
+            competitorName: result.title,
+            currentPrice: price,
+            marketplace,
+            lastScrapedAt: now,
+          },
+          create: {
             trackedProductId: productId,
             competitorUrl: result.link,
+            competitorName: result.title,
+            marketplace,
+            currentPrice: price,
+            lastScrapedAt: now,
           },
-        },
-        update: {
-          competitorName: result.title,
-          currentPrice: price,
-          marketplace,
-          lastScrapedAt: now,
-        },
-        create: {
-          trackedProductId: productId,
-          competitorUrl: result.link,
-          competitorName: result.title,
-          marketplace,
-          currentPrice: price,
-          lastScrapedAt: now,
-        },
-      });
+        });
 
-      // CompetitorPrice tablosuna snapshot ekle
-      await prisma.competitorPrice.create({
-        data: {
-          competitorId: competitor.id,
-          price,
-          currency: "TRY",
-          inStock: true,
-          scrapedAt: now,
-        },
-      });
+        // CompetitorPrice tablosuna snapshot ekle
+        await prisma.competitorPrice.create({
+          data: {
+            competitorId: competitor.id,
+            price,
+            currency: "TRY",
+            inStock: true,
+            scrapedAt: now,
+          },
+        });
 
-      // PriceHistory tablosuna da snapshot ekle (detail sayfası için)
-      await prisma.priceHistory.create({
-        data: {
-          trackedProductId: productId,
-          price,
-          currency: "TRY",
-          inStock: true,
-          sellerName: retailer.name,
-          scrapedAt: now,
-        },
-      });
+        // PriceHistory tablosuna da snapshot ekle (detail sayfası için)
+        await prisma.priceHistory.create({
+          data: {
+            trackedProductId: productId,
+            price,
+            currency: "TRY",
+            inStock: true,
+            sellerName: retailer.name,
+            scrapedAt: now,
+          },
+        });
 
-      savedCount++;
-    } catch (err) {
-      console.error(`Competitor kaydetme hatası (${result.link}):`, err);
-      // Tek bir competitor hatasında tüm job'ı öldürme, devam et
+        savedCount++;
+      } catch (err) {
+        console.error(`Competitor kaydetme hatası (${result.link}):`, err);
+        // Tek bir competitor hatasında tüm job'ı öldürme, devam et
+      }
     }
-  }
 
-  // Kullanıcının kendi ürün fiyatını da PriceHistory'ye kaydet
-  if (product.currentPrice && Number(product.currentPrice) > 0) {
+    // Kullanıcının kendi ürün fiyatını da PriceHistory'ye kaydet
+    if (product.currentPrice && Number(product.currentPrice) > 0) {
+      try {
+        const ownRetailer = extractRetailer(product.productUrl);
+        await prisma.priceHistory.create({
+          data: {
+            trackedProductId: productId,
+            price: Number(product.currentPrice),
+            currency: product.currency,
+            inStock: product.status !== "OUT_OF_STOCK",
+            sellerName: ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm",
+            scrapedAt: now,
+          },
+        });
+      } catch (err) {
+        console.error(`Kendi fiyatı kaydetme hatası:`, err);
+      }
+    }
+
+    // Mark as completed
+    await prisma.trackedProduct.update({
+      where: { id: productId },
+      data: {
+        refreshStatus: "completed",
+        refreshCompletedAt: new Date(),
+        refreshError: null,
+      },
+    });
+
+    console.log(`✅ ${productId}: ${savedCount} competitor bulundu ve kaydedildi`);
+    return { found: savedCount };
+  } catch (error) {
+    // Mark as failed
     try {
-      const ownRetailer = extractRetailer(product.productUrl);
-      await prisma.priceHistory.create({
+      await prisma.trackedProduct.update({
+        where: { id: productId },
         data: {
-          trackedProductId: productId,
-          price: Number(product.currentPrice),
-          currency: product.currency,
-          inStock: product.status !== "OUT_OF_STOCK",
-          sellerName: ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm",
-          scrapedAt: now,
+          refreshStatus: "failed",
+          refreshCompletedAt: new Date(),
+          refreshError: error instanceof Error ? error.message : "Bilinmeyen hata",
         },
       });
-    } catch (err) {
-      console.error(`Kendi fiyatı kaydetme hatası:`, err);
+    } catch (statusUpdateError) {
+      console.error("Failed to update refresh status:", statusUpdateError);
     }
+    throw error; // re-throw so BullMQ marks the job as failed
   }
-
-  console.log(`✅ ${productId}: ${savedCount} competitor bulundu ve kaydedildi`);
-  return { found: savedCount };
 }

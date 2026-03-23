@@ -12,6 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import RefreshButton from "@/components/RefreshButton";
 
 interface PriceHistoryEntry {
   id: string;
@@ -44,6 +45,10 @@ interface ProductData {
   currentPrice: string | null;
   currency: string;
   status: string;
+  refreshStatus: string | null;
+  refreshRequestedAt: string | null;
+  refreshCompletedAt: string | null;
+  refreshError: string | null;
   priceHistory: PriceHistoryEntry[];
   competitors: CompetitorEntry[];
 }
@@ -235,15 +240,27 @@ export default function ProductDetailPage() {
               >
                 {product.productUrl}
               </a>
-            </div>
-            {ownPrice && ownPrice > 0 && (
-              <div className="text-right flex-shrink-0">
-                <p className="text-xs text-gray-500 mb-1">Benim Fiyatım</p>
-                <p className="text-2xl font-bold text-amber-400">
-                  {formatPrice(ownPrice, product.currency)}
+              {product.refreshCompletedAt && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Son yenileme: {new Date(product.refreshCompletedAt).toLocaleString("tr-TR")}
                 </p>
-              </div>
-            )}
+              )}
+            </div>
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              {ownPrice && ownPrice > 0 && (
+                <div className="text-right">
+                  <p className="text-xs text-gray-500 mb-1">Benim Fiyatım</p>
+                  <p className="text-2xl font-bold text-amber-400">
+                    {formatPrice(ownPrice, product.currency)}
+                  </p>
+                </div>
+              )}
+              <RefreshButton
+                productId={product.id}
+                initialStatus={product.refreshStatus}
+                onRefreshComplete={() => fetchProduct()}
+              />
+            </div>
           </div>
         </div>
 
