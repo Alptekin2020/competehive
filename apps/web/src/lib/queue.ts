@@ -25,6 +25,10 @@ export async function addScrapeJob(productId: string, marketplace: string, produ
   );
 }
 
+export function getProductQueue() {
+  return new Queue("product-jobs", { connection: REDIS_CONNECTION });
+}
+
 export async function addCompetitorSearchJob(
   productId: string,
   productName: string,

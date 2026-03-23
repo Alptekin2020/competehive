@@ -75,6 +75,29 @@ export async function runMigrations() {
       ON "Competitor"("productId", "link")
     `);
 
+    // Step 1.4: Refresh status tracking
+    await client.query(`
+      ALTER TABLE "tracked_products"
+      ADD COLUMN IF NOT EXISTS "refresh_status" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "tracked_products"
+      ADD COLUMN IF NOT EXISTS "refresh_requested_at" TIMESTAMPTZ DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "tracked_products"
+      ADD COLUMN IF NOT EXISTS "refresh_completed_at" TIMESTAMPTZ DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "tracked_products"
+      ADD COLUMN IF NOT EXISTS "refresh_error" TEXT DEFAULT NULL
+    `);
+
+    console.log("✅ Step 1.4 migration: refresh status columns added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
