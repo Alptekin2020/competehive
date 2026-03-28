@@ -107,6 +107,24 @@ export async function runMigrations() {
 
     console.log("✅ Step 3.1 migration: new marketplace enum values added");
 
+    // Step 3.2: AI match quality columns
+    await client.query(`
+      ALTER TABLE "competitors"
+      ADD COLUMN IF NOT EXISTS "match_score" INTEGER DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "competitors"
+      ADD COLUMN IF NOT EXISTS "match_reason" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "competitors"
+      ADD COLUMN IF NOT EXISTS "match_attributes" JSONB DEFAULT NULL
+    `);
+
+    console.log("✅ Step 3.2 migration: match quality columns added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);

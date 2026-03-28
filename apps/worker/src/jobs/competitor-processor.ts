@@ -1,7 +1,7 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
-import { verifyProductMatch } from "../matcher";
+import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
 
 interface OnboardJobData {
@@ -82,16 +82,33 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
       const retailer = extractRetailer(result.link);
 
-      // AI ile eşleştirme doğrula
-      let isMatch = false;
+      // AI ile eşleştirme doğrula (enhanced: score + reason)
+      let matchResult: MatchResult;
       try {
-        isMatch = await verifyProductMatch(title, result.title);
+        matchResult = await verifyProductMatch(
+          {
+            title,
+            price: product.currentPrice ? Number(product.currentPrice) : undefined,
+            marketplace: product.marketplace,
+          },
+          {
+            title: result.title,
+            url: result.link,
+            price,
+            marketplace: retailer.name,
+          },
+        );
       } catch {
         // Hata durumunda bu sonucu atla
         continue;
       }
 
-      if (!isMatch) continue;
+      if (!matchResult.isMatch) {
+        console.log(
+          `❌ Candidate rejected (score: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
+        );
+        continue;
+      }
 
       const marketplace = retailerToMarketplace(retailer.name);
 
@@ -109,6 +126,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             currentPrice: price,
             marketplace,
             lastScrapedAt: now,
+            matchScore: matchResult.score,
+            matchReason: matchResult.reason,
+            matchAttributes: matchResult.attributes,
           },
           create: {
             trackedProductId: productId,
@@ -117,6 +137,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             marketplace,
             currentPrice: price,
             lastScrapedAt: now,
+            matchScore: matchResult.score,
+            matchReason: matchResult.reason,
+            matchAttributes: matchResult.attributes,
           },
         });
 
