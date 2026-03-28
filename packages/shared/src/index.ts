@@ -150,15 +150,15 @@ export const MARKETPLACES: Record<string, MarketplaceInfo> = {
     id: "DECATHLON",
     name: "Decathlon",
     domain: "decathlon.com.tr",
-    icon: "⚽",
+    icon: "🏃",
     color: "#0082C3",
   },
   TEKNOSA: {
     id: "TEKNOSA",
     name: "Teknosa",
     domain: "teknosa.com",
-    icon: "📱",
-    color: "#ED1C24",
+    icon: "🔵",
+    color: "#005CA9",
   },
   SEPHORA: {
     id: "SEPHORA",
@@ -183,10 +183,10 @@ export const MARKETPLACES: Record<string, MarketplaceInfo> = {
   },
   VATAN: {
     id: "VATAN",
-    name: "Vatan Bilgisayar",
+    name: "Vatan",
     domain: "vatanbilgisayar.com",
-    icon: "💻",
-    color: "#003399",
+    icon: "🔴",
+    color: "#E30613",
   },
   ITOPYA: {
     id: "ITOPYA",
@@ -235,6 +235,10 @@ export const SUPPORTED_SCRAPER_MARKETPLACES = [
   "HEPSIBURADA",
   "AMAZON_TR",
   "N11",
+  "TEKNOSA",
+  "VATAN",
+  "DECATHLON",
+  "MEDIAMARKT",
 ] as const;
 
 export type SupportedScraperMarketplace = (typeof SUPPORTED_SCRAPER_MARKETPLACES)[number];
