@@ -167,9 +167,7 @@ export default function AnalyticsPage() {
             </div>
             <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5">
               <p className="text-gray-500 text-sm mb-1">Ort. Eşleşme</p>
-              <p
-                className={`text-3xl font-bold ${getScoreColor(summary.overallAvgMatchScore)}`}
-              >
+              <p className={`text-3xl font-bold ${getScoreColor(summary.overallAvgMatchScore)}`}>
                 {summary.overallAvgMatchScore !== null ? `%${summary.overallAvgMatchScore}` : "—"}
               </p>
               <p className="text-gray-600 text-xs mt-1">güven skoru</p>
@@ -206,9 +204,7 @@ export default function AnalyticsPage() {
                     </div>
                     {/* Success rate */}
                     <div className="text-center">
-                      <p
-                        className={`text-xl font-bold ${getSuccessRateColor(mp.successRate)}`}
-                      >
+                      <p className={`text-xl font-bold ${getSuccessRateColor(mp.successRate)}`}>
                         %{mp.successRate}
                       </p>
                       <p className="text-gray-600 text-[10px]">başarı</p>

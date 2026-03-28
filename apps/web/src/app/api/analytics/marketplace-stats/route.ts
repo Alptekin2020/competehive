@@ -45,14 +45,13 @@ export async function GET() {
       select: { id: true, marketplace: true, lastScrapedAt: true },
     });
 
-    const marketplaceMap = new Map<
-      string,
-      { marketplace: string; lastScrapedAt: Date | null }
-    >(
-      productMarketplaceMap.map((p: { id: string; marketplace: string; lastScrapedAt: Date | null }) => [
-        p.id,
-        { marketplace: p.marketplace, lastScrapedAt: p.lastScrapedAt },
-      ]),
+    const marketplaceMap = new Map<string, { marketplace: string; lastScrapedAt: Date | null }>(
+      productMarketplaceMap.map(
+        (p: { id: string; marketplace: string; lastScrapedAt: Date | null }) => [
+          p.id,
+          { marketplace: p.marketplace, lastScrapedAt: p.lastScrapedAt },
+        ],
+      ),
     );
 
     // 4. Aggregate per marketplace
@@ -100,9 +99,7 @@ export async function GET() {
         marketplaces[mp] = emptyStats();
       }
       marketplaces[mp].competitorCount = row._count.id;
-      marketplaces[mp].avgMatchScore = row._avg.matchScore
-        ? Math.round(row._avg.matchScore)
-        : null;
+      marketplaces[mp].avgMatchScore = row._avg.matchScore ? Math.round(row._avg.matchScore) : null;
     }
 
     // Add price update counts
@@ -136,9 +133,7 @@ export async function GET() {
           ? Math.round((stats.activeProducts / stats.totalProducts) * 100)
           : 0,
       errorRate:
-        stats.totalProducts > 0
-          ? Math.round((stats.errorProducts / stats.totalProducts) * 100)
-          : 0,
+        stats.totalProducts > 0 ? Math.round((stats.errorProducts / stats.totalProducts) * 100) : 0,
     }));
 
     // Sort by total products descending
