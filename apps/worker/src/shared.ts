@@ -8,11 +8,8 @@ const baseSchema = z.object({
 
 const workerEnvSchema = baseSchema.extend({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().optional(),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().optional(),
   PROXY_HOST: z.string().optional(),
   PROXY_PORT: z.coerce.number().optional(),
   PROXY_USER: z.string().optional(),
@@ -50,6 +47,8 @@ export interface AlertUser {
 
 export interface AlertRuleWithUser {
   id: string;
+  userId: string;
+  ruleType: string;
   notifyVia: string[];
   user: AlertUser;
   trackedProduct: {
