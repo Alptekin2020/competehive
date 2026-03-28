@@ -84,9 +84,7 @@ export default function ProductsPage() {
           if (compareData.competitors?.length > 0) {
             setProducts((prev) =>
               prev.map((p) =>
-                p.id === data.product.id
-                  ? { ...p, competitors: compareData.competitors }
-                  : p,
+                p.id === data.product.id ? { ...p, competitors: compareData.competitors } : p,
               ),
             );
           }
@@ -99,7 +97,7 @@ export default function ProductsPage() {
     }
   };
 
-  const handleDelete = async (productId: string) => {
+  const _handleDelete = async (productId: string) => {
     try {
       await fetch(`/api/products?id=${productId}`, { method: "DELETE" });
       setProducts((prev) => prev.filter((p) => p.id !== productId));
@@ -191,9 +189,7 @@ export default function ProductsPage() {
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <MarketplaceBadge marketplace={product.marketplace} />
                     {competitorCount > 0 && (
-                      <span className="text-xs text-dark-500">
-                        {competitorCount} rakip bulundu
-                      </span>
+                      <span className="text-xs text-dark-500">{competitorCount} rakip bulundu</span>
                     )}
                   </div>
                 </div>
