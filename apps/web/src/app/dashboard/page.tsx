@@ -114,9 +114,7 @@ export default function DashboardPage() {
                 <p className="text-white font-medium group-hover:text-amber-400 transition">
                   Ürünlerim
                 </p>
-                <p className="text-gray-500 text-sm">
-                  {stats.trackedProducts} ürün takip ediliyor
-                </p>
+                <p className="text-gray-500 text-sm">{stats.trackedProducts} ürün takip ediliyor</p>
               </div>
             </Link>
             <Link

@@ -290,9 +290,7 @@ export default function ProductDetailPage() {
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
           <p className="text-gray-400 text-xs mb-1">Ortalama Fiyat</p>
-          <p className="text-lg font-bold text-white">
-            {avgPrice ? formatPrice(avgPrice) : "—"}
-          </p>
+          <p className="text-lg font-bold text-white">{avgPrice ? formatPrice(avgPrice) : "—"}</p>
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
           <p className="text-gray-400 text-xs mb-1">Rakip Sayısı</p>
@@ -411,11 +409,8 @@ export default function ProductDetailPage() {
               </h2>
               <div className="space-y-3">
                 {competitors.map((competitor, index) => {
-                  const cPrice = competitor.currentPrice
-                    ? Number(competitor.currentPrice)
-                    : null;
-                  const diff =
-                    cPrice && ownPrice ? ((cPrice - ownPrice) / ownPrice) * 100 : null;
+                  const cPrice = competitor.currentPrice ? Number(competitor.currentPrice) : null;
+                  const diff = cPrice && ownPrice ? ((cPrice - ownPrice) / ownPrice) * 100 : null;
 
                   return (
                     <div
