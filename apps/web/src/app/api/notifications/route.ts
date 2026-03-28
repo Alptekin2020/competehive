@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
 
-// GET /api/notifications - Kullanıcının bildirimlerini listele
+// GET /api/notifications - Kullanıcının bildirimlerini listele (pagination destekli)
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser();
@@ -13,32 +13,42 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const unreadOnly = searchParams.get("unread") === "true";
-    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
+    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+    const offset = parseInt(searchParams.get("offset") || "0");
 
-    const notifications = await prisma.notification.findMany({
-      where: {
-        userId: user.id,
-        ...(unreadOnly ? { isRead: false } : {}),
-      },
-      include: {
-        alertRule: {
-          select: {
-            ruleType: true,
-            trackedProduct: {
-              select: {
-                productName: true,
-                marketplace: true,
+    const where = {
+      userId: user.id,
+      ...(unreadOnly ? { isRead: false } : {}),
+    };
+
+    const [notifications, total, unreadCount] = await Promise.all([
+      prisma.notification.findMany({
+        where,
+        include: {
+          alertRule: {
+            select: {
+              ruleType: true,
+              trackedProduct: {
+                select: {
+                  productName: true,
+                  marketplace: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { sentAt: "desc" },
-      take: limit,
-    });
+        orderBy: { sentAt: "desc" },
+        take: limit,
+        skip: offset,
+      }),
+      prisma.notification.count({ where }),
+      prisma.notification.count({
+        where: { userId: user.id, isRead: false },
+      }),
+    ]);
 
     // Map to flat format for frontend compatibility
-    const mapped = notifications.map((n) => ({
+    const mapped = notifications.map((n: (typeof notifications)[number]) => ({
       id: n.id,
       channel: n.channel,
       title: n.title,
@@ -51,7 +61,12 @@ export async function GET(req: NextRequest) {
       marketplace: n.alertRule?.trackedProduct?.marketplace ?? null,
     }));
 
-    return apiSuccess({ notifications: mapped });
+    return apiSuccess({
+      notifications: mapped,
+      total,
+      unreadCount,
+      hasMore: offset + limit < total,
+    });
   } catch (error) {
     return serverError(error, "GET /api/notifications");
   }
