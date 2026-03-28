@@ -2,7 +2,6 @@ import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import { logger } from "../utils/logger";
 
-
 // ============================================
 // Scraper Types
 // ============================================
@@ -751,14 +750,18 @@ export async function scrapeGeneric(
         $('meta[property="product:price:amount"]').attr("content") ||
         $('meta[property="og:price:amount"]').attr("content") ||
         "";
-      const price = parseFloat(priceStr) || 0;
+      const price = parsePrice(priceStr);
+
+      const currency =
+        $('meta[property="product:price:currency"]').attr("content") ||
+        $('meta[property="og:price:currency"]').attr("content");
 
       const imageUrl = $('meta[property="og:image"]').attr("content") || undefined;
 
       productData = {
         name: productData?.name || name || "",
         price: price || productData?.price || 0,
-        currency: "TRY",
+        currency: productData?.currency || currency || "TRY",
         inStock: true,
         imageUrl: productData?.imageUrl || imageUrl,
       };
