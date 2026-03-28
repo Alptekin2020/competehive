@@ -11,9 +11,9 @@
     "deploy:with-generate": "npm run deploy && npm run generate"
   },
   "dependencies": {
-    "@prisma/client": "^6.4.1"
+    "@prisma/client": "^6.4.0"
   },
   "devDependencies": {
-    "prisma": "^6.4.1"
+    "prisma": "^6.4.0"
   }
 }
