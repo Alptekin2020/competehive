@@ -54,13 +54,13 @@ export function AddProductModal({
             value={url}
             onChange={(e) => onUrlChange(e.target.value)}
             className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm mb-2"
-            placeholder="https://www.trendyol.com/... veya baska marketplace"
+            placeholder="Marketplace ürün URL'sini yapıştırın..."
             required
             disabled={loading}
           />
           <p className="text-dark-600 text-xs mb-6">
-            Herhangi bir e-ticaret sitesinin urun linkini yapistirin. Diger marketplace&apos;lerdeki
-            fiyatlar otomatik bulunacak.
+            Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon veya MediaMarkt ürün
+            linkini yapıştırın.
           </p>
 
           <div className="flex gap-3">

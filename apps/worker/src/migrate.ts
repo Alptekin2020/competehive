@@ -98,6 +98,15 @@ export async function runMigrations() {
 
     console.log("✅ Step 1.4 migration: refresh status columns added");
 
+    // Step 3.1: New marketplace enum values
+    // PostgreSQL ALTER TYPE ADD VALUE is idempotent with IF NOT EXISTS
+    await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'TEKNOSA'`);
+    await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'VATAN'`);
+    await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'DECATHLON'`);
+    await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'MEDIAMARKT'`);
+
+    console.log("✅ Step 3.1 migration: new marketplace enum values added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);

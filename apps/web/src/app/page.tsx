@@ -35,8 +35,9 @@ export default function Home() {
             Rakiplerinizin fiyatlarını <span className="text-hive-500">otomatik takip edin</span>
           </h1>
           <p className="text-lg text-dark-400 mb-10 max-w-2xl mx-auto">
-            Trendyol, Hepsiburada, Amazon ve N11&apos;deki rakip fiyat değişikliklerinden anında
-            haberdar olun. Fiyat stratejinizi veriye dayalı oluşturun.
+            Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt&apos;teki
+            rakip fiyat değişikliklerinden anında haberdar olun. Fiyat stratejinizi veriye dayalı
+            oluşturun.
           </p>
           <div className="flex justify-center gap-4">
             <Link
@@ -94,7 +95,7 @@ export default function Home() {
               {
                 icon: "🏪",
                 title: "Çoklu Marketplace",
-                desc: "Trendyol, Hepsiburada, Amazon TR ve N11 tek panelden.",
+                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt tek panelden.",
               },
             ].map((f, i) => (
               <div

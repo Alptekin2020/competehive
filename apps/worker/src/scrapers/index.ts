@@ -1,7 +1,6 @@
 import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import { logger } from "../utils/logger";
-import { SUPPORTED_SCRAPER_MARKETPLACES, type SupportedScraperMarketplace } from "../shared";
 
 // ============================================
 // Scraper Types
@@ -686,6 +685,99 @@ export async function scrapeN11(url: string, config: ScraperConfig = {}): Promis
 }
 
 // ============================================
+// GENERIC SCRAPER (JSON-LD + Meta Tags)
+// ============================================
+
+export async function scrapeGeneric(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  logger.info(`Scraping (generic): ${url}`);
+
+  const parseGenericHtml = (html: string): ScrapedProduct | null => {
+    const $ = cheerio.load(html);
+
+    const holder: { data: ScrapedProduct | null } = { data: null };
+
+    // Try JSON-LD first
+    $('script[type="application/ld+json"]').each((_, el) => {
+      if (holder.data && holder.data.price > 0) return;
+      try {
+        const raw = $(el).html();
+        if (!raw) return;
+        const ld = JSON.parse(raw);
+
+        // Handle both direct Product and @graph arrays
+        const product =
+          ld["@type"] === "Product"
+            ? ld
+            : Array.isArray(ld["@graph"])
+              ? ld["@graph"].find((item: Record<string, unknown>) => item["@type"] === "Product")
+              : null;
+
+        if (product) {
+          const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+          holder.data = {
+            name: product.name || "",
+            price: parseFloat(offers?.price || "0"),
+            currency: offers?.priceCurrency || "TRY",
+            inStock: offers?.availability?.includes("InStock") ?? true,
+            imageUrl: Array.isArray(product.image) ? product.image[0] : product.image || undefined,
+            sellerName: offers?.seller?.name || undefined,
+            rating: product.aggregateRating?.ratingValue
+              ? parseFloat(product.aggregateRating.ratingValue)
+              : undefined,
+            reviewCount: product.aggregateRating?.reviewCount
+              ? parseInt(product.aggregateRating.reviewCount)
+              : undefined,
+          };
+        }
+      } catch {
+        // skip invalid JSON-LD
+      }
+    });
+
+    let productData = holder.data;
+
+    // Fallback: OpenGraph + meta tags
+    if (!productData || productData.price === 0) {
+      const name =
+        $('meta[property="og:title"]').attr("content") ||
+        $('meta[name="title"]').attr("content") ||
+        $("h1").first().text().trim();
+
+      const priceStr =
+        $('meta[property="product:price:amount"]').attr("content") ||
+        $('meta[property="og:price:amount"]').attr("content") ||
+        "";
+      const price = parsePrice(priceStr);
+
+      const currency =
+        $('meta[property="product:price:currency"]').attr("content") ||
+        $('meta[property="og:price:currency"]').attr("content");
+
+      const imageUrl = $('meta[property="og:image"]').attr("content") || undefined;
+
+      productData = {
+        name: productData?.name || name || "",
+        price: price || productData?.price || 0,
+        currency: productData?.currency || currency || "TRY",
+        inStock: true,
+        imageUrl: productData?.imageUrl || imageUrl,
+      };
+    }
+
+    if (productData && (productData.name || productData.price > 0)) {
+      return productData;
+    }
+
+    return null;
+  };
+
+  return scrapeWithFallback(url, config, parseGenericHtml, "Generic");
+}
+
+// ============================================
 // SCRAPER FACTORY
 // ============================================
 
@@ -699,19 +791,14 @@ export function getScraper(marketplace: string) {
       return scrapeAmazonTR;
     case "N11":
       return scrapeN11;
+    case "TEKNOSA":
+    case "VATAN":
+    case "DECATHLON":
+    case "MEDIAMARKT":
+      return scrapeGeneric;
     default:
-      if (!SUPPORTED_SCRAPER_MARKETPLACES.includes(marketplace as SupportedScraperMarketplace)) {
-        return async () => {
-          throw createUnsupportedMarketplaceError(marketplace);
-        };
-      }
-
-      return async () => {
-        throw new ScraperError(`Marketplace scraper tanimli degil: ${marketplace}`, {
-          code: "SCRAPER_NOT_IMPLEMENTED",
-          retryable: false,
-          softFail: true,
-        });
-      };
+      // Fallback to generic for unknown marketplaces
+      logger.warn(`No specific scraper for ${marketplace}, using generic`);
+      return scrapeGeneric;
   }
 }
