@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/products", label: "Ürünler", icon: "box" },
   { href: "/dashboard/alerts", label: "Uyarılar", icon: "bell" },
   { href: "/dashboard/notifications", label: "Bildirimler", icon: "inbox" },
+  { href: "/dashboard/analytics", label: "Analitik", icon: "chart" },
   { href: "/dashboard/settings", label: "Ayarlar", icon: "settings" },
 ];
 
@@ -76,6 +77,22 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
         >
           <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
           <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+        </svg>
+      );
+    case "chart":
+      return (
+        <svg
+          className={c}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1="18" y1="20" x2="18" y2="10" />
+          <line x1="12" y1="20" x2="12" y2="4" />
+          <line x1="6" y1="20" x2="6" y2="14" />
         </svg>
       );
     case "settings":
