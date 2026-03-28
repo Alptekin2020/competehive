@@ -38,6 +38,8 @@ interface CompetitorEntry {
   marketplace: string;
   currentPrice: string | null;
   lastScrapedAt: string | null;
+  matchScore: number | null;
+  matchReason: string | null;
 }
 
 interface ProductData {
@@ -96,6 +98,31 @@ function formatPrice(price: number, currency = "TRY") {
     currency,
     maximumFractionDigits: 0,
   }).format(price);
+}
+
+function MatchScoreBadge({ score }: { score: number | null }) {
+  if (score === null || score === undefined) return null;
+
+  let colorClass: string;
+
+  if (score >= 90) {
+    colorClass = "bg-green-500/10 text-green-400 border-green-500/30";
+  } else if (score >= 70) {
+    colorClass = "bg-amber-500/10 text-amber-400 border-amber-500/30";
+  } else if (score >= 40) {
+    colorClass = "bg-orange-500/10 text-orange-400 border-orange-500/30";
+  } else {
+    colorClass = "bg-red-500/10 text-red-400 border-red-500/30";
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}
+      title={`Eşleşme güveni: %${score}`}
+    >
+      <span className="text-[10px]">🎯</span>%{score}
+    </span>
+  );
 }
 
 export default function ProductDetailPage() {
@@ -418,17 +445,30 @@ export default function ProductDetailPage() {
                       className="flex items-center gap-3 p-3 rounded-lg bg-[#0A0A0B] border border-[#1F1F23] hover:border-[#2F2F33] transition-colors"
                     >
                       <span className="text-gray-500 text-xs w-5 text-center">{index + 1}</span>
-                      <span className="text-xs font-medium px-2 py-0.5 rounded border border-[#2F2F33] text-gray-400 flex-shrink-0">
-                        {competitor.marketplace}
-                      </span>
-                      <a
-                        href={competitor.competitorUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 text-sm text-gray-300 hover:text-white truncate transition-colors"
-                      >
-                        {competitor.competitorName || competitor.competitorUrl}
-                      </a>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded border border-[#2F2F33] text-gray-400">
+                          {competitor.marketplace}
+                        </span>
+                        <MatchScoreBadge score={competitor.matchScore} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <a
+                          href={competitor.competitorUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-gray-300 hover:text-white truncate transition-colors block"
+                        >
+                          {competitor.competitorName || competitor.competitorUrl}
+                        </a>
+                        {competitor.matchReason && (
+                          <p
+                            className="text-xs text-gray-600 mt-0.5 truncate"
+                            title={competitor.matchReason}
+                          >
+                            {competitor.matchReason}
+                          </p>
+                        )}
+                      </div>
                       <div className="text-right flex-shrink-0">
                         {cPrice ? (
                           <>

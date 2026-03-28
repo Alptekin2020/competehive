@@ -162,6 +162,11 @@ model Competitor {
   lastScrapedAt    DateTime? @map("last_scraped_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
+  // Step 3.2: AI match quality
+  matchScore       Int?      @map("match_score")
+  matchReason      String?   @map("match_reason")
+  matchAttributes  Json?     @map("match_attributes")
+
   trackedProduct   TrackedProduct    @relation(fields: [trackedProductId], references: [id], onDelete: Cascade)
   competitorPrices CompetitorPrice[]
 
