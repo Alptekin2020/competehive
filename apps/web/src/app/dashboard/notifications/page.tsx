@@ -143,9 +143,7 @@ export default function NotificationsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white mb-1">Bildirimler</h1>
           <p className="text-dark-500 text-sm">
-            {unreadCount > 0
-              ? `${unreadCount} okunmamış bildiriminiz var`
-              : "Tüm bildirimleriniz"}
+            {unreadCount > 0 ? `${unreadCount} okunmamış bildiriminiz var` : "Tüm bildirimleriniz"}
           </p>
         </div>
         {unreadCount > 0 && (
@@ -163,9 +161,7 @@ export default function NotificationsPage() {
         <button
           onClick={() => setFilter("all")}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-            filter === "all"
-              ? "bg-hive-500/10 text-hive-500"
-              : "text-dark-500 hover:text-white"
+            filter === "all" ? "bg-hive-500/10 text-hive-500" : "text-dark-500 hover:text-white"
           }`}
         >
           Tümü ({total})
@@ -173,9 +169,7 @@ export default function NotificationsPage() {
         <button
           onClick={() => setFilter("unread")}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-            filter === "unread"
-              ? "bg-hive-500/10 text-hive-500"
-              : "text-dark-500 hover:text-white"
+            filter === "unread" ? "bg-hive-500/10 text-hive-500" : "text-dark-500 hover:text-white"
           }`}
         >
           Okunmamış ({unreadCount})
