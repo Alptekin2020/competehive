@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { UserButton } from "@clerk/nextjs";
+import NotificationDropdown from "@/components/NotificationDropdown";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Genel Bakış", icon: "home" },
   { href: "/dashboard/products", label: "Ürünler", icon: "box" },
   { href: "/dashboard/alerts", label: "Uyarılar", icon: "bell" },
-  { href: "/dashboard/notifications", label: "Bildirimler", icon: "chat" },
+  { href: "/dashboard/notifications", label: "Bildirimler", icon: "inbox" },
   { href: "/dashboard/settings", label: "Ayarlar", icon: "settings" },
 ];
 
@@ -62,7 +63,7 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
           <path d="M13.73 21a2 2 0 01-3.46 0" />
         </svg>
       );
-    case "chat":
+    case "inbox":
       return (
         <svg
           className={c}
@@ -73,7 +74,8 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+          <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
         </svg>
       );
     case "settings":
@@ -99,16 +101,6 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  useEffect(() => {
-    fetch("/api/notifications?unread=true")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.notifications) setUnreadCount(data.notifications.length);
-      })
-      .catch((err) => console.error("Failed to fetch unread notifications:", err));
-  }, [pathname]);
 
   return (
     <div className="min-h-screen bg-dark-1000 flex">
@@ -142,11 +134,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 >
                   <NavIcon name={item.icon} />
                   {item.label}
-                  {item.icon === "chat" && unreadCount > 0 && (
-                    <span className="ml-auto bg-hive-500 text-dark-1000 text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
-                      {unreadCount}
-                    </span>
-                  )}
                 </Link>
               );
             })}
@@ -203,28 +190,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
           <div className="flex-1" />
           <div className="flex items-center gap-4">
-            <Link
-              href="/dashboard/notifications"
-              className="relative text-dark-400 hover:text-white transition"
-            >
-              <svg
-                className="w-5 h-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 01-3.46 0" />
-              </svg>
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-hive-500 text-dark-1000 text-[10px] font-bold rounded-full flex items-center justify-center">
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </span>
-              )}
-            </Link>
+            <NotificationDropdown />
             <UserButton />
           </div>
         </header>
