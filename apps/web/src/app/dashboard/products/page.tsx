@@ -9,6 +9,9 @@ import { AddProductModal } from "@/components/products/AddProductModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import PriceTrend from "@/components/PriceTrend";
+import TagFilterBar from "@/components/TagFilterBar";
+import TagManagerModal from "@/components/TagManagerModal";
+import ProductTagSelector from "@/components/ProductTagSelector";
 
 interface CompetitorItem {
   id?: string;
@@ -36,6 +39,7 @@ interface ProductItem {
   trend?: TrendData | null;
   competitorCount?: number;
   competitors?: CompetitorItem[];
+  tags?: { tag: { id: string; name: string; color: string } }[];
 }
 
 function timeAgo(dateStr: string): string {
@@ -59,6 +63,8 @@ export default function ProductsPage() {
   const [url, setUrl] = useState("");
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState("");
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [showTagManager, setShowTagManager] = useState(false);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -181,6 +187,13 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Tag Filter Bar */}
+      <TagFilterBar
+        selectedTagId={selectedTagId}
+        onSelectTag={setSelectedTagId}
+        onManageTags={() => setShowTagManager(true)}
+      />
+
       {/* Loading State */}
       {loading && (
         <div className="grid gap-4">
@@ -218,87 +231,117 @@ export default function ProductsPage() {
       {/* Product List */}
       {!loading && !error && products.length > 0 && (
         <div className="grid gap-4">
-          {products.map((product) => {
-            const myPrice = product.current_price ? Number(product.current_price) : null;
-            const competitorCount = product.competitorCount ?? product.competitors?.length ?? 0;
+          {products
+            .filter((p) =>
+              selectedTagId ? p.tags?.some((pt) => pt.tag?.id === selectedTagId) : true,
+            )
+            .map((product) => {
+              const myPrice = product.current_price ? Number(product.current_price) : null;
+              const competitorCount = product.competitorCount ?? product.competitors?.length ?? 0;
 
-            return (
-              <Link
-                key={product.id}
-                href={`/dashboard/products/${product.id}`}
-                className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5 flex items-center gap-4 hover:border-amber-500/20 transition group"
-              >
-                <div className="w-12 h-12 bg-[#1F1F23] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
-                  {product.product_image ? (
-                    <img
-                      src={product.product_image}
-                      alt=""
-                      className="w-full h-full object-cover rounded-xl"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <span className="text-gray-500 text-lg">📦</span>
-                  )}
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
-                    {product.product_name || "İsimsiz Ürün"}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <MarketplaceBadge marketplace={product.marketplace} />
-                    {competitorCount > 0 && (
-                      <span className="text-xs text-gray-600">{competitorCount} rakip</span>
-                    )}
-                    {product.last_scraped_at && (
-                      <span className="text-xs text-gray-600">
-                        · {timeAgo(product.last_scraped_at)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="text-right shrink-0">
-                  <div className="text-white font-semibold">
-                    {myPrice
-                      ? `₺${myPrice.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`
-                      : "—"}
-                  </div>
-                  <div className="mt-1">
-                    {product.trend ? (
-                      <PriceTrend
-                        priceChange={product.trend.priceChange}
-                        priceChangePct={product.trend.priceChangePct}
-                        size="sm"
+              return (
+                <Link
+                  key={product.id}
+                  href={`/dashboard/products/${product.id}`}
+                  className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5 flex items-center gap-4 hover:border-amber-500/20 transition group"
+                >
+                  <div className="w-12 h-12 bg-[#1F1F23] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+                    {product.product_image ? (
+                      <img
+                        src={product.product_image}
+                        alt=""
+                        className="w-full h-full object-cover rounded-xl"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
                       />
                     ) : (
-                      <span className="text-xs text-gray-600">
-                        {product.status === "ACTIVE"
-                          ? "Aktif"
-                          : product.status === "ERROR"
-                            ? "Hata"
-                            : "Bekliyor"}
-                      </span>
+                      <span className="text-gray-500 text-lg">📦</span>
                     )}
                   </div>
-                </div>
 
-                <svg
-                  className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </Link>
-            );
-          })}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
+                      {product.product_name || "İsimsiz Ürün"}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <MarketplaceBadge marketplace={product.marketplace} />
+                      {competitorCount > 0 && (
+                        <span className="text-xs text-gray-600">{competitorCount} rakip</span>
+                      )}
+                      {product.last_scraped_at && (
+                        <span className="text-xs text-gray-600">
+                          · {timeAgo(product.last_scraped_at)}
+                        </span>
+                      )}
+                      {product.tags?.map((pt) => {
+                        const tag = pt.tag;
+                        if (!tag) return null;
+                        return (
+                          <span
+                            key={tag.id}
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+                            style={{
+                              backgroundColor: `${tag.color}15`,
+                              color: tag.color,
+                            }}
+                          >
+                            {tag.name}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-white font-semibold">
+                      {myPrice
+                        ? `₺${myPrice.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`
+                        : "—"}
+                    </div>
+                    <div className="mt-1">
+                      {product.trend ? (
+                        <PriceTrend
+                          priceChange={product.trend.priceChange}
+                          priceChangePct={product.trend.priceChangePct}
+                          size="sm"
+                        />
+                      ) : (
+                        <span className="text-xs text-gray-600">
+                          {product.status === "ACTIVE"
+                            ? "Aktif"
+                            : product.status === "ERROR"
+                              ? "Hata"
+                              : "Bekliyor"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <ProductTagSelector
+                    productId={product.id}
+                    currentTagIds={
+                      product.tags
+                        ?.map((pt) => pt.tag?.id)
+                        .filter((id): id is string => Boolean(id)) || []
+                    }
+                    onUpdated={fetchProducts}
+                  />
+
+                  <svg
+                    className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </Link>
+              );
+            })}
         </div>
       )}
 
@@ -325,6 +368,10 @@ export default function ProductsPage() {
             fetchProducts();
           }}
         />
+      )}
+
+      {showTagManager && (
+        <TagManagerModal onClose={() => setShowTagManager(false)} onUpdated={fetchProducts} />
       )}
     </div>
   );

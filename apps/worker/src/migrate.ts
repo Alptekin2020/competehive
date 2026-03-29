@@ -125,6 +125,36 @@ export async function runMigrations() {
 
     console.log("✅ Step 3.2 migration: match quality columns added");
 
+    // Step 4.3: Tags system
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "tags" (
+        "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+        "user_id" UUID NOT NULL,
+        "name" TEXT NOT NULL,
+        "color" TEXT NOT NULL DEFAULT '#F59E0B',
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "tags_pkey" PRIMARY KEY ("id"),
+        CONSTRAINT "tags_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "tags_user_id_name_key"
+      ON "tags"("user_id", "name")
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "product_tags" (
+        "product_id" UUID NOT NULL,
+        "tag_id" UUID NOT NULL,
+        CONSTRAINT "product_tags_pkey" PRIMARY KEY ("product_id", "tag_id"),
+        CONSTRAINT "product_tags_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "tracked_products"("id") ON DELETE CASCADE,
+        CONSTRAINT "product_tags_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "tags"("id") ON DELETE CASCADE
+      )
+    `);
+
+    console.log("✅ Step 4.3 migration: tags system tables created");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
