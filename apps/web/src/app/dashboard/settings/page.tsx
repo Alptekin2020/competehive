@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [planData, setPlanData] = useState<{
     plan: string;
     maxProducts: number;
+    hasWhopMembership?: boolean;
     memberSince: string;
     usage: {
       products: number;
@@ -239,6 +240,16 @@ export default function SettingsPage() {
                   >
                     Yükselt
                   </Link>
+                )}
+                {planData.hasWhopMembership && (
+                  <a
+                    href="https://whop.com/orders"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-gray-400 hover:text-white transition"
+                  >
+                    Aboneliği Yönet (Whop) →
+                  </a>
                 )}
               </div>
 

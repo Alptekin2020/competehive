@@ -15,6 +15,7 @@ export async function GET() {
         plan: true,
         maxProducts: true,
         stripeCustomerId: true,
+        whopMembershipId: true,
         createdAt: true,
       },
     });
@@ -47,6 +48,7 @@ export async function GET() {
       plan: userRecord.plan,
       maxProducts: userRecord.maxProducts,
       hasStripe: !!userRecord.stripeCustomerId,
+      hasWhopMembership: !!userRecord.whopMembershipId,
       memberSince: userRecord.createdAt,
       usage: {
         products: productCount,

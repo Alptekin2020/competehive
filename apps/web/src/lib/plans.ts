@@ -3,6 +3,8 @@ export interface PlanInfo {
   name: string;
   price: number; // Monthly in TRY
   yearlyPrice: number; // Monthly price when billed yearly
+  whopPlanId: string | null; // Whop plan_xxxxx ID (null for FREE)
+  whopYearlyPlanId: string | null; // Whop yearly plan ID
   maxProducts: number;
   scrapeInterval: string;
   marketplaces: string;
@@ -19,6 +21,8 @@ export const PLANS: PlanInfo[] = [
     name: "Ücretsiz",
     price: 0,
     yearlyPrice: 0,
+    whopPlanId: null,
+    whopYearlyPlanId: null,
     maxProducts: 5,
     scrapeInterval: "Günde 1",
     marketplaces: "1 marketplace",
@@ -38,6 +42,8 @@ export const PLANS: PlanInfo[] = [
     name: "Başlangıç",
     price: 299,
     yearlyPrice: 249,
+    whopPlanId: process.env.NEXT_PUBLIC_WHOP_STARTER_PLAN_ID || "plan_STARTER_PLACEHOLDER",
+    whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID || null,
     maxProducts: 50,
     scrapeInterval: "Saatte 1",
     marketplaces: "2 marketplace",
@@ -60,6 +66,8 @@ export const PLANS: PlanInfo[] = [
     name: "Profesyonel",
     price: 799,
     yearlyPrice: 649,
+    whopPlanId: process.env.NEXT_PUBLIC_WHOP_PRO_PLAN_ID || "plan_PRO_PLACEHOLDER",
+    whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID || null,
     maxProducts: 500,
     scrapeInterval: "15 dakika",
     marketplaces: "Tüm marketplace'ler",
@@ -82,6 +90,8 @@ export const PLANS: PlanInfo[] = [
     name: "Kurumsal",
     price: 1999,
     yearlyPrice: 1599,
+    whopPlanId: process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID || "plan_ENTERPRISE_PLACEHOLDER",
+    whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID || null,
     maxProducts: 99999,
     scrapeInterval: "5 dakika",
     marketplaces: "Tüm marketplace'ler",
@@ -108,4 +118,28 @@ export function getPlanById(planId: string): PlanInfo | undefined {
 export function isUpgrade(currentPlan: string, targetPlan: string): boolean {
   const order = ["FREE", "STARTER", "PRO", "ENTERPRISE"];
   return order.indexOf(targetPlan) > order.indexOf(currentPlan);
+}
+
+// Map Whop plan IDs back to CompeteHive plan IDs
+export function getCompeteHivePlanByWhopId(whopPlanId: string): string {
+  for (const plan of PLANS) {
+    if (plan.whopPlanId === whopPlanId || plan.whopYearlyPlanId === whopPlanId) {
+      return plan.id;
+    }
+  }
+  return "FREE"; // fallback
+}
+
+// Get plan limits by plan ID
+export function getPlanLimits(planId: string): { maxProducts: number; scrapeInterval: number } {
+  switch (planId) {
+    case "STARTER":
+      return { maxProducts: 50, scrapeInterval: 60 };
+    case "PRO":
+      return { maxProducts: 500, scrapeInterval: 15 };
+    case "ENTERPRISE":
+      return { maxProducts: 99999, scrapeInterval: 5 };
+    default:
+      return { maxProducts: 5, scrapeInterval: 1440 };
+  }
 }
