@@ -1,17 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-
-const PLAN_DETAILS: Record<string, { name: string; desc: string; products: number }> = {
-  FREE: { name: "Free", desc: "5 ürün takibi, günde 1 tarama", products: 5 },
-  STARTER: { name: "Starter", desc: "50 ürün takibi, saatte 1 tarama", products: 50 },
-  PRO: { name: "Pro", desc: "500 ürün takibi, 15 dk tarama", products: 500 },
-  ENTERPRISE: {
-    name: "Enterprise",
-    desc: "Sınırsız ürün, 5 dk tarama, API erişimi",
-    products: 9999,
-  },
-};
+import Link from "next/link";
+import { getPlanById } from "@/lib/plans";
 
 export default function SettingsPage() {
   const [telegramId, setTelegramId] = useState("");
@@ -23,6 +14,18 @@ export default function SettingsPage() {
   const [plan, setPlan] = useState("FREE");
   const [maxProducts, setMaxProducts] = useState(5);
   const [email, setEmail] = useState("");
+  const [planData, setPlanData] = useState<{
+    plan: string;
+    maxProducts: number;
+    memberSince: string;
+    usage: {
+      products: number;
+      competitors: number;
+      alertRules: number;
+      notifications: number;
+      marketplaces: number;
+    };
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -38,6 +41,16 @@ export default function SettingsPage() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    fetch("/api/user/plan")
+      .then((res) => res.json())
+      .then((data) => {
+        const d = data.data || data;
+        if (!d.error) {
+          setPlanData(d);
+        }
+      })
+      .catch(console.error);
   }, []);
 
   const handleSave = async () => {
@@ -66,8 +79,6 @@ export default function SettingsPage() {
       setSaving(false);
     }
   };
-
-  const planInfo = PLAN_DETAILS[plan] || PLAN_DETAILS.FREE;
 
   if (loading) {
     return (
@@ -196,27 +207,125 @@ export default function SettingsPage() {
           </button>
         </div>
 
-        {/* Plan Bilgisi */}
+        {/* Plan & Usage */}
         <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Abonelik</h2>
-          <div className="flex items-center justify-between p-4 bg-dark-950 rounded-xl">
-            <div>
-              <p className="text-sm font-medium text-white">
-                Mevcut Plan: <span className="text-hive-500">{planInfo.name}</span>
-              </p>
-              <p className="text-xs text-dark-500 mt-1">{planInfo.desc}</p>
-              <p className="text-xs text-dark-500 mt-1">
-                Ürün limiti: {maxProducts === 9999 ? "Sınırsız" : maxProducts}
-              </p>
-            </div>
-            {plan !== "ENTERPRISE" && (
-              <button className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2.5 rounded-xl text-sm font-semibold transition">
-                Planı Yükselt
-              </button>
-            )}
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">Abonelik</h2>
+            <Link
+              href="/dashboard/pricing"
+              className="text-sm text-hive-500 hover:text-hive-400 font-medium transition"
+            >
+              Planları Gör →
+            </Link>
           </div>
+
+          {planData ? (
+            <div>
+              {/* Current plan badge */}
+              <div className="flex items-center gap-3 p-4 bg-dark-950 rounded-xl mb-4">
+                <div className="w-10 h-10 bg-hive-500/10 rounded-xl flex items-center justify-center">
+                  <span className="text-hive-500 text-lg font-bold">
+                    {getPlanById(planData.plan)?.name.charAt(0) || "F"}
+                  </span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-white font-medium">
+                    {getPlanById(planData.plan)?.name || planData.plan} Plan
+                  </p>
+                  <p className="text-dark-500 text-xs">
+                    {new Date(planData.memberSince).toLocaleDateString("tr-TR")} tarihinden beri üye
+                  </p>
+                </div>
+                {planData.plan !== "ENTERPRISE" && (
+                  <Link
+                    href="/dashboard/pricing"
+                    className="bg-hive-500 hover:bg-hive-400 text-dark-1000 px-4 py-2 rounded-xl text-sm font-semibold transition"
+                  >
+                    Yükselt
+                  </Link>
+                )}
+              </div>
+
+              {/* Usage bars */}
+              <div className="space-y-4">
+                <UsageBar
+                  label="Ürün Takibi"
+                  current={planData.usage.products}
+                  max={planData.maxProducts}
+                />
+
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">Kullanılan Marketplace</span>
+                  <span className="text-white text-sm font-medium">
+                    {planData.usage.marketplaces}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">Aktif Uyarı Kuralı</span>
+                  <span className="text-white text-sm font-medium">
+                    {planData.usage.alertRules}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">Tespit Edilen Rakip</span>
+                  <span className="text-white text-sm font-medium">
+                    {planData.usage.competitors}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="animate-pulse space-y-3">
+              <div className="h-16 bg-dark-800 rounded-xl" />
+              <div className="h-4 bg-dark-800 rounded w-2/3" />
+              <div className="h-4 bg-dark-800 rounded w-1/2" />
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function UsageBar({ label, current, max }: { label: string; current: number; max: number }) {
+  const percentage = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
+  const isNearLimit = percentage >= 80;
+  const isAtLimit = percentage >= 100;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-dark-400 text-sm">{label}</span>
+        <span
+          className={`text-sm font-medium ${isAtLimit ? "text-red-400" : isNearLimit ? "text-amber-400" : "text-white"}`}
+        >
+          {current} / {max >= 99999 ? "\u221E" : max}
+        </span>
+      </div>
+      <div className="h-2 bg-dark-800 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${
+            isAtLimit ? "bg-red-500" : isNearLimit ? "bg-amber-500" : "bg-green-500"
+          }`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      {isNearLimit && !isAtLimit && (
+        <p className="text-amber-400 text-xs mt-1">Limitinize yaklaşıyorsunuz</p>
+      )}
+      {isAtLimit && (
+        <p className="text-red-400 text-xs mt-1">
+          Limitinize ulaştınız.{" "}
+          <Link
+            href="/dashboard/pricing"
+            className="underline hover:text-red-300"
+          >
+            Planı yükseltin
+          </Link>
+        </p>
+      )}
     </div>
   );
 }
