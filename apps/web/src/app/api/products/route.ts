@@ -12,6 +12,7 @@ import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/
 import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
+import { getPlanFeatures } from "@/lib/plan-gates";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
@@ -112,6 +113,29 @@ export async function POST(req: NextRequest) {
     });
     if (productCount >= user.maxProducts) {
       return forbidden(`Urun limitinize ulastiniz (${user.maxProducts}). Planinizi yukseltin.`);
+    }
+
+    // Marketplace limit check
+    const features = getPlanFeatures(user.plan);
+    if (features.marketplaceLimit < 99) {
+      const usedMarketplaces = await prisma.trackedProduct.groupBy({
+        by: ["marketplace"],
+        where: { userId: user.id },
+      });
+
+      const alreadyUsing = usedMarketplaces.some(
+        (m) => m.marketplace === (marketplace as Marketplace),
+      );
+
+      if (!alreadyUsing && usedMarketplaces.length >= features.marketplaceLimit) {
+        return new Response(
+          JSON.stringify({
+            error: `Mevcut planınızla en fazla ${features.marketplaceLimit} marketplace kullanabilirsiniz. Daha fazlası için planınızı yükseltin.`,
+            upgradeRequired: true,
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      }
     }
 
     // 1. Urun sayfasini scrape et

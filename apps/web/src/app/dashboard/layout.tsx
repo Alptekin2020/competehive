@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UserButton } from "@clerk/nextjs";
 import NotificationDropdown from "@/components/NotificationDropdown";
 
@@ -118,6 +118,23 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarPlan, setSidebarPlan] = useState<{
+    plan: string;
+    features: { maxProducts: number; [key: string]: unknown };
+    usage: { products: number; [key: string]: unknown };
+  } | null>(null);
+
+  useEffect(() => {
+    async function fetchPlan() {
+      try {
+        const res = await fetch("/api/user/features");
+        if (res.ok) setSidebarPlan(await res.json());
+      } catch {
+        // silently fail
+      }
+    }
+    fetchPlan();
+  }, []);
 
   return (
     <div className="min-h-screen bg-dark-1000 flex">
@@ -162,15 +179,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-dark-400">Mevcut Plan</span>
                 <span className="text-xs font-semibold text-hive-500 bg-hive-500/10 px-2 py-0.5 rounded-full">
-                  FREE
+                  {sidebarPlan?.plan || "FREE"}
                 </span>
               </div>
-              <p className="text-xs text-dark-500 mb-3">5 üründen 0 kullanılıyor</p>
+              <p className="text-xs text-dark-500 mb-3">
+                {sidebarPlan
+                  ? `${sidebarPlan.features.maxProducts >= 99999 ? "\u221E" : sidebarPlan.features.maxProducts} üründen ${sidebarPlan.usage.products} kullanılıyor`
+                  : "Yükleniyor..."}
+              </p>
+              {/* Progress bar */}
+              {sidebarPlan && sidebarPlan.features.maxProducts < 99999 && (
+                <div className="h-1 bg-dark-800 rounded-full overflow-hidden mb-3">
+                  <div
+                    className={`h-full rounded-full ${
+                      sidebarPlan.usage.products >= sidebarPlan.features.maxProducts
+                        ? "bg-red-500"
+                        : sidebarPlan.usage.products >= sidebarPlan.features.maxProducts * 0.8
+                          ? "bg-amber-500"
+                          : "bg-green-500"
+                    }`}
+                    style={{
+                      width: `${Math.min(100, (sidebarPlan.usage.products / sidebarPlan.features.maxProducts) * 100)}%`,
+                    }}
+                  />
+                </div>
+              )}
               <Link
                 href="/dashboard/pricing"
                 className="block text-center text-xs font-semibold text-dark-1000 bg-hive-500 hover:bg-hive-600 py-2 rounded-lg transition"
               >
-                Planı Yükselt
+                {sidebarPlan?.plan === "ENTERPRISE" ? "Planı Yönet" : "Planı Yükselt"}
               </Link>
             </div>
           </div>

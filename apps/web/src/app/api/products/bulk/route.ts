@@ -6,6 +6,7 @@ import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/
 import { z } from "zod";
 import { PLAN_LIMITS } from "@competehive/shared";
 import { Marketplace } from "@prisma/client";
+import { getPlanFeatures } from "@/lib/plan-gates";
 
 const bulkSchema = z.object({
   urls: z
@@ -26,6 +27,18 @@ export async function POST(req: NextRequest) {
     }
 
     const { urls } = parsed.data;
+
+    // Plan-based bulk import check
+    const features = getPlanFeatures(user.plan);
+    if (!features.hasBulkImport) {
+      return new Response(
+        JSON.stringify({
+          error: "Toplu ürün ekleme özelliği Başlangıç ve üzeri planlarda kullanılabilir.",
+          upgradeRequired: true,
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     // Check product limit
     const currentCount = await prisma.trackedProduct.count({

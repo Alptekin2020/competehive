@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { z } from "zod";
+import { getPlanFeatures } from "@/lib/plan-gates";
 
 // GET /api/tags — list user's tags with product counts
 export async function GET() {
@@ -48,6 +49,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.errors[0].message }, { status: 400 });
     }
 
+    // Plan-based tag system check
+    const userRecord = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { plan: true },
+    });
+    const features = getPlanFeatures(userRecord?.plan || "FREE");
+
+    if (!features.hasTagSystem) {
+      return NextResponse.json(
+        {
+          error: "Etiketleme sistemi Başlangıç ve üzeri planlarda kullanılabilir.",
+          upgradeRequired: true,
+        },
+        { status: 403 },
+      );
+    }
+
     // Check for duplicate name
     const existing = await prisma.tag.findUnique({
       where: { userId_name: { userId: user.id, name: parsed.data.name } },
@@ -56,10 +74,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Bu etiket adı zaten mevcut" }, { status: 409 });
     }
 
-    // Limit: max 20 tags per user
+    // Plan-based tag limit
     const tagCount = await prisma.tag.count({ where: { userId: user.id } });
-    if (tagCount >= 20) {
-      return NextResponse.json({ error: "En fazla 20 etiket oluşturabilirsiniz" }, { status: 403 });
+    if (tagCount >= features.maxTags) {
+      return NextResponse.json(
+        { error: `Mevcut planınızla en fazla ${features.maxTags} etiket oluşturabilirsiniz.` },
+        { status: 403 },
+      );
     }
 
     const tag = await prisma.tag.create({
