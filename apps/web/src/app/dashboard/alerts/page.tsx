@@ -193,10 +193,10 @@ export default function AlertsPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Uyarılar</h1>
-          <p className="text-dark-500 text-sm">Fiyat değişikliği uyarı kurallarınızı yönetin.</p>
+      <div className="flex items-center justify-between mb-6 sm:mb-8">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Uyarılar</h1>
+          <p className="text-dark-500 text-xs sm:text-sm">Fiyat değişikliği uyarı kurallarınızı yönetin.</p>
         </div>
         {rules.length > 0 && (
           <button
@@ -268,18 +268,19 @@ export default function AlertsPage() {
             return (
               <div
                 key={rule.id}
-                className={`bg-dark-900 border border-dark-800 rounded-2xl p-5 transition ${
+                className={`bg-dark-900 border border-dark-800 rounded-2xl p-4 sm:p-5 transition ${
                   rule.isActive ? "" : "opacity-50"
                 }`}
               >
-                <div className="flex items-start gap-4">
-                  {/* Icon */}
-                  <div className="w-10 h-10 bg-hive-500/10 rounded-xl flex items-center justify-center text-lg shrink-0">
-                    {ruleConfig?.icon || "🔔"}
-                  </div>
+                <div className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4">
+                  {/* Icon + Content row */}
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className="w-10 h-10 bg-hive-500/10 rounded-xl flex items-center justify-center text-lg shrink-0">
+                      {ruleConfig?.icon || "🔔"}
+                    </div>
 
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <h3 className="text-white font-medium text-sm">
                         {ruleConfig?.label || rule.ruleType}
@@ -337,8 +338,10 @@ export default function AlertsPage() {
                     </div>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  </div>
+
+                  {/* Actions — on mobile, align right in a row */}
+                  <div className="flex items-center gap-3 sm:gap-2 shrink-0 self-end sm:self-auto">
                     {/* Toggle */}
                     <button
                       onClick={() => handleToggle(rule.id)}
@@ -388,12 +391,12 @@ export default function AlertsPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
           <div
             className="fixed inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setDeleteConfirmId(null)}
           />
-          <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6 w-full max-w-sm relative z-10">
+          <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-sm relative z-10 safe-bottom">
             <h2 className="text-lg font-bold text-white mb-2">Uyarıyı Sil</h2>
             <p className="text-dark-500 text-sm mb-6">
               Bu uyarı kuralını silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.
@@ -516,13 +519,13 @@ function CreateAlertModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6 w-full max-w-lg relative z-10 max-h-[90vh] overflow-y-auto">
+      <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-lg relative z-10 max-h-[85vh] overflow-y-auto safe-bottom">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-bold text-white">Yeni Uyarı Kuralı</h2>
-          <button onClick={onClose} className="text-dark-500 hover:text-white transition">
+          <button onClick={onClose} className="text-dark-500 hover:text-white transition p-2 -m-1">
             <svg
               className="w-5 h-5"
               viewBox="0 0 24 24"

@@ -40,11 +40,11 @@ export default function TagFilterBar({
   if (tags.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1 scrollbar-hide">
+    <div className="flex items-center gap-2 mb-4 sm:mb-6 overflow-x-auto pb-1 scrollbar-hide">
       {/* All */}
       <button
         onClick={() => onSelectTag(null)}
-        className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition border ${
+        className={`shrink-0 px-3 py-2 rounded-lg text-xs font-medium transition border ${
           selectedTagId === null
             ? "bg-amber-500/10 text-amber-500 border-amber-500/30"
             : "text-gray-500 border-[#1F1F23] hover:text-white hover:border-[#2F2F33]"
@@ -58,7 +58,7 @@ export default function TagFilterBar({
         <button
           key={tag.id}
           onClick={() => onSelectTag(selectedTagId === tag.id ? null : tag.id)}
-          className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition border ${
+          className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition border ${
             selectedTagId === tag.id
               ? "border-opacity-50 bg-opacity-10"
               : "border-[#1F1F23] text-gray-500 hover:text-white hover:border-[#2F2F33]"

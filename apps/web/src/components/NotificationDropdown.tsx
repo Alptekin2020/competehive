@@ -139,7 +139,7 @@ export default function NotificationDropdown() {
       {/* Bell Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative text-dark-400 hover:text-white transition p-1"
+        className="relative text-dark-400 hover:text-white transition p-2"
       >
         <svg
           className="w-5 h-5"
@@ -164,7 +164,11 @@ export default function NotificationDropdown() {
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-96 bg-dark-950 border border-dark-800 rounded-2xl shadow-2xl shadow-black/50 z-50 overflow-hidden">
+        <>
+        {/* Mobile overlay */}
+        <div className="fixed inset-0 bg-black/40 z-40 sm:hidden" onClick={() => setIsOpen(false)} />
+
+        <div className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 bg-dark-950 border border-dark-800 rounded-2xl shadow-2xl shadow-black/50 z-50 overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800">
             <h3 className="text-white font-semibold text-sm">Bildirimler</h3>
@@ -179,7 +183,7 @@ export default function NotificationDropdown() {
           </div>
 
           {/* Notification List */}
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-[60vh] sm:max-h-96 overflow-y-auto">
             {loading && notifications.length === 0 && (
               <div className="p-8 text-center">
                 <div className="animate-spin w-5 h-5 border-2 border-hive-500 border-t-transparent rounded-full mx-auto" />
@@ -263,6 +267,7 @@ export default function NotificationDropdown() {
             </Link>
           </div>
         </div>
+        </>
       )}
     </div>
   );

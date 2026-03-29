@@ -272,36 +272,38 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Ürün Başlık Kartı */}
-      <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6 mb-6">
-        <div className="flex items-start gap-4">
-          {product.productImage && (
-            <img
-              src={product.productImage}
-              alt={product.productName}
-              className="w-16 h-16 object-cover rounded-lg border border-[#1F1F23] flex-shrink-0"
-            />
-          )}
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-bold text-white truncate">{product.productName}</h1>
-            <a
-              href={product.productUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-amber-400 hover:text-amber-300 text-sm mt-1 inline-block truncate max-w-md"
-            >
-              {product.productUrl}
-            </a>
-            {product.refreshCompletedAt && (
-              <p className="text-xs text-gray-500 mt-1">
-                Son yenileme: {new Date(product.refreshCompletedAt).toLocaleString("tr-TR")}
-              </p>
+      <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4 sm:p-6 mb-4 sm:mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4">
+          <div className="flex items-start gap-3 sm:gap-4 flex-1 min-w-0">
+            {product.productImage && (
+              <img
+                src={product.productImage}
+                alt={product.productName}
+                className="w-12 h-12 sm:w-16 sm:h-16 object-cover rounded-lg border border-[#1F1F23] flex-shrink-0"
+              />
             )}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg sm:text-xl font-bold text-white truncate">{product.productName}</h1>
+              <a
+                href={product.productUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-amber-400 hover:text-amber-300 text-xs sm:text-sm mt-1 inline-block truncate max-w-full sm:max-w-md"
+              >
+                {product.productUrl}
+              </a>
+              {product.refreshCompletedAt && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Son yenileme: {new Date(product.refreshCompletedAt).toLocaleString("tr-TR")}
+                </p>
+              )}
+            </div>
           </div>
-          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+          <div className="flex items-center sm:flex-col sm:items-end gap-3 sm:gap-2 flex-shrink-0">
             {ownPrice && ownPrice > 0 && (
-              <div className="text-right">
-                <p className="text-xs text-gray-500 mb-1">Benim Fiyatım</p>
-                <p className="text-2xl font-bold text-amber-400">
+              <div className="text-left sm:text-right">
+                <p className="text-xs text-gray-500 mb-0.5 sm:mb-1">Benim Fiyatım</p>
+                <p className="text-xl sm:text-2xl font-bold text-amber-400">
                   {formatPrice(ownPrice, product.currency)}
                 </p>
               </div>
@@ -316,7 +318,7 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Stats Kartları */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
           <p className="text-gray-400 text-xs mb-1">En Düşük Fiyat</p>
           <p className="text-lg font-bold text-green-400">
@@ -358,7 +360,7 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Chart + Competitors Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Price Chart Section */}
         <div className="lg:col-span-2">
           {priceHistory.length === 0 ? (
@@ -383,11 +385,12 @@ export default function ProductDetailPage() {
               </p>
             </div>
           ) : (
-            <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6">
+            <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4 sm:p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-semibold text-white">Fiyat Geçmişi</h2>
               </div>
-              <ResponsiveContainer width="100%" height={280}>
+              <div className="h-48 sm:h-72">
+              <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1F1F23" />
                   <XAxis
@@ -428,6 +431,7 @@ export default function ProductDetailPage() {
                   ))}
                 </LineChart>
               </ResponsiveContainer>
+              </div>
             </div>
           )}
         </div>

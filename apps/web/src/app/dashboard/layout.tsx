@@ -123,9 +123,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-dark-1000 flex">
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 bg-dark-950 border-r border-dark-800 transform transition-transform lg:translate-x-0 lg:static ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+        className={`fixed inset-y-0 left-0 z-40 w-64 bg-dark-950 border-r border-dark-800 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full safe-bottom">
           {/* Logo */}
           <div className="h-16 flex items-center gap-2 px-6 border-b border-dark-800">
             <Link href="/" className="flex items-center gap-2">
@@ -188,10 +188,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Main */}
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Top Bar */}
-        <header className="h-16 border-b border-dark-800 flex items-center justify-between px-6 bg-dark-950/50 backdrop-blur-xl sticky top-0 z-20">
+        <header className="h-14 sm:h-16 border-b border-dark-800 flex items-center justify-between px-4 sm:px-6 bg-dark-950/50 backdrop-blur-xl sticky top-0 z-20">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden text-dark-400 hover:text-white"
+            className="lg:hidden text-dark-400 hover:text-white p-2 -ml-2"
           >
             <svg
               className="w-6 h-6"
@@ -213,7 +213,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         {/* Content */}
-        <main className="flex-1 p-6">{children}</main>
+        <main className="flex-1 p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

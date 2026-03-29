@@ -143,10 +143,10 @@ export default function NotificationsPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Bildirimler</h1>
-          <p className="text-dark-500 text-sm">
+      <div className="flex items-center justify-between mb-6 sm:mb-8">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Bildirimler</h1>
+          <p className="text-dark-500 text-xs sm:text-sm">
             {unreadCount > 0 ? `${unreadCount} okunmamış bildiriminiz var` : "Tüm bildirimleriniz"}
           </p>
         </div>
@@ -161,10 +161,10 @@ export default function NotificationsPage() {
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex gap-1 mb-6 bg-dark-900 border border-dark-800 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 mb-4 sm:mb-6 bg-dark-900 border border-dark-800 rounded-xl p-1 w-fit">
         <button
           onClick={() => setFilter("all")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+          className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
             filter === "all" ? "bg-hive-500/10 text-hive-500" : "text-dark-500 hover:text-white"
           }`}
         >
@@ -172,7 +172,7 @@ export default function NotificationsPage() {
         </button>
         <button
           onClick={() => setFilter("unread")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+          className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
             filter === "unread" ? "bg-hive-500/10 text-hive-500" : "text-dark-500 hover:text-white"
           }`}
         >
@@ -265,7 +265,7 @@ export default function NotificationsPage() {
             return (
               <div
                 key={notification.id}
-                className={`bg-dark-900 border rounded-2xl p-4 transition cursor-pointer hover:border-dark-700 ${
+                className={`bg-dark-900 border rounded-xl sm:rounded-2xl p-3 sm:p-4 transition cursor-pointer hover:border-dark-700 ${
                   !notification.is_read
                     ? "border-hive-500/20 bg-hive-500/[0.02]"
                     : "border-dark-800"
@@ -274,9 +274,9 @@ export default function NotificationsPage() {
                   if (!notification.is_read) markAsRead(notification.id);
                 }}
               >
-                <div className="flex gap-4">
+                <div className="flex gap-3 sm:gap-4">
                   {/* Icon */}
-                  <div className="w-10 h-10 rounded-xl bg-hive-500/10 flex items-center justify-center shrink-0 text-lg">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-hive-500/10 flex items-center justify-center shrink-0 text-sm sm:text-lg">
                     {icon}
                   </div>
 
@@ -296,10 +296,15 @@ export default function NotificationsPage() {
                         </div>
                         <p className="text-dark-500 text-sm mt-1">{notification.message}</p>
                       </div>
-                      <span className="text-dark-600 text-xs shrink-0 whitespace-nowrap">
+                      <span className="text-dark-600 text-[10px] sm:text-xs shrink-0 whitespace-nowrap hidden sm:block">
                         {formatDate(notification.sent_at)}
                       </span>
                     </div>
+
+                    {/* Timestamp — mobile only below message */}
+                    <span className="text-dark-600 text-[10px] mt-1 block sm:hidden">
+                      {formatDate(notification.sent_at)}
+                    </span>
 
                     {/* Meta info */}
                     <div className="flex items-center gap-2 mt-2">

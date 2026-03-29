@@ -16,17 +16,17 @@ export function AddProductModal({
   onClose,
 }: AddProductModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-6">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm"
         onClick={() => !loading && onClose()}
       />
-      <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6 w-full max-w-lg relative z-10">
+      <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-lg relative z-10 max-h-[85vh] overflow-y-auto safe-bottom">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-bold text-white">Urun Ekle</h2>
           <button
             onClick={() => !loading && onClose()}
-            className="text-dark-500 hover:text-white transition"
+            className="text-dark-500 hover:text-white transition p-2 -m-1"
           >
             <svg
               className="w-5 h-5"

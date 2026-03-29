@@ -138,18 +138,19 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Ürünler</h1>
-          <p className="text-dark-500 text-sm">
-            Takip ettiğiniz ürünleri ve rakip fiyatlarını yönetin.
+      <div className="flex items-center justify-between mb-6 sm:mb-8">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Ürünler</h1>
+          <p className="text-dark-500 text-xs sm:text-sm">
+            Takip ettiğiniz ürünleri yönetin.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 ml-4">
           {/* Bulk Import Button */}
           <button
             onClick={() => setShowBulkModal(true)}
-            className="inline-flex items-center gap-2 border border-[#1F1F23] hover:border-amber-500/30 text-gray-400 hover:text-white px-4 py-2.5 rounded-xl font-medium text-sm transition"
+            className="inline-flex items-center gap-2 border border-[#1F1F23] hover:border-amber-500/30 text-gray-400 hover:text-white p-2.5 sm:px-4 sm:py-2.5 rounded-xl font-medium text-sm transition"
+            title="Toplu Ekle"
           >
             <svg
               className="w-4 h-4"
@@ -164,13 +165,13 @@ export default function ProductsPage() {
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            Toplu Ekle
+            <span className="hidden sm:inline">Toplu Ekle</span>
           </button>
 
           {/* Single Add Button */}
           <button
             onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
+            className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-3 sm:px-5 py-2.5 rounded-xl font-semibold text-sm transition"
           >
             <svg
               className="w-4 h-4"
@@ -182,7 +183,7 @@ export default function ProductsPage() {
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            Ürün Ekle
+            <span className="hidden sm:inline">Ürün Ekle</span>
           </button>
         </div>
       </div>
@@ -243,9 +244,9 @@ export default function ProductsPage() {
                 <Link
                   key={product.id}
                   href={`/dashboard/products/${product.id}`}
-                  className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5 flex items-center gap-4 hover:border-amber-500/20 transition group"
+                  className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4 hover:border-amber-500/20 transition group"
                 >
-                  <div className="w-12 h-12 bg-[#1F1F23] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1F1F23] rounded-lg sm:rounded-xl flex items-center justify-center overflow-hidden shrink-0">
                     {product.product_image ? (
                       <img
                         src={product.product_image}
@@ -261,16 +262,26 @@ export default function ProductsPage() {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
-                      {product.product_name || "İsimsiz Ürün"}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
+                        {product.product_name || "İsimsiz Ürün"}
+                      </h3>
+                      {/* Price — mobile only inline */}
+                      <div className="text-right shrink-0 sm:hidden">
+                        <div className="text-white font-semibold text-sm">
+                          {myPrice
+                            ? `₺${myPrice.toLocaleString("tr-TR")}`
+                            : "—"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <MarketplaceBadge marketplace={product.marketplace} />
                       {competitorCount > 0 && (
                         <span className="text-xs text-gray-600">{competitorCount} rakip</span>
                       )}
                       {product.last_scraped_at && (
-                        <span className="text-xs text-gray-600">
+                        <span className="text-xs text-gray-600 hidden sm:inline">
                           · {timeAgo(product.last_scraped_at)}
                         </span>
                       )}
@@ -290,10 +301,21 @@ export default function ProductsPage() {
                           </span>
                         );
                       })}
+                      {/* Trend — mobile only inline */}
+                      {product.trend && (
+                        <span className="sm:hidden">
+                          <PriceTrend
+                            priceChange={product.trend.priceChange}
+                            priceChangePct={product.trend.priceChangePct}
+                            size="sm"
+                          />
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  <div className="text-right shrink-0">
+                  {/* Desktop-only price + trend column */}
+                  <div className="text-right shrink-0 hidden sm:block">
                     <div className="text-white font-semibold">
                       {myPrice
                         ? `₺${myPrice.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`
@@ -329,7 +351,7 @@ export default function ProductsPage() {
                   />
 
                   <svg
-                    className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0"
+                    className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0 hidden sm:block"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
