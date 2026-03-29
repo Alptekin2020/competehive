@@ -3,6 +3,8 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { getWhopClient } from "@/lib/whop";
 import { PLANS, isUpgrade } from "@/lib/plans";
+import { applyRateLimit } from "@/lib/with-rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,6 +12,9 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
     }
+
+    const rateLimited = await applyRateLimit(req, user?.id || null, RATE_LIMITS.checkout);
+    if (rateLimited) return rateLimited;
 
     const body = await req.json();
     const { planId, billing = "monthly" } = body;

@@ -178,6 +178,46 @@ export async function runMigrations() {
 
     console.log("✅ Step 5.2 migration: whop membership fields added");
 
+    // Phase 6: Performance indexes
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_tracked_products_user_status"
+      ON "tracked_products"("user_id", "status")
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_price_history_product_scraped"
+      ON "price_history"("tracked_product_id", "scraped_at" DESC)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_competitors_product_marketplace"
+      ON "competitors"("tracked_product_id", "marketplace")
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_alert_rules_user_active"
+      ON "alert_rules"("user_id", "is_active")
+      WHERE "is_active" = true
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_notifications_user_unread"
+      ON "notifications"("user_id", "sent_at" DESC)
+      WHERE "is_read" = false
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_tags_user"
+      ON "tags"("user_id")
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "idx_product_tags_tag"
+      ON "product_tags"("tag_id")
+    `);
+
+    console.log("✅ Phase 6 migration: performance indexes added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);

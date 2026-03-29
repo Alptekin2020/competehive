@@ -1,3 +1,5 @@
+import { getCachedSerperResults, setCachedSerperResults } from "./utils/cache";
+
 export interface SerperShoppingResult {
   title: string;
   source: string; // KULLANMA — her zaman "google.com" döner
@@ -35,6 +37,11 @@ export function parsePrice(priceStr: string): number | null {
 }
 
 export async function searchProduct(query: string): Promise<SerperShoppingResult[]> {
+  // Check cache first
+  const cached = await getCachedSerperResults(query);
+  if (cached) return cached as SerperShoppingResult[];
+
+  // Cache miss — call Serper API
   const res = await fetch("https://google.serper.dev/shopping", {
     method: "POST",
     headers: {
@@ -54,5 +61,12 @@ export async function searchProduct(query: string): Promise<SerperShoppingResult
   }
 
   const data = (await res.json()) as { shopping?: SerperShoppingResult[] };
-  return data.shopping ?? [];
+  const results = data.shopping ?? [];
+
+  // Cache results
+  if (results.length > 0) {
+    await setCachedSerperResults(query, results);
+  }
+
+  return results;
 }

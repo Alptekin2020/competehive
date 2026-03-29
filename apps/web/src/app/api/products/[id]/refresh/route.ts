@@ -2,12 +2,17 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { getProductQueue } from "@/lib/queue";
 import { unauthorized, notFound, serverError } from "@/lib/api-response";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { applyRateLimit } from "@/lib/with-rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
+
+    const rateLimited = await applyRateLimit(_request, user?.id || null, RATE_LIMITS.refresh);
+    if (rateLimited) return rateLimited;
 
     const { id: productId } = await params;
 
