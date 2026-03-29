@@ -11,8 +11,6 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
-  const [plan, setPlan] = useState("FREE");
-  const [maxProducts, setMaxProducts] = useState(5);
   const [email, setEmail] = useState("");
   const [planData, setPlanData] = useState<{
     plan: string;
@@ -34,8 +32,6 @@ export default function SettingsPage() {
         if (!data.error) {
           setTelegramId(data.telegramChatId || "");
           setWebhookUrl(data.webhookUrl || "");
-          setPlan(data.plan || "FREE");
-          setMaxProducts(data.maxProducts || 5);
           setEmail(data.email || "");
         }
       })
