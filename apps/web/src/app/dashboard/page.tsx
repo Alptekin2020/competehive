@@ -80,13 +80,13 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-1">Genel Bakış</h1>
-        <p className="text-gray-500 text-sm">CompeteHive hesabınıza hoş geldiniz.</p>
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Genel Bakış</h1>
+        <p className="text-gray-500 text-xs sm:text-sm">CompeteHive hesabınıza hoş geldiniz.</p>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
         {loading ? (
           <>
             <StatCardSkeleton />
@@ -97,13 +97,15 @@ export default function DashboardPage() {
         ) : (
           statCards.map((stat, i) => (
             <Link key={i} href={stat.href} className="block">
-              <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5 hover:border-amber-500/30 transition cursor-pointer">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-gray-500 text-sm">{stat.label}</span>
-                  <span className="text-lg">{stat.icon}</span>
+              <div className="bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5 hover:border-amber-500/30 transition cursor-pointer">
+                <div className="flex items-center justify-between mb-2 sm:mb-3">
+                  <span className="text-gray-500 text-xs sm:text-sm">{stat.label}</span>
+                  <span className="text-base sm:text-lg">{stat.icon}</span>
                 </div>
-                <div className="text-3xl font-bold text-white">{stat.value}</div>
-                <div className="text-gray-600 text-xs mt-1">{stat.sub}</div>
+                <div className="text-2xl sm:text-3xl font-bold text-white">{stat.value}</div>
+                <div className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">
+                  {stat.sub}
+                </div>
               </div>
             </Link>
           ))
@@ -156,18 +158,22 @@ export default function DashboardPage() {
 
       {/* Top Movers */}
       {movers.length > 0 && (
-        <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-6 mt-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Son 24 Saat Fiyat Hareketleri</h2>
+        <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-6 mt-4 sm:mt-6">
+          <h2 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">
+            Son 24 Saat Fiyat Hareketleri
+          </h2>
           <div className="space-y-3">
             {movers.map((mover, i) => (
               <Link
                 key={mover.productId}
                 href={`/dashboard/products/${mover.productId}`}
-                className="flex items-center gap-3 p-3 rounded-xl hover:bg-[#1A1A1E] transition group"
+                className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl hover:bg-[#1A1A1E] transition group"
               >
-                <span className="text-gray-600 text-sm font-mono w-5 text-center">{i + 1}</span>
+                <span className="text-gray-600 text-xs sm:text-sm font-mono w-4 sm:w-5 text-center">
+                  {i + 1}
+                </span>
 
-                <div className="w-9 h-9 bg-[#1F1F23] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 bg-[#1F1F23] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
                   {mover.productImage ? (
                     <img
                       src={mover.productImage}
@@ -180,14 +186,16 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm truncate group-hover:text-amber-400 transition">
+                  <p className="text-white text-xs sm:text-sm truncate group-hover:text-amber-400 transition">
                     {mover.productName}
                   </p>
-                  <MarketplaceBadge marketplace={mover.marketplace} />
+                  <span className="hidden sm:inline-block">
+                    <MarketplaceBadge marketplace={mover.marketplace} />
+                  </span>
                 </div>
 
                 <div className="text-right shrink-0">
-                  <p className="text-white text-sm font-semibold">
+                  <p className="text-white text-xs sm:text-sm font-semibold">
                     ₺
                     {mover.currentPrice.toLocaleString("tr-TR", {
                       minimumFractionDigits: 2,

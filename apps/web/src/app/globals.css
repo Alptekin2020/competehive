@@ -96,3 +96,31 @@ input:-webkit-autofill {
 .cl-internal-b3fm6y {
   background: transparent !important;
 }
+
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Safe area padding for notched phones */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Prevent text selection on interactive elements */
+.select-none-touch {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Mobile tap highlight removal */
+* {
+  -webkit-tap-highlight-color: transparent;
+}

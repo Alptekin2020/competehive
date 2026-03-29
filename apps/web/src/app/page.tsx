@@ -5,7 +5,7 @@ export default function Home() {
     <main className="min-h-screen bg-dark-1000">
       {/* Navbar */}
       <nav className="fixed top-0 w-full z-50 bg-dark-1000/80 backdrop-blur-xl border-b border-dark-800">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-lg font-bold text-white">CompeteHive</span>
@@ -25,24 +25,25 @@ export default function Home() {
       </nav>
 
       {/* Hero */}
-      <section className="pt-32 pb-20 px-6">
+      <section className="pt-24 sm:pt-32 pb-12 sm:pb-20 px-4 sm:px-6">
         <div className="max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 bg-hive-500/10 border border-hive-500/20 rounded-full px-4 py-1.5 mb-8">
             <div className="w-2 h-2 bg-hive-500 rounded-full animate-pulse" />
             <span className="text-hive-400 text-sm font-medium">Hive Ekosistemi Ürünü</span>
           </div>
-          <h1 className="text-5xl md:text-6xl font-bold text-white leading-tight mb-6">
-            Rakiplerinizin fiyatlarını <span className="text-hive-500">otomatik takip edin</span>
+          <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 sm:mb-6">
+            Rakiplerinizin fiyatlarını <br className="hidden sm:block" />
+            <span className="text-hive-500">otomatik takip edin</span>
           </h1>
-          <p className="text-lg text-dark-400 mb-10 max-w-2xl mx-auto">
+          <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-2xl mx-auto px-2">
             Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt&apos;teki
             rakip fiyat değişikliklerinden anında haberdar olun. Fiyat stratejinizi veriye dayalı
             oluşturun.
           </p>
-          <div className="flex justify-center gap-4">
+          <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4 px-4">
             <Link
               href="/register"
-              className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center gap-2"
+              className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center justify-center gap-2"
             >
               <svg
                 width="16"
@@ -60,7 +61,7 @@ export default function Home() {
             </Link>
             <Link
               href="#features"
-              className="border border-dark-700 hover:border-dark-500 text-white px-8 py-3.5 rounded-xl font-medium transition"
+              className="border border-dark-700 hover:border-dark-500 text-white px-8 py-3.5 rounded-xl font-medium transition text-center"
             >
               Nasıl Çalışır →
             </Link>
@@ -69,13 +70,13 @@ export default function Home() {
       </section>
 
       {/* Features */}
-      <section id="features" className="py-20 px-6">
+      <section id="features" className="py-12 sm:py-20 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-white text-center mb-4">Neden CompeteHive?</h2>
           <p className="text-dark-400 text-center mb-16 max-w-xl mx-auto">
             E-ticaret satıcıları için rakip fiyat istihbaratı
           </p>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {[
               {
                 icon: "📊",
@@ -100,13 +101,13 @@ export default function Home() {
             ].map((f, i) => (
               <div
                 key={i}
-                className="bg-dark-900 border border-dark-800 rounded-2xl p-6 hover:border-hive-500/30 transition group"
+                className="bg-dark-900 border border-dark-800 rounded-2xl p-4 sm:p-6 hover:border-hive-500/30 transition group"
               >
-                <div className="text-3xl mb-4">{f.icon}</div>
-                <h3 className="text-white font-semibold mb-2 group-hover:text-hive-400 transition">
+                <div className="text-2xl sm:text-3xl mb-3 sm:mb-4">{f.icon}</div>
+                <h3 className="text-white font-semibold text-sm sm:text-base mb-1.5 sm:mb-2 group-hover:text-hive-400 transition">
                   {f.title}
                 </h3>
-                <p className="text-dark-500 text-sm leading-relaxed">{f.desc}</p>
+                <p className="text-dark-500 text-xs sm:text-sm leading-relaxed">{f.desc}</p>
               </div>
             ))}
           </div>
@@ -114,11 +115,11 @@ export default function Home() {
       </section>
 
       {/* Pricing */}
-      <section className="py-20 px-6 bg-dark-950">
+      <section className="py-12 sm:py-20 px-4 sm:px-6 bg-dark-950">
         <div className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-bold text-white text-center mb-4">Basit Fiyatlandırma</h2>
           <p className="text-dark-400 text-center mb-16">Her ölçekte e-ticaret satıcıları için</p>
-          <div className="grid md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             {[
               {
                 plan: "Free",
@@ -189,7 +190,7 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section className="py-20 px-6">
+      <section className="py-12 sm:py-20 px-4 sm:px-6">
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-3xl font-bold text-white mb-4">
             Rakipleriniz fiyat değiştirdiğinde ilk siz bilin
