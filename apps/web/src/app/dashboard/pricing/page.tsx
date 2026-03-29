@@ -1,12 +1,19 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { PLANS, isUpgrade } from "@/lib/plans";
 
 export default function PricingPage() {
   const [currentPlan, setCurrentPlan] = useState<string>("FREE");
   const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
   const [loading, setLoading] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
+  const searchParams = useSearchParams();
+  const checkoutSuccess = searchParams.get("success") === "true";
+  const upgradedPlan = searchParams.get("plan");
 
   useEffect(() => {
     async function fetchPlan() {
@@ -25,6 +32,33 @@ export default function PricingPage() {
     fetchPlan();
   }, []);
 
+  const handleUpgrade = async (planId: string) => {
+    setCheckoutLoading(planId);
+    setCheckoutError(null);
+
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId, billing }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setCheckoutError(data.error || "Ödeme başlatılamadı");
+        return;
+      }
+
+      // Redirect to Whop checkout
+      window.location.href = data.checkoutUrl;
+    } catch {
+      setCheckoutError("Bağlantı hatası");
+    } finally {
+      setCheckoutLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -35,6 +69,27 @@ export default function PricingPage() {
 
   return (
     <div>
+      {/* Success banner */}
+      {checkoutSuccess && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 rounded-xl px-5 py-4 mb-8 flex items-center gap-3">
+          <svg
+            className="w-5 h-5 shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+          >
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+          <div>
+            <p className="font-semibold">Ödeme başarılı!</p>
+            <p className="text-sm text-green-400/80">
+              {upgradedPlan} planınız aktif edildi. Sayfayı yenilemeniz gerekebilir.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="text-center mb-8 sm:mb-12">
         <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">Planınızı Seçin</h1>
@@ -136,12 +191,33 @@ export default function PricingPage() {
                     plan.highlighted
                       ? "bg-hive-500 hover:bg-hive-400 text-black"
                       : "border border-dark-800 text-white hover:border-hive-500/30 hover:text-hive-400"
-                  }`}
-                  onClick={() => {
-                    alert(`Stripe entegrasyonu yakında! Plan: ${plan.name}`);
-                  }}
+                  } ${checkoutLoading === plan.id ? "opacity-50 cursor-not-allowed" : ""}`}
+                  onClick={() => handleUpgrade(plan.id)}
+                  disabled={checkoutLoading !== null}
                 >
-                  Yükselt
+                  {checkoutLoading === plan.id ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          className="opacity-25"
+                        />
+                        <path
+                          d="M4 12a8 8 0 018-8"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      İşleniyor...
+                    </span>
+                  ) : (
+                    "Yükselt"
+                  )}
                 </button>
               ) : (
                 <div className="w-full py-2.5 rounded-xl text-sm font-medium text-center text-dark-600 mb-5">
@@ -170,6 +246,13 @@ export default function PricingPage() {
           );
         })}
       </div>
+
+      {/* Checkout error */}
+      {checkoutError && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mt-4 max-w-md mx-auto text-center">
+          {checkoutError}
+        </div>
+      )}
 
       {/* Feature Comparison Table — Desktop only */}
       <div className="mt-12 sm:mt-16 max-w-6xl mx-auto hidden lg:block">
@@ -261,7 +344,7 @@ export default function PricingPage() {
             },
             {
               q: "Ödeme yöntemi nedir?",
-              a: "Kredi kartı ve banka kartı ile ödeme yapabilirsiniz. Tüm ödemeler Stripe üzerinden güvenli şekilde işlenir.",
+              a: "Kredi kartı ve banka kartı ile ödeme yapabilirsiniz. Tüm ödemeler Whop üzerinden güvenli şekilde işlenir.",
             },
             {
               q: "İptal edersem ne olur?",

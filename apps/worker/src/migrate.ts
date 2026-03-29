@@ -155,6 +155,29 @@ export async function runMigrations() {
 
     console.log("✅ Step 4.3 migration: tags system tables created");
 
+    // Step 5.2: Whop membership tracking
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "whop_user_id" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "whop_membership_id" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "plan_expires_at" TIMESTAMP DEFAULT NULL
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "users_whop_user_id_key"
+      ON "users"("whop_user_id")
+    `);
+
+    console.log("✅ Step 5.2 migration: whop membership fields added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
