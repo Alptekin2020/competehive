@@ -167,7 +167,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
               <p className="text-xs text-dark-500 mb-3">5 üründen 0 kullanılıyor</p>
               <Link
-                href="/dashboard/settings"
+                href="/dashboard/pricing"
                 className="block text-center text-xs font-semibold text-dark-1000 bg-hive-500 hover:bg-hive-600 py-2 rounded-lg transition"
               >
                 Planı Yükselt

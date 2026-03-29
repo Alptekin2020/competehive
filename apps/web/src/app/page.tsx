@@ -122,26 +122,26 @@ export default function Home() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             {[
               {
-                plan: "Free",
-                price: "$0",
+                plan: "Ücretsiz",
+                price: "₺0",
                 features: ["5 ürün", "Günde 1 tarama", "1 marketplace", "E-posta bildirimi"],
                 hl: false,
               },
               {
-                plan: "Starter",
-                price: "$29",
+                plan: "Başlangıç",
+                price: "₺299",
                 features: ["50 ürün", "Saatte 1 tarama", "2 marketplace", "Telegram + E-posta"],
                 hl: true,
               },
               {
-                plan: "Pro",
-                price: "$79",
+                plan: "Profesyonel",
+                price: "₺799",
                 features: ["500 ürün", "15 dk tarama", "Tüm marketplace", "Oto-fiyat kuralları"],
                 hl: false,
               },
               {
-                plan: "Enterprise",
-                price: "$199",
+                plan: "Kurumsal",
+                price: "₺1.999",
                 features: ["Sınırsız ürün", "5 dk tarama", "API erişimi", "Webhook + Özel"],
                 hl: false,
               },
