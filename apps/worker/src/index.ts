@@ -5,6 +5,7 @@ import { processCompetitorJob } from "./jobs/competitor-processor";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { prisma } from "./db";
 import { logger } from "./utils/logger";
+import { startHealthServer } from "./health";
 
 // Redis bağlantısı
 const connection = {
@@ -126,6 +127,9 @@ async function start() {
     },
     6 * 60 * 60 * 1000,
   ); // 6 saat
+
+  // Start health check HTTP server (Railway uses this for health checks)
+  startHealthServer(parseInt(process.env.PORT || "8080"));
 
   logger.info("CompeteHive Worker started successfully");
 }

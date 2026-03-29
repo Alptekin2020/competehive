@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import { logger } from "../utils/logger";
+import { getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
 
 // ============================================
 // Scraper Types
@@ -351,6 +352,9 @@ export async function scrapeTrendyol(
   url: string,
   config: ScraperConfig = {},
 ): Promise<ScrapedProduct> {
+  const cached = await getCachedScrapeResult<ScrapedProduct>(url);
+  if (cached) return cached;
+
   logger.info(`Scraping Trendyol: ${url}`);
 
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
@@ -398,6 +402,7 @@ export async function scrapeTrendyol(
           logger.info(
             `Trendyol API success: ${product.name} - ${product.price} ${product.currency}`,
           );
+          await setCachedScrapeResult(url, product);
           return product;
         }
       }
@@ -414,6 +419,7 @@ export async function scrapeTrendyol(
     const product = parseTrendyolHtml(html);
     if (product && product.price > 0) {
       logger.info(`Trendyol HTML scraped: ${product.name} - ${product.price} ${product.currency}`);
+      await setCachedScrapeResult(url, product);
       return product;
     }
     logger.warn("Trendyol HTML fetch returned no product data, trying Puppeteer");
@@ -430,6 +436,7 @@ export async function scrapeTrendyol(
       logger.info(
         `Trendyol Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
+      await setCachedScrapeResult(url, product);
       return product;
     }
   } catch (error) {
@@ -443,6 +450,21 @@ export async function scrapeTrendyol(
       retryable: true,
     },
   );
+}
+
+// Helper: wrap scrapeWithFallback results with caching
+async function scrapeWithFallbackCached(
+  url: string,
+  config: ScraperConfig,
+  parseHtml: (html: string) => ScrapedProduct | null,
+  marketplaceName: string,
+): Promise<ScrapedProduct> {
+  const cached = await getCachedScrapeResult<ScrapedProduct>(url);
+  if (cached) return cached;
+
+  const result = await scrapeWithFallback(url, config, parseHtml, marketplaceName);
+  await setCachedScrapeResult(url, result);
+  return result;
 }
 
 // ============================================
@@ -559,7 +581,7 @@ export async function scrapeHepsiburada(
   config: ScraperConfig = {},
 ): Promise<ScrapedProduct> {
   logger.info(`Scraping Hepsiburada: ${url}`);
-  return scrapeWithFallback(url, config, parseHepsiburadaHtml, "Hepsiburada");
+  return scrapeWithFallbackCached(url, config, parseHepsiburadaHtml, "Hepsiburada");
 }
 
 // ============================================
@@ -620,7 +642,7 @@ export async function scrapeAmazonTR(
   config: ScraperConfig = {},
 ): Promise<ScrapedProduct> {
   logger.info(`Scraping Amazon TR: ${url}`);
-  return scrapeWithFallback(url, config, parseAmazonTRHtml, "Amazon TR");
+  return scrapeWithFallbackCached(url, config, parseAmazonTRHtml, "Amazon TR");
 }
 
 // ============================================
@@ -681,7 +703,7 @@ function parseN11Html(html: string): ScrapedProduct | null {
 
 export async function scrapeN11(url: string, config: ScraperConfig = {}): Promise<ScrapedProduct> {
   logger.info(`Scraping N11: ${url}`);
-  return scrapeWithFallback(url, config, parseN11Html, "N11");
+  return scrapeWithFallbackCached(url, config, parseN11Html, "N11");
 }
 
 // ============================================
@@ -774,7 +796,7 @@ export async function scrapeGeneric(
     return null;
   };
 
-  return scrapeWithFallback(url, config, parseGenericHtml, "Generic");
+  return scrapeWithFallbackCached(url, config, parseGenericHtml, "Generic");
 }
 
 // ============================================

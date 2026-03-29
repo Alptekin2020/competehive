@@ -7,6 +7,8 @@ import { z } from "zod";
 import { PLAN_LIMITS } from "@competehive/shared";
 import { Marketplace } from "@prisma/client";
 import { getPlanFeatures } from "@/lib/plan-gates";
+import { applyRateLimit } from "@/lib/with-rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 
 const bulkSchema = z.object({
   urls: z
@@ -19,6 +21,9 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
+
+    const rateLimited = await applyRateLimit(req, user?.id || null, RATE_LIMITS.bulkImport);
+    if (rateLimited) return rateLimited;
 
     const body = await req.json();
     const parsed = bulkSchema.safeParse(body);
