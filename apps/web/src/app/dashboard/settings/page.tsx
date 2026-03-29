@@ -318,10 +318,7 @@ function UsageBar({ label, current, max }: { label: string; current: number; max
       {isAtLimit && (
         <p className="text-red-400 text-xs mt-1">
           Limitinize ulaştınız.{" "}
-          <Link
-            href="/dashboard/pricing"
-            className="underline hover:text-red-300"
-          >
+          <Link href="/dashboard/pricing" className="underline hover:text-red-300">
             Planı yükseltin
           </Link>
         </p>
