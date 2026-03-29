@@ -49,10 +49,7 @@ export async function POST(req: NextRequest) {
     // Select the correct Whop plan ID
     const whopPlanId = billing === "yearly" ? targetPlan.whopYearlyPlanId : targetPlan.whopPlanId;
     if (!whopPlanId || whopPlanId.includes("PLACEHOLDER")) {
-      return NextResponse.json(
-        { error: "Bu plan henüz satışa hazır değil" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Bu plan henüz satışa hazır değil" }, { status: 400 });
     }
 
     // Create Whop checkout session
