@@ -5,6 +5,7 @@ import { StatCardSkeleton, CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
 import { getMarketplaceInfo } from "@competehive/shared";
+import UpgradeGate from "@/components/UpgradeGate";
 
 interface MarketplaceStat {
   marketplace: string;
@@ -29,11 +30,33 @@ interface Summary {
   overallAvgMatchScore: number | null;
 }
 
+interface PlanFeaturesData {
+  plan: string;
+  features: {
+    hasAnalytics: boolean;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 export default function AnalyticsPage() {
   const [marketplaces, setMarketplaces] = useState<MarketplaceStat[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [planFeatures, setPlanFeatures] = useState<PlanFeaturesData | null>(null);
+
+  useEffect(() => {
+    async function fetchFeatures() {
+      try {
+        const res = await fetch("/api/user/features");
+        if (res.ok) setPlanFeatures(await res.json());
+      } catch {
+        // silently fail
+      }
+    }
+    fetchFeatures();
+  }, []);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
@@ -81,6 +104,25 @@ export default function AnalyticsPage() {
     if (rate >= 70) return "text-amber-400";
     if (rate >= 50) return "text-orange-400";
     return "text-red-400";
+  }
+
+  // Plan gate for analytics
+  if (planFeatures && !planFeatures.features.hasAnalytics) {
+    return (
+      <div>
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-white mb-1">Analitik</h1>
+          <p className="text-gray-500 text-sm">
+            Marketplace performansı ve güvenilirlik istatistikleri.
+          </p>
+        </div>
+        <UpgradeGate
+          feature="Analitik Dashboard"
+          requiredPlan="Profesyonel"
+          description="Marketplace başarı oranları, eşleşme skorları ve detaylı performans istatistiklerini görüntülemek için Profesyonel plana yükseltin."
+        />
+      </div>
+    );
   }
 
   return (

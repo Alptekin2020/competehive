@@ -13,6 +13,27 @@ import TagFilterBar from "@/components/TagFilterBar";
 import TagManagerModal from "@/components/TagManagerModal";
 import ProductTagSelector from "@/components/ProductTagSelector";
 
+interface PlanFeaturesData {
+  plan: string;
+  features: {
+    maxProducts: number;
+    hasBulkImport: boolean;
+    hasTagSystem: boolean;
+    marketplaceLimit: number;
+    [key: string]: unknown;
+  };
+  usage: {
+    products: number;
+    alertRules: number;
+    tags: number;
+    marketplaces: number;
+  };
+  limits: {
+    productsRemaining: number;
+    [key: string]: number;
+  };
+}
+
 interface CompetitorItem {
   id?: string;
   marketplace: string;
@@ -65,6 +86,7 @@ export default function ProductsPage() {
   const [formError, setFormError] = useState("");
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [showTagManager, setShowTagManager] = useState(false);
+  const [planFeatures, setPlanFeatures] = useState<PlanFeaturesData | null>(null);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -83,6 +105,15 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts();
+    async function fetchFeatures() {
+      try {
+        const res = await fetch("/api/user/features");
+        if (res.ok) setPlanFeatures(await res.json());
+      } catch {
+        // silently fail
+      }
+    }
+    fetchFeatures();
   }, [fetchProducts]);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -121,7 +152,8 @@ export default function ProductsPage() {
         })
         .catch((err) => console.error("Compare error:", err));
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : "Bilinmeyen hata");
+      const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
+      setFormError(msg);
     } finally {
       setFormLoading(false);
     }
@@ -145,26 +177,48 @@ export default function ProductsPage() {
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-4">
           {/* Bulk Import Button */}
-          <button
-            onClick={() => setShowBulkModal(true)}
-            className="inline-flex items-center gap-2 border border-[#1F1F23] hover:border-amber-500/30 text-gray-400 hover:text-white p-2.5 sm:px-4 sm:py-2.5 rounded-xl font-medium text-sm transition"
-            title="Toplu Ekle"
-          >
-            <svg
-              className="w-4 h-4"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          {planFeatures?.features?.hasBulkImport ? (
+            <button
+              onClick={() => setShowBulkModal(true)}
+              className="inline-flex items-center gap-2 border border-[#1F1F23] hover:border-amber-500/30 text-gray-400 hover:text-white p-2.5 sm:px-4 sm:py-2.5 rounded-xl font-medium text-sm transition"
+              title="Toplu Ekle"
             >
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            <span className="hidden sm:inline">Toplu Ekle</span>
-          </button>
+              <svg
+                className="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span className="hidden sm:inline">Toplu Ekle</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => (window.location.href = "/dashboard/pricing")}
+              className="inline-flex items-center gap-2 border border-amber-500/20 text-amber-500/70 p-2.5 sm:px-4 sm:py-2.5 rounded-xl font-medium text-sm transition hover:bg-amber-500/5"
+              title="Toplu Ekle — Başlangıç planı gerekli"
+            >
+              <svg
+                className="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+              <span className="hidden sm:inline">Toplu Ekle</span>
+            </button>
+          )}
 
           {/* Single Add Button */}
           <button
@@ -186,12 +240,45 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Tag Filter Bar */}
-      <TagFilterBar
-        selectedTagId={selectedTagId}
-        onSelectTag={setSelectedTagId}
-        onManageTags={() => setShowTagManager(true)}
-      />
+      {/* Tag Filter Bar — only show if plan supports tags */}
+      {planFeatures?.features?.hasTagSystem && (
+        <TagFilterBar
+          selectedTagId={selectedTagId}
+          onSelectTag={setSelectedTagId}
+          onManageTags={() => setShowTagManager(true)}
+        />
+      )}
+
+      {/* Product limit indicator — show when at 80%+ */}
+      {planFeatures && planFeatures.usage.products >= planFeatures.features.maxProducts * 0.8 && (
+        <div
+          className={`flex items-center justify-between px-4 py-3 rounded-xl mb-4 ${
+            planFeatures.usage.products >= planFeatures.features.maxProducts
+              ? "bg-red-500/10 border border-red-500/20"
+              : "bg-amber-500/10 border border-amber-500/20"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-sm font-medium ${
+                planFeatures.usage.products >= planFeatures.features.maxProducts
+                  ? "text-red-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {planFeatures.usage.products >= planFeatures.features.maxProducts
+                ? `Ürün limitine ulaştınız (${planFeatures.usage.products}/${planFeatures.features.maxProducts})`
+                : `${planFeatures.usage.products}/${planFeatures.features.maxProducts} ürün kullanılıyor`}
+            </span>
+          </div>
+          <Link
+            href="/dashboard/pricing"
+            className="text-xs text-amber-500 hover:text-amber-400 font-semibold transition"
+          >
+            Planı Yükselt →
+          </Link>
+        </div>
+      )}
 
       {/* Loading State */}
       {loading && (

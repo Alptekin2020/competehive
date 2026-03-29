@@ -116,6 +116,20 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
 // Main Component
 // ============================================
 
+interface PlanFeaturesData {
+  plan: string;
+  features: {
+    maxAlertRules: number;
+    allowedChannels: string[];
+    [key: string]: unknown;
+  };
+  usage: {
+    alertRules: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 export default function AlertsPage() {
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -124,6 +138,7 @@ export default function AlertsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [planFeatures, setPlanFeatures] = useState<PlanFeaturesData | null>(null);
 
   // ---- Fetch Rules ----
   const fetchRules = useCallback(async () => {
@@ -157,6 +172,15 @@ export default function AlertsPage() {
   useEffect(() => {
     fetchRules();
     fetchProducts();
+    async function fetchFeatures() {
+      try {
+        const res = await fetch("/api/user/features");
+        if (res.ok) setPlanFeatures(await res.json());
+      } catch {
+        // silently fail
+      }
+    }
+    fetchFeatures();
   }, [fetchRules, fetchProducts]);
 
   // ---- Toggle Rule ----
@@ -426,6 +450,7 @@ export default function AlertsPage() {
       {showCreateModal && (
         <CreateAlertModal
           products={products}
+          planFeatures={planFeatures}
           onClose={() => setShowCreateModal(false)}
           onCreated={() => {
             setShowCreateModal(false);
@@ -443,10 +468,12 @@ export default function AlertsPage() {
 
 function CreateAlertModal({
   products,
+  planFeatures,
   onClose,
   onCreated,
 }: {
   products: Product[];
+  planFeatures: PlanFeaturesData | null;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -511,7 +538,16 @@ function CreateAlertModal({
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Uyarı oluşturulamadı");
+      if (!res.ok) {
+        if (res.status === 403 && data.upgradeRequired) {
+          setError(
+            `${data.error} Planınızı yükseltmek için Ayarlar > Plan sayfasını ziyaret edin.`,
+          );
+        } else {
+          setError(data.error || "Uyarı oluşturulamadı");
+        }
+        return;
+      }
 
       onCreated();
     } catch (err: unknown) {
@@ -649,21 +685,41 @@ function CreateAlertModal({
               Bildirim Kanalları
             </label>
             <div className="flex gap-2">
-              {Object.entries(CHANNEL_LABELS).map(([key, config]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => toggleChannel(key)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition border ${
-                    notifyVia.includes(key)
-                      ? "border-hive-500/50 bg-hive-500/10 text-white"
-                      : "border-dark-800 text-dark-400 hover:text-white"
-                  }`}
-                >
-                  <span>{config.icon}</span>
-                  {config.label}
-                </button>
-              ))}
+              {Object.entries(CHANNEL_LABELS).map(([key, config]) => {
+                const isAllowed = planFeatures?.features?.allowedChannels?.includes(key) ?? true;
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => isAllowed && toggleChannel(key)}
+                    disabled={!isAllowed}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition border ${
+                      !isAllowed
+                        ? "border-[#1F1F23] text-gray-600 cursor-not-allowed opacity-50"
+                        : notifyVia.includes(key)
+                          ? "border-hive-500/50 bg-hive-500/10 text-white"
+                          : "border-dark-800 text-dark-400 hover:text-white"
+                    }`}
+                    title={!isAllowed ? `${config.label} üst plan gerektirir` : undefined}
+                  >
+                    <span>{config.icon}</span>
+                    {config.label}
+                    {!isAllowed && (
+                      <svg
+                        className="w-3 h-3 text-amber-500"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0110 0v4" />
+                      </svg>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 

@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
+import { getPlanFeatures } from "@/lib/plan-gates";
 
 // ============================================
 // GET /api/alerts - Kullanıcının uyarı kurallarını listele
@@ -59,6 +60,46 @@ export async function POST(req: NextRequest) {
     const parsed = createAlertSchema.safeParse(body);
     if (!parsed.success) {
       return badRequest(parsed.error.errors[0].message);
+    }
+
+    // Plan-based restrictions
+    const userRecord = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { plan: true },
+    });
+    const features = getPlanFeatures(userRecord?.plan || "FREE");
+
+    // Check alert rule count limit
+    const currentRuleCount = await prisma.alertRule.count({
+      where: { userId: user.id, isActive: true },
+    });
+
+    if (currentRuleCount >= features.maxAlertRules) {
+      return new Response(
+        JSON.stringify({
+          error: `Mevcut planınızla en fazla ${features.maxAlertRules} uyarı kuralı oluşturabilirsiniz.`,
+          upgradeRequired: true,
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Check notification channel restrictions
+    const requestedChannels = parsed.data.notifyVia;
+    const disallowedChannels = requestedChannels.filter(
+      (ch: string) => !features.allowedChannels.includes(ch),
+    );
+
+    if (disallowedChannels.length > 0) {
+      const channelNames: Record<string, string> = { TELEGRAM: "Telegram", WEBHOOK: "Webhook" };
+      const names = disallowedChannels.map((ch: string) => channelNames[ch] || ch).join(", ");
+      return new Response(
+        JSON.stringify({
+          error: `${names} bildirimi mevcut planınızda kullanılamaz. Planınızı yükseltin.`,
+          upgradeRequired: true,
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
     }
 
     const product = await prisma.trackedProduct.findFirst({
