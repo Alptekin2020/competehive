@@ -7,6 +7,7 @@ import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
 import { AddProductModal } from "@/components/products/AddProductModal";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
+import PriceTrend from "@/components/PriceTrend";
 
 interface CompetitorItem {
   id?: string;
@@ -14,6 +15,12 @@ interface CompetitorItem {
   competitor_name: string | null;
   current_price: string | null;
   competitor_url: string;
+}
+
+interface TrendData {
+  priceChange: number | null;
+  priceChangePct: number | null;
+  lastUpdated: string | null;
 }
 
 interface ProductItem {
@@ -24,7 +31,22 @@ interface ProductItem {
   product_image: string | null;
   current_price: string | null;
   last_scraped_at: string | null;
+  status?: string;
+  trend?: TrendData | null;
+  competitorCount?: number;
   competitors?: CompetitorItem[];
+}
+
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMin = Math.floor((now.getTime() - date.getTime()) / 60000);
+  if (diffMin < 1) return "az önce";
+  if (diffMin < 60) return `${diffMin} dk önce`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} sa önce`;
+  const diffDay = Math.floor(diffHour / 24);
+  return `${diffDay} gün önce`;
 }
 
 export default function ProductsPage() {
@@ -162,51 +184,73 @@ export default function ProductsPage() {
         <div className="grid gap-4">
           {products.map((product) => {
             const myPrice = product.current_price ? Number(product.current_price) : null;
-            const competitorCount = product.competitors?.length || 0;
+            const competitorCount = product.competitorCount ?? product.competitors?.length ?? 0;
 
             return (
               <Link
                 key={product.id}
                 href={`/dashboard/products/${product.id}`}
-                className="bg-dark-900 border border-dark-800 rounded-2xl p-5 flex items-center gap-4 hover:border-amber-500/20 transition group"
+                className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5 flex items-center gap-4 hover:border-amber-500/20 transition group"
               >
-                <div className="w-14 h-14 bg-dark-800 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0">
+                <div className="w-12 h-12 bg-[#1F1F23] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
                   {product.product_image ? (
                     <img
                       src={product.product_image}
                       alt=""
                       className="w-full h-full object-cover rounded-xl"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
                     />
                   ) : (
-                    <span className="text-dark-500 text-xl">📦</span>
+                    <span className="text-gray-500 text-lg">📦</span>
                   )}
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-white font-medium text-sm truncate">
-                    {product.product_name}
+                  <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
+                    {product.product_name || "İsimsiz Ürün"}
                   </h3>
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     <MarketplaceBadge marketplace={product.marketplace} />
                     {competitorCount > 0 && (
-                      <span className="text-xs text-dark-500">{competitorCount} rakip bulundu</span>
+                      <span className="text-xs text-gray-600">{competitorCount} rakip</span>
+                    )}
+                    {product.last_scraped_at && (
+                      <span className="text-xs text-gray-600">
+                        · {timeAgo(product.last_scraped_at)}
+                      </span>
                     )}
                   </div>
                 </div>
 
-                <div className="text-right flex-shrink-0">
-                  <div className="font-semibold text-white">
-                    {myPrice ? `${myPrice.toLocaleString("tr-TR")} TL` : "\u2014"}
+                <div className="text-right shrink-0">
+                  <div className="text-white font-semibold">
+                    {myPrice
+                      ? `₺${myPrice.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`
+                      : "—"}
                   </div>
-                  <div className="text-dark-600 text-xs">
-                    {product.last_scraped_at
-                      ? new Date(product.last_scraped_at).toLocaleDateString("tr-TR")
-                      : "Taranıyor..."}
+                  <div className="mt-1">
+                    {product.trend ? (
+                      <PriceTrend
+                        priceChange={product.trend.priceChange}
+                        priceChangePct={product.trend.priceChangePct}
+                        size="sm"
+                      />
+                    ) : (
+                      <span className="text-xs text-gray-600">
+                        {product.status === "ACTIVE"
+                          ? "Aktif"
+                          : product.status === "ERROR"
+                            ? "Hata"
+                            : "Bekliyor"}
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 <svg
-                  className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition flex-shrink-0"
+                  className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"

@@ -14,6 +14,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import RefreshButton from "@/components/RefreshButton";
+import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
@@ -55,6 +56,7 @@ interface ProductData {
   refreshRequestedAt: string | null;
   refreshCompletedAt: string | null;
   refreshError: string | null;
+  lastScrapedAt: string | null;
   priceHistory: PriceHistoryEntry[];
   competitors: CompetitorEntry[];
 }
@@ -123,6 +125,18 @@ function MatchScoreBadge({ score }: { score: number | null }) {
       <span className="text-[10px]">🎯</span>%{score}
     </span>
   );
+}
+
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMin = Math.floor((now.getTime() - date.getTime()) / 60000);
+  if (diffMin < 1) return "az önce";
+  if (diffMin < 60) return `${diffMin} dk önce`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} sa önce`;
+  const diffDay = Math.floor(diffHour / 24);
+  return `${diffDay} gün önce`;
 }
 
 export default function ProductDetailPage() {
@@ -302,7 +316,7 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Stats Kartları */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
           <p className="text-gray-400 text-xs mb-1">En Düşük Fiyat</p>
           <p className="text-lg font-bold text-green-400">
@@ -322,6 +336,24 @@ export default function ProductDetailPage() {
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
           <p className="text-gray-400 text-xs mb-1">Rakip Sayısı</p>
           <p className="text-lg font-bold text-amber-400">{competitors.length}</p>
+        </div>
+        <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4">
+          <p className="text-gray-500 text-sm mb-1">Son Değişim</p>
+          <div className="mt-1">
+            {priceHistory.length > 0 ? (
+              <PriceTrend
+                priceChange={Number(priceHistory[0]?.priceChange) || null}
+                priceChangePct={Number(priceHistory[0]?.priceChangePct) || null}
+                size="lg"
+                showAmount={true}
+              />
+            ) : (
+              <p className="text-2xl font-bold text-gray-600">—</p>
+            )}
+          </div>
+          {product.lastScrapedAt && (
+            <p className="text-gray-600 text-xs mt-1">{timeAgo(product.lastScrapedAt)}</p>
+          )}
         </div>
       </div>
 
