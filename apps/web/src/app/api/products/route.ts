@@ -37,6 +37,13 @@ export async function GET() {
             scrapedAt: true,
           },
         },
+        tags: {
+          include: {
+            tag: {
+              select: { id: true, name: true, color: true },
+            },
+          },
+        },
         _count: {
           select: { competitors: true },
         },
@@ -64,6 +71,7 @@ export async function GET() {
               lastUpdated: latestHistory.scrapedAt,
             }
           : null,
+        tags: p.tags.map((pt) => ({ tag: pt.tag })),
         competitorCount: p._count.competitors,
         competitors: p.competitors.map((c) => ({
           id: c.id,

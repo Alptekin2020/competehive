@@ -41,6 +41,7 @@ model User {
   alertRules      AlertRule[]
   notifications   Notification[]
   apiKeys         ApiKey[]
+  tags            Tag[]
 
   @@map("users")
 }
@@ -123,6 +124,7 @@ model TrackedProduct {
   priceHistory PriceHistory[]
   alertRules   AlertRule[]
   competitors  Competitor[]
+  tags         ProductTag[]
 
   @@index([userId, marketplace])
   @@index([status, lastScrapedAt])
@@ -283,4 +285,33 @@ model SystemLog {
 
   @@index([level, createdAt])
   @@map("system_logs")
+}
+
+// ============================================
+// TAGS (User-defined product grouping)
+// ============================================
+
+model Tag {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  name      String
+  color     String   @default("#F59E0B")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products ProductTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model ProductTag {
+  productId String @map("product_id")
+  tagId     String @map("tag_id")
+
+  product TrackedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag     Tag            @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@map("product_tags")
 }
