@@ -149,12 +149,18 @@ export default function AnalyticsPage() {
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5">
               <p className="text-gray-500 text-xs sm:text-sm mb-1">Toplam Ürün</p>
               <p className="text-2xl sm:text-3xl font-bold text-white">{summary.totalProducts}</p>
-              <p className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">{summary.activeMarketplaces} marketplace</p>
+              <p className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">
+                {summary.activeMarketplaces} marketplace
+              </p>
             </div>
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5">
               <p className="text-gray-500 text-xs sm:text-sm mb-1">Toplam Rakip</p>
-              <p className="text-2xl sm:text-3xl font-bold text-white">{summary.totalCompetitors}</p>
-              <p className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">tüm marketplace&apos;lerde</p>
+              <p className="text-2xl sm:text-3xl font-bold text-white">
+                {summary.totalCompetitors}
+              </p>
+              <p className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">
+                tüm marketplace&apos;lerde
+              </p>
             </div>
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5">
               <p className="text-gray-500 text-xs sm:text-sm mb-1">Başarı Oranı</p>
@@ -167,7 +173,9 @@ export default function AnalyticsPage() {
             </div>
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5">
               <p className="text-gray-500 text-xs sm:text-sm mb-1">Ort. Eşleşme</p>
-              <p className={`text-2xl sm:text-3xl font-bold ${getScoreColor(summary.overallAvgMatchScore)}`}>
+              <p
+                className={`text-2xl sm:text-3xl font-bold ${getScoreColor(summary.overallAvgMatchScore)}`}
+              >
                 {summary.overallAvgMatchScore !== null ? `%${summary.overallAvgMatchScore}` : "—"}
               </p>
               <p className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">güven skoru</p>

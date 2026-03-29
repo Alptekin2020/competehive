@@ -283,7 +283,9 @@ export default function ProductDetailPage() {
               />
             )}
             <div className="flex-1 min-w-0">
-              <h1 className="text-lg sm:text-xl font-bold text-white truncate">{product.productName}</h1>
+              <h1 className="text-lg sm:text-xl font-bold text-white truncate">
+                {product.productName}
+              </h1>
               <a
                 href={product.productUrl}
                 target="_blank"
@@ -390,47 +392,47 @@ export default function ProductDetailPage() {
                 <h2 className="text-base font-semibold text-white">Fiyat Geçmişi</h2>
               </div>
               <div className="h-48 sm:h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1F1F23" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: "#6B7280", fontSize: 11 }}
-                    axisLine={{ stroke: "#1F1F23" }}
-                  />
-                  <YAxis
-                    tick={{ fill: "#6B7280", fontSize: 11 }}
-                    axisLine={{ stroke: "#1F1F23" }}
-                    tickFormatter={(v) =>
-                      new Intl.NumberFormat("tr-TR", {
-                        notation: "compact",
-                        maximumFractionDigits: 0,
-                      }).format(v) + "₺"
-                    }
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#111113",
-                      border: "1px solid #1F1F23",
-                      borderRadius: "8px",
-                      color: "#fff",
-                    }}
-                    formatter={(value: number) => [formatPrice(value), ""]}
-                  />
-                  <Legend wrapperStyle={{ color: "#9CA3AF", fontSize: 12 }} />
-                  {retailers.map((retailer) => (
-                    <Line
-                      key={retailer}
-                      type="monotone"
-                      dataKey={retailer}
-                      stroke={retailerColor(retailer)}
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1F1F23" />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fill: "#6B7280", fontSize: 11 }}
+                      axisLine={{ stroke: "#1F1F23" }}
                     />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
+                    <YAxis
+                      tick={{ fill: "#6B7280", fontSize: 11 }}
+                      axisLine={{ stroke: "#1F1F23" }}
+                      tickFormatter={(v) =>
+                        new Intl.NumberFormat("tr-TR", {
+                          notation: "compact",
+                          maximumFractionDigits: 0,
+                        }).format(v) + "₺"
+                      }
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#111113",
+                        border: "1px solid #1F1F23",
+                        borderRadius: "8px",
+                        color: "#fff",
+                      }}
+                      formatter={(value: number) => [formatPrice(value), ""]}
+                    />
+                    <Legend wrapperStyle={{ color: "#9CA3AF", fontSize: 12 }} />
+                    {retailers.map((retailer) => (
+                      <Line
+                        key={retailer}
+                        type="monotone"
+                        dataKey={retailer}
+                        stroke={retailerColor(retailer)}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
               </div>
             </div>
           )}

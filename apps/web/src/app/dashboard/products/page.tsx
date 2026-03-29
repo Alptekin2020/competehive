@@ -141,9 +141,7 @@ export default function ProductsPage() {
       <div className="flex items-center justify-between mb-6 sm:mb-8">
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Ürünler</h1>
-          <p className="text-dark-500 text-xs sm:text-sm">
-            Takip ettiğiniz ürünleri yönetin.
-          </p>
+          <p className="text-dark-500 text-xs sm:text-sm">Takip ettiğiniz ürünleri yönetin.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-4">
           {/* Bulk Import Button */}
@@ -269,9 +267,7 @@ export default function ProductsPage() {
                       {/* Price — mobile only inline */}
                       <div className="text-right shrink-0 sm:hidden">
                         <div className="text-white font-semibold text-sm">
-                          {myPrice
-                            ? `₺${myPrice.toLocaleString("tr-TR")}`
-                            : "—"}
+                          {myPrice ? `₺${myPrice.toLocaleString("tr-TR")}` : "—"}
                         </div>
                       </div>
                     </div>

@@ -32,7 +32,8 @@ export default function Home() {
             <span className="text-hive-400 text-sm font-medium">Hive Ekosistemi Ürünü</span>
           </div>
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 sm:mb-6">
-            Rakiplerinizin fiyatlarını <br className="hidden sm:block" /><span className="text-hive-500">otomatik takip edin</span>
+            Rakiplerinizin fiyatlarını <br className="hidden sm:block" />
+            <span className="text-hive-500">otomatik takip edin</span>
           </h1>
           <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-2xl mx-auto px-2">
             Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt&apos;teki

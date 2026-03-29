@@ -196,7 +196,9 @@ export default function AlertsPage() {
       <div className="flex items-center justify-between mb-6 sm:mb-8">
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Uyarılar</h1>
-          <p className="text-dark-500 text-xs sm:text-sm">Fiyat değişikliği uyarı kurallarınızı yönetin.</p>
+          <p className="text-dark-500 text-xs sm:text-sm">
+            Fiyat değişikliği uyarı kurallarınızı yönetin.
+          </p>
         </div>
         {rules.length > 0 && (
           <button
@@ -281,63 +283,64 @@ export default function AlertsPage() {
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="text-white font-medium text-sm">
-                        {ruleConfig?.label || rule.ruleType}
-                      </h3>
-                      {!rule.isActive && (
-                        <span className="text-xs text-dark-500 bg-dark-800 px-2 py-0.5 rounded-full">
-                          Devre dışı
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Product info */}
-                    <p className="text-dark-500 text-sm truncate">
-                      {rule.trackedProduct?.productName || "Tüm ürünler"}
-                      {marketplace && (
-                        <span
-                          className="ml-2 text-xs font-medium px-1.5 py-0.5 rounded"
-                          style={{
-                            backgroundColor: `${marketplace.color}20`,
-                            color: marketplace.color,
-                          }}
-                        >
-                          {marketplace.name}
-                        </span>
-                      )}
-                    </p>
-
-                    {/* Rule details */}
-                    <div className="flex items-center gap-3 mt-2 text-xs text-dark-600">
-                      {/* Threshold */}
-                      {rule.thresholdValue != null && (
-                        <span>
-                          {rule.ruleType === "PERCENTAGE_CHANGE"
-                            ? `%${rule.thresholdValue}`
-                            : `${rule.direction === "below" ? "↓" : "↑"} ₺${Number(rule.thresholdValue).toLocaleString("tr-TR")}`}
-                        </span>
-                      )}
-
-                      {/* Channels */}
-                      <span className="flex items-center gap-1">
-                        {rule.notifyVia.map((ch) => (
-                          <span key={ch} title={CHANNEL_LABELS[ch]?.label}>
-                            {CHANNEL_LABELS[ch]?.icon || "📨"}
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-white font-medium text-sm">
+                          {ruleConfig?.label || rule.ruleType}
+                        </h3>
+                        {!rule.isActive && (
+                          <span className="text-xs text-dark-500 bg-dark-800 px-2 py-0.5 rounded-full">
+                            Devre dışı
                           </span>
-                        ))}
-                      </span>
+                        )}
+                      </div>
 
-                      {/* Cooldown */}
-                      <span>{rule.cooldownMinutes} dk bekleme</span>
+                      {/* Product info */}
+                      <p className="text-dark-500 text-sm truncate">
+                        {rule.trackedProduct?.productName || "Tüm ürünler"}
+                        {marketplace && (
+                          <span
+                            className="ml-2 text-xs font-medium px-1.5 py-0.5 rounded"
+                            style={{
+                              backgroundColor: `${marketplace.color}20`,
+                              color: marketplace.color,
+                            }}
+                          >
+                            {marketplace.name}
+                          </span>
+                        )}
+                      </p>
 
-                      {/* Last triggered */}
-                      {rule.lastTriggered && (
-                        <span>Son: {new Date(rule.lastTriggered).toLocaleDateString("tr-TR")}</span>
-                      )}
+                      {/* Rule details */}
+                      <div className="flex items-center gap-3 mt-2 text-xs text-dark-600">
+                        {/* Threshold */}
+                        {rule.thresholdValue != null && (
+                          <span>
+                            {rule.ruleType === "PERCENTAGE_CHANGE"
+                              ? `%${rule.thresholdValue}`
+                              : `${rule.direction === "below" ? "↓" : "↑"} ₺${Number(rule.thresholdValue).toLocaleString("tr-TR")}`}
+                          </span>
+                        )}
+
+                        {/* Channels */}
+                        <span className="flex items-center gap-1">
+                          {rule.notifyVia.map((ch) => (
+                            <span key={ch} title={CHANNEL_LABELS[ch]?.label}>
+                              {CHANNEL_LABELS[ch]?.icon || "📨"}
+                            </span>
+                          ))}
+                        </span>
+
+                        {/* Cooldown */}
+                        <span>{rule.cooldownMinutes} dk bekleme</span>
+
+                        {/* Last triggered */}
+                        {rule.lastTriggered && (
+                          <span>
+                            Son: {new Date(rule.lastTriggered).toLocaleDateString("tr-TR")}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-
                   </div>
 
                   {/* Actions — on mobile, align right in a row */}

@@ -103,7 +103,9 @@ export default function DashboardPage() {
                   <span className="text-base sm:text-lg">{stat.icon}</span>
                 </div>
                 <div className="text-2xl sm:text-3xl font-bold text-white">{stat.value}</div>
-                <div className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">{stat.sub}</div>
+                <div className="text-gray-600 text-[10px] sm:text-xs mt-0.5 sm:mt-1">
+                  {stat.sub}
+                </div>
               </div>
             </Link>
           ))
@@ -157,7 +159,9 @@ export default function DashboardPage() {
       {/* Top Movers */}
       {movers.length > 0 && (
         <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-6 mt-4 sm:mt-6">
-          <h2 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">Son 24 Saat Fiyat Hareketleri</h2>
+          <h2 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">
+            Son 24 Saat Fiyat Hareketleri
+          </h2>
           <div className="space-y-3">
             {movers.map((mover, i) => (
               <Link
@@ -165,7 +169,9 @@ export default function DashboardPage() {
                 href={`/dashboard/products/${mover.productId}`}
                 className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl hover:bg-[#1A1A1E] transition group"
               >
-                <span className="text-gray-600 text-xs sm:text-sm font-mono w-4 sm:w-5 text-center">{i + 1}</span>
+                <span className="text-gray-600 text-xs sm:text-sm font-mono w-4 sm:w-5 text-center">
+                  {i + 1}
+                </span>
 
                 <div className="w-8 h-8 sm:w-9 sm:h-9 bg-[#1F1F23] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
                   {mover.productImage ? (
