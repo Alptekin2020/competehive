@@ -6,6 +6,7 @@ import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
 import { AddProductModal } from "@/components/products/AddProductModal";
+import BulkImportModal from "@/components/BulkImportModal";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import PriceTrend from "@/components/PriceTrend";
 
@@ -54,6 +55,7 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
   const [url, setUrl] = useState("");
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState("");
@@ -137,22 +139,46 @@ export default function ProductsPage() {
             Takip ettiğiniz ürünleri ve rakip fiyatlarını yönetin.
           </p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
-        >
-          <svg
-            className="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
+        <div className="flex items-center gap-2">
+          {/* Bulk Import Button */}
+          <button
+            onClick={() => setShowBulkModal(true)}
+            className="inline-flex items-center gap-2 border border-[#1F1F23] hover:border-amber-500/30 text-gray-400 hover:text-white px-4 py-2.5 rounded-xl font-medium text-sm transition"
           >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Ürün Ekle
-        </button>
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            Toplu Ekle
+          </button>
+
+          {/* Single Add Button */}
+          <button
+            onClick={() => setShowModal(true)}
+            className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Ürün Ekle
+          </button>
+        </div>
       </div>
 
       {/* Loading State */}
@@ -171,12 +197,22 @@ export default function ProductsPage() {
 
       {/* Empty State */}
       {!loading && !error && products.length === 0 && (
-        <EmptyState
-          title="Henüz ürün eklenmedi"
-          description="Marketplace ürün linkini yapıştırarak rakip fiyatlarını takip etmeye başlayın."
-          actionLabel="İlk Ürünü Ekle"
-          onAction={() => setShowModal(true)}
-        />
+        <div>
+          <EmptyState
+            title="Henüz ürün eklenmedi"
+            description="Marketplace ürün linkini yapıştırarak rakip fiyatlarını takip etmeye başlayın."
+            actionLabel="İlk Ürünü Ekle"
+            onAction={() => setShowModal(true)}
+          />
+          <div className="text-center mt-3">
+            <button
+              onClick={() => setShowBulkModal(true)}
+              className="text-sm text-amber-500 hover:text-amber-400 transition"
+            >
+              veya Toplu URL Ekle
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Product List */}
@@ -278,6 +314,15 @@ export default function ProductsPage() {
               setShowModal(false);
               setFormError("");
             }
+          }}
+        />
+      )}
+
+      {showBulkModal && (
+        <BulkImportModal
+          onClose={() => setShowBulkModal(false)}
+          onComplete={() => {
+            fetchProducts();
           }}
         />
       )}
