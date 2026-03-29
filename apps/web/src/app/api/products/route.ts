@@ -26,26 +26,54 @@ export async function GET() {
         competitors: {
           orderBy: { currentPrice: "asc" },
         },
+        priceHistory: {
+          orderBy: { scrapedAt: "desc" },
+          take: 2,
+          select: {
+            price: true,
+            previousPrice: true,
+            priceChange: true,
+            priceChangePct: true,
+            scrapedAt: true,
+          },
+        },
+        _count: {
+          select: { competitors: true },
+        },
       },
     });
 
-    // Map to snake_case for frontend compatibility
-    const mapped = products.map((p) => ({
-      id: p.id,
-      product_name: p.productName,
-      marketplace: p.marketplace,
-      product_url: p.productUrl,
-      product_image: p.productImage,
-      current_price: p.currentPrice,
-      last_scraped_at: p.lastScrapedAt,
-      competitors: p.competitors.map((c) => ({
-        id: c.id,
-        marketplace: c.marketplace,
-        competitor_name: c.competitorName,
-        current_price: c.currentPrice,
-        competitor_url: c.competitorUrl,
-      })),
-    }));
+    // Map to snake_case for frontend compatibility + enrich with trend data
+    const mapped = products.map((p) => {
+      const latestHistory = p.priceHistory[0];
+      return {
+        id: p.id,
+        product_name: p.productName,
+        marketplace: p.marketplace,
+        product_url: p.productUrl,
+        product_image: p.productImage,
+        current_price: p.currentPrice,
+        last_scraped_at: p.lastScrapedAt,
+        status: p.status,
+        trend: latestHistory
+          ? {
+              priceChange: latestHistory.priceChange ? Number(latestHistory.priceChange) : null,
+              priceChangePct: latestHistory.priceChangePct
+                ? Number(latestHistory.priceChangePct)
+                : null,
+              lastUpdated: latestHistory.scrapedAt,
+            }
+          : null,
+        competitorCount: p._count.competitors,
+        competitors: p.competitors.map((c) => ({
+          id: c.id,
+          marketplace: c.marketplace,
+          competitor_name: c.competitorName,
+          current_price: c.currentPrice,
+          competitor_url: c.competitorUrl,
+        })),
+      };
+    });
 
     return apiSuccess({ products: mapped });
   } catch (error) {
