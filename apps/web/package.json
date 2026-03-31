@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "npm run db:generate && next build",
-    "start": "next start",
+    "start": "./scripts/start-with-migrate.sh",
     "lint": "eslint . --ext .ts,.tsx && tsc --noEmit",
     "db:migrate:deploy": "node ./scripts/migrate-deploy.js",
     "db:generate": "prisma generate --schema ../../packages/database/prisma/schema.prisma",
