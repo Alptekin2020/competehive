@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StatCardSkeleton } from "@/components/Skeleton";
 import EmptyState from "@/components/EmptyState";
 import PriceTrend from "@/components/PriceTrend";
@@ -25,6 +25,30 @@ interface Mover {
   updatedAt: string;
 }
 
+function formatRelativeTime(date: Date) {
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+
+  if (Number.isNaN(diffMs) || diffMs < 0) {
+    return null;
+  }
+
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diffMs < minute) return "az önce";
+
+  const minutes = Math.floor(diffMs / minute);
+  if (minutes < 60) return `${minutes} dk önce`;
+
+  const hours = Math.floor(diffMs / hour);
+  if (hours < 24) return `${hours} sa önce`;
+
+  const days = Math.floor(diffMs / day);
+  return `${days} gün önce`;
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,6 +70,29 @@ export default function DashboardPage() {
       })
       .catch(() => {});
   }, []);
+
+  const latestMoverUpdate = useMemo(() => {
+    if (!movers.length) return null;
+
+    const timestamps = movers
+      .map((mover) => new Date(mover.updatedAt))
+      .filter((date) => !Number.isNaN(date.getTime()));
+
+    if (!timestamps.length) return null;
+
+    const latest = new Date(Math.max(...timestamps.map((date) => date.getTime())));
+    const relative = formatRelativeTime(latest);
+
+    if (!relative) return null;
+
+    return {
+      relative,
+      exact: latest.toLocaleString("tr-TR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }),
+    };
+  }, [movers]);
 
   const statCards = [
     {
@@ -80,9 +127,51 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-6 sm:mb-8">
+      <div className="mb-4 sm:mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Genel Bakış</h1>
         <p className="text-gray-500 text-xs sm:text-sm">CompeteHive hesabınıza hoş geldiniz.</p>
+      </div>
+
+      <div className="mb-6 sm:mb-8 bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-3 sm:p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+          <div>
+            <p className="text-[11px] sm:text-xs text-gray-500 uppercase tracking-wide">
+              Sistem durumu
+            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]" />
+              <p className="text-sm sm:text-base text-emerald-300 font-medium">İzleme aktif</p>
+            </div>
+          </div>
+
+          <div className="sm:text-right">
+            <p className="text-[11px] sm:text-xs text-gray-500 uppercase tracking-wide">
+              Veri güncelliği
+            </p>
+            {latestMoverUpdate ? (
+              <>
+                <p className="text-sm sm:text-base text-white font-medium mt-1">
+                  Son hareket: {latestMoverUpdate.relative}
+                </p>
+                <p
+                  className="text-[11px] sm:text-xs text-gray-500 mt-0.5"
+                  title={latestMoverUpdate.exact}
+                >
+                  Son veri güncellemesi mevcut hareketler üzerinden gösterilir
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm sm:text-base text-white font-medium mt-1">
+                  Son hareketler mevcut verilerle gösteriliyor
+                </p>
+                <p className="text-[11px] sm:text-xs text-gray-500 mt-0.5">
+                  Yeni fiyat değişimleri algılandıkça bu panel güncellenir
+                </p>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Stats */}
