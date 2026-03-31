@@ -32,13 +32,13 @@ export default function Home() {
             <span className="text-hive-400 text-sm font-medium">Hive Ekosistemi Ürünü</span>
           </div>
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 sm:mb-6">
-            Rakiplerinizin fiyatlarını <br className="hidden sm:block" />
-            <span className="text-hive-500">otomatik takip edin</span>
+            Rakip fiyat değişimlerini anında görün, <br className="hidden sm:block" />
+            <span className="text-hive-500">fiyat kararlarınızı veriyle yönetin</span>
           </h1>
-          <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-2xl mx-auto px-2">
-            Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt&apos;teki
-            rakip fiyat değişikliklerinden anında haberdar olun. Fiyat stratejinizi veriye dayalı
-            oluşturun.
+          <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-3xl mx-auto px-2">
+            CompeteHive; Trendyol, Hepsiburada, Amazon TR ve diğer marketplace&apos;lerde rakip
+            ürünleri otomatik izler, değişimleri kaydeder ve size anında bildirir. Böylece manuel
+            kontrol yerine hızlı ve veriye dayalı fiyat kararları alırsınız.
           </p>
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4 px-4">
             <Link
@@ -69,34 +69,136 @@ export default function Home() {
         </div>
       </section>
 
+      {/* What is CompeteHive */}
+      <section className="py-12 sm:py-20 px-4 sm:px-6 border-t border-dark-900/60">
+        <div className="max-w-4xl mx-auto text-center">
+          <h2 className="text-3xl font-bold text-white mb-6">CompeteHive Nedir?</h2>
+          <div className="space-y-4 text-dark-300 leading-relaxed">
+            <p>
+              CompeteHive, e-ticaret satıcıları ve markalar için geliştirilmiş bir rakip fiyat
+              takibi ve fiyat istihbaratı platformudur.
+            </p>
+            <p>
+              Marketplace&apos;lerdeki rakip ürünleri ve fiyat değişimlerini otomatik olarak izler,
+              geçmiş veriyi kaydeder ve kritik hareketleri tek panelde görünür hale getirir.
+            </p>
+            <p>
+              Böylece ekipler manuel kontrol süreçlerinden çıkar; daha hızlı, daha tutarlı ve veriye
+              dayalı fiyatlandırma kararları alır.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="py-12 sm:py-20 px-4 sm:px-6">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-4">Nasıl Çalışır?</h2>
+          <p className="text-dark-400 text-center mb-12 max-w-2xl mx-auto">
+            Dakikalar içinde kurulum yapın, rakip hareketlerini otomatik izleyin ve fiyat
+            değişimlerine zaman kaybetmeden aksiyon verin.
+          </p>
+          <div className="grid gap-4 md:grid-cols-3">
+            {[
+              {
+                step: "1",
+                title: "Ürünlerinizi ekleyin",
+                desc: "Takip etmek istediğiniz ürünleri ve rakip ürün linklerini panele ekleyin.",
+              },
+              {
+                step: "2",
+                title: "CompeteHive otomatik izlesin",
+                desc: "Sistem seçtiğiniz marketplace&apos;leri düzenli aralıklarla tarayarak fiyat değişimlerini toplar.",
+              },
+              {
+                step: "3",
+                title: "Uyarı alın ve aksiyon verin",
+                desc: "Fiyat değiştiğinde anında bildirim alın, stratejinizi hızlıca güncelleyin.",
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                className="bg-dark-900 border border-dark-800 rounded-2xl p-6 hover:border-hive-500/30 transition"
+              >
+                <div className="w-8 h-8 rounded-full bg-hive-500/15 border border-hive-500/30 text-hive-400 text-sm font-semibold flex items-center justify-center mb-4">
+                  {item.step}
+                </div>
+                <h3 className="text-white font-semibold mb-2">{item.title}</h3>
+                <p className="text-dark-400 text-sm leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Benefits */}
+      <section className="py-12 sm:py-20 px-4 sm:px-6 border-y border-dark-900/60 bg-dark-950/40">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-4">Nasıl Fayda Sağlar?</h2>
+          <p className="text-dark-400 text-center mb-12 max-w-2xl mx-auto">
+            Teknik detaylardan öte, doğrudan iş sonuçlarını iyileştiren içgörülerle daha kontrollü
+            fiyat yönetimi yapın.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              {
+                title: "Satış kaybını azaltır",
+                desc: "Rakiplerin fiyat kırdığı anları hızlıca görün, geç kalmadan karşı hamle planlayın.",
+              },
+              {
+                title: "Kâr marjını korur",
+                desc: "Gereksiz indirimleri azaltın; fiyat düşürmeden önce piyasa verisiyle karar verin.",
+              },
+              {
+                title: "Zaman kazandırır",
+                desc: "Manuel fiyat kontrolünü otomasyona bırakın, ekiplerin operasyon yükünü hafifletin.",
+              },
+              {
+                title: "Karar kalitesini artırır",
+                desc: "Geçmiş fiyat hareketlerini görerek kısa vadeli değil, sürdürülebilir stratejiler oluşturun.",
+              },
+            ].map((benefit) => (
+              <div
+                key={benefit.title}
+                className="bg-dark-900 border border-dark-800 rounded-2xl p-6 hover:border-dark-700 transition"
+              >
+                <h3 className="text-white font-semibold mb-2">{benefit.title}</h3>
+                <p className="text-dark-400 text-sm leading-relaxed">{benefit.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Features */}
       <section id="features" className="py-12 sm:py-20 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-white text-center mb-4">Neden CompeteHive?</h2>
-          <p className="text-dark-400 text-center mb-16 max-w-xl mx-auto">
-            E-ticaret satıcıları için rakip fiyat istihbaratı
+          <p className="text-dark-400 text-center mb-16 max-w-2xl mx-auto">
+            Rakip hareketlerini tek panelde izleyin, fiyat değişimlerini kaçırmayın ve stratejinizi
+            daha hızlı güncelleyin.
           </p>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {[
               {
                 icon: "📊",
                 title: "Anlık Fiyat Takibi",
-                desc: "Marketplace fiyatlarını 5 dk sıklıkla otomatik tarayın.",
+                desc: "Seçili marketplace&apos;lerdeki fiyatları düzenli aralıklarla otomatik tarayın ve tek ekranda görün.",
               },
               {
                 icon: "🔔",
                 title: "Akıllı Uyarılar",
-                desc: "Fiyat değiştiğinde Telegram ve e-posta ile anında bildirim.",
+                desc: "Kritik fiyat değişimlerinde Telegram ve e-posta üzerinden gecikmeden bilgilendirilin.",
               },
               {
                 icon: "📈",
                 title: "Fiyat Geçmişi",
-                desc: "Grafiklerle fiyat trendlerini analiz edin.",
+                desc: "Geçmiş fiyat verilerini grafiklerle inceleyin, eğilimleri net biçimde analiz edin.",
               },
               {
                 icon: "🏪",
                 title: "Çoklu Marketplace",
-                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt tek panelden.",
+                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt&apos;ı tek panelden yönetin.",
               },
             ].map((f, i) => (
               <div
@@ -108,6 +210,45 @@ export default function Home() {
                   {f.title}
                 </h3>
                 <p className="text-dark-500 text-xs sm:text-sm leading-relaxed">{f.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Who is it for */}
+      <section className="py-12 sm:py-20 px-4 sm:px-6 border-t border-dark-900/60">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-4">Kimler İçin Uygun?</h2>
+          <p className="text-dark-400 text-center mb-12 max-w-2xl mx-auto">
+            Fiyat rekabetini yakından takip etmek ve karar hızını artırmak isteyen tüm e-ticaret
+            ekipleri için tasarlandı.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              {
+                title: "Marketplace satıcıları",
+                desc: "Rakip fiyatlarını düzenli izleyerek ürün bazında daha hızlı konumlanmak isteyen satıcılar.",
+              },
+              {
+                title: "Kendi markasını yöneten firmalar",
+                desc: "Farklı kanallardaki fiyat görünürlüğünü koruyup marka değerini sürdürülebilir yönetmek isteyen ekipler.",
+              },
+              {
+                title: "E-ticaret operasyon ekipleri",
+                desc: "Manuel kontrol yükünü azaltıp operasyonu otomatik ve ölçeklenebilir hale getirmek isteyen takımlar.",
+              },
+              {
+                title: "Fiyatlandırma ve kategori yöneticileri",
+                desc: "Kategori performansını veriye dayalı fiyat kararlarıyla iyileştirmeyi hedefleyen profesyoneller.",
+              },
+            ].map((audience) => (
+              <div
+                key={audience.title}
+                className="bg-dark-900 border border-dark-800 rounded-2xl p-6 hover:border-dark-700 transition"
+              >
+                <h3 className="text-white font-semibold mb-2">{audience.title}</h3>
+                <p className="text-dark-400 text-sm leading-relaxed">{audience.desc}</p>
               </div>
             ))}
           </div>
