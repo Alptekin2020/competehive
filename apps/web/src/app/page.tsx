@@ -4,6 +4,17 @@ import Link from "next/link";
 
 export default async function Home() {
   const { userId } = await auth();
+  const summaryStats = [
+    { label: "Takip Edilen Ürünler", value: "148", detail: "+12 bu hafta" },
+    { label: "Son 24 Saat Değişim", value: "36", detail: "12 kritik hareket" },
+    { label: "Aktif Uyarılar", value: "7", detail: "3 yüksek öncelik" },
+  ];
+  const trackedProducts = [
+    { name: "Philips Airfryer", marketplace: "Trendyol", price: "₺5.499", trend: "-3.2%" },
+    { name: "Stanley Termos", marketplace: "Hepsiburada", price: "₺1.849", trend: "+1.8%" },
+    { name: "Nike Sırt Çantası", marketplace: "Amazon TR", price: "₺1.199", trend: "-1.1%" },
+  ];
+  const trendBars = [42, 58, 36, 68, 50, 72, 63, 78, 69];
 
   return (
     <main className="min-h-screen bg-dark-1000">
@@ -59,45 +70,127 @@ export default async function Home() {
 
       {/* Hero */}
       <section className="pt-24 sm:pt-32 pb-12 sm:pb-20 px-4 sm:px-6">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-hive-500/10 border border-hive-500/20 rounded-full px-4 py-1.5 mb-8">
-            <div className="w-2 h-2 bg-hive-500 rounded-full animate-pulse" />
-            <span className="text-hive-400 text-sm font-medium">Hive Ekosistemi Ürünü</span>
-          </div>
-          <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 sm:mb-6">
-            Rakip fiyat değişimlerini anında görün, <br className="hidden sm:block" />
-            <span className="text-hive-500">fiyat kararlarınızı veriyle yönetin</span>
-          </h1>
-          <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-3xl mx-auto px-2">
-            CompeteHive; Trendyol, Hepsiburada, Amazon TR ve diğer marketplace&apos;lerde rakip
-            ürünleri otomatik izler, değişimleri kaydeder ve size anında bildirir. Böylece manuel
-            kontrol yerine hızlı ve veriye dayalı fiyat kararları alırsınız.
-          </p>
-          <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4 px-4">
-            <Link
-              href="/register"
-              className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center justify-center gap-2"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+        <div className="max-w-6xl mx-auto grid gap-8 lg:gap-12 lg:grid-cols-[1.1fr_0.9fr] items-center">
+          <div className="text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 bg-hive-500/10 border border-hive-500/20 rounded-full px-4 py-1.5 mb-8">
+              <div className="w-2 h-2 bg-hive-500 rounded-full animate-pulse" />
+              <span className="text-hive-400 text-sm font-medium">Hive Ekosistemi Ürünü</span>
+            </div>
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight mb-4 sm:mb-6">
+              Rakip fiyat değişimlerini anında görün, <br className="hidden sm:block" />
+              <span className="text-hive-500">fiyat kararlarınızı veriyle yönetin</span>
+            </h1>
+            <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-3xl lg:max-w-2xl mx-auto lg:mx-0 px-2 lg:px-0">
+              CompeteHive; Trendyol, Hepsiburada, Amazon TR ve diğer marketplace&apos;lerde rakip
+              ürünleri otomatik izler, değişimleri kaydeder ve size anında bildirir. Böylece manuel
+              kontrol yerine hızlı ve veriye dayalı fiyat kararları alırsınız.
+            </p>
+            <div className="flex flex-col sm:flex-row justify-center lg:justify-start gap-3 sm:gap-4 px-4 lg:px-0">
+              <Link
+                href="/register"
+                className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center justify-center gap-2"
               >
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              Ücretsiz Başla
-            </Link>
-            <Link
-              href="#features"
-              className="border border-dark-700 hover:border-dark-500 text-white px-8 py-3.5 rounded-xl font-medium transition text-center"
-            >
-              Nasıl Çalışır →
-            </Link>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                Ücretsiz Başla
+              </Link>
+              <Link
+                href="#features"
+                className="border border-dark-700 hover:border-dark-500 text-white px-8 py-3.5 rounded-xl font-medium transition text-center"
+              >
+                Nasıl Çalışır →
+              </Link>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="absolute -inset-1 rounded-3xl bg-gradient-to-b from-hive-500/20 via-hive-500/5 to-transparent blur-xl" />
+            <div className="relative bg-dark-900/90 border border-dark-700/80 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-black/40 backdrop-blur">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-hive-400/90">
+                    Canlı görünüm
+                  </p>
+                  <p className="text-white font-semibold">Örnek panel</p>
+                </div>
+                <span className="text-[11px] text-dark-400 bg-dark-800 px-2.5 py-1 rounded-full border border-dark-700">
+                  Son tarama: 5 dk önce
+                </span>
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-2 mb-4">
+                {summaryStats.map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="bg-dark-950/70 border border-dark-800 rounded-xl p-3"
+                  >
+                    <p className="text-[11px] text-dark-500 mb-1">{stat.label}</p>
+                    <p className="text-lg font-semibold text-white">{stat.value}</p>
+                    <p className="text-[11px] text-hive-400">{stat.detail}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-dark-950/70 border border-dark-800 rounded-2xl p-3 sm:p-4 mb-3">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium text-white">Takip edilen ürünler</p>
+                  <span className="text-[11px] text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-full px-2 py-0.5">
+                    Rakip sizden daha düşük
+                  </span>
+                </div>
+                <div className="space-y-2.5">
+                  {trackedProducts.map((product) => {
+                    const isNegative = product.trend.startsWith("-");
+                    return (
+                      <div key={product.name} className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">{product.name}</p>
+                          <p className="text-xs text-dark-500">{product.marketplace}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-medium text-white">{product.price}</p>
+                          <p
+                            className={`text-xs font-medium ${
+                              isNegative ? "text-emerald-400" : "text-amber-300"
+                            }`}
+                          >
+                            {product.trend}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="bg-dark-950/70 border border-dark-800 rounded-2xl p-3 sm:p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium text-white">Fiyat trendi (7 gün)</p>
+                  <p className="text-xs text-dark-500">Son 24 saatte 3 alarm üretildi</p>
+                </div>
+                <div className="h-20 flex items-end gap-1.5">
+                  {trendBars.map((bar, index) => (
+                    <div
+                      key={bar + index}
+                      className={`flex-1 rounded-t-md ${
+                        index > trendBars.length - 3 ? "bg-hive-400/70" : "bg-hive-500/35"
+                      }`}
+                      style={{ height: `${bar}%` }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
