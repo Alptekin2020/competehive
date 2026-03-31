@@ -1,6 +1,10 @@
+import { UserButton } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 
-export default function Home() {
+export default async function Home() {
+  const { userId } = await auth();
+
   return (
     <main className="min-h-screen bg-dark-1000">
       {/* Navbar */}
@@ -10,16 +14,45 @@ export default function Home() {
             <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-lg font-bold text-white">CompeteHive</span>
           </Link>
-          <div className="flex items-center gap-6">
-            <Link href="/login" className="text-dark-400 hover:text-white transition text-sm">
-              Giriş Yap
-            </Link>
-            <Link
-              href="/register"
-              className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition"
-            >
-              Ücretsiz Başla
-            </Link>
+          <div className="flex items-center gap-2 sm:gap-3">
+            {userId ? (
+              <>
+                <Link
+                  href="/dashboard"
+                  className="border border-dark-700 hover:border-hive-500/60 hover:text-hive-300 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold transition"
+                >
+                  Dashboard
+                </Link>
+                <div className="flex items-center justify-center rounded-full ring-1 ring-dark-700/80 bg-dark-900/80 p-1">
+                  <UserButton
+                    appearance={{
+                      elements: {
+                        avatarBox: "h-8 w-8",
+                        userButtonPopoverCard: "bg-dark-900 border border-dark-700 shadow-xl",
+                        userButtonPopoverActionButton: "text-dark-200 hover:bg-dark-800",
+                        userButtonPopoverActionButtonText: "text-dark-200",
+                        userButtonPopoverFooter: "hidden",
+                      },
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="text-dark-400 hover:text-white transition text-sm px-2 py-1"
+                >
+                  Giriş Yap
+                </Link>
+                <Link
+                  href="/register"
+                  className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold transition"
+                >
+                  Ücretsiz Başla
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>
