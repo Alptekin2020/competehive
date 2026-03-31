@@ -47,6 +47,41 @@ export default function DashboardPage() {
       .catch(() => {});
   }, []);
 
+  const formatPercent = (value: number) => {
+    const absValue = Math.abs(value);
+    return `${value > 0 ? "+" : "-"}%${absValue.toLocaleString("tr-TR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })}`;
+  };
+
+  const buildSummary = () => {
+    if (loading) {
+      return {
+        main: "Gösterge paneli hazırlanıyor...",
+        detail: "Son 24 saat özeti yükleniyor.",
+      };
+    }
+
+    if (!stats || stats.trackedProducts === 0) {
+      return {
+        main: "Henüz takip edilen ürün yok.",
+        detail: "İlk ürününüzü ekleyerek fiyat değişimlerini izlemeye başlayın.",
+      };
+    }
+
+    const main = `Şu anda ${stats.trackedProducts} ürün takip ediliyor. Son 24 saatte ${stats.priceChanges24h} fiyat değişimi tespit edildi ve ${stats.activeAlerts} aktif uyarı bulunuyor.`;
+
+    const topMover = movers[0];
+    const detail = topMover
+      ? `En dikkat çeken hareket: ${topMover.productName} ürününde ${formatPercent(topMover.priceChangePct)} fiyat değişimi.`
+      : "Son 24 saatte öne çıkan fiyat hareketi bulunmuyor.";
+
+    return { main, detail };
+  };
+
+  const summary = buildSummary();
+
   const statCards = [
     {
       label: "Takip Edilen",
@@ -81,8 +116,31 @@ export default function DashboardPage() {
   return (
     <div>
       <div className="mb-6 sm:mb-8">
-        <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Genel Bakış</h1>
-        <p className="text-gray-500 text-xs sm:text-sm">CompeteHive hesabınıza hoş geldiniz.</p>
+        <div className="flex items-center gap-2 mb-1.5">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Genel Bakış</h1>
+          {!loading && stats && stats.trackedProducts > 0 && (
+            <span className="text-[10px] sm:text-xs text-emerald-300 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-full">
+              Takip aktif
+            </span>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="space-y-2">
+            <div className="h-3.5 sm:h-4 bg-[#1A1A1E] border border-[#232327] rounded w-full max-w-4xl animate-pulse" />
+            <div className="h-3.5 sm:h-4 bg-[#1A1A1E] border border-[#232327] rounded w-[75%] max-w-3xl animate-pulse" />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <p className="text-gray-300 text-xs sm:text-sm leading-relaxed">{summary.main}</p>
+            <p className="text-gray-500 text-[11px] sm:text-xs leading-relaxed">{summary.detail}</p>
+            {stats && stats.trackedProducts > 0 && (
+              <p className="text-[10px] sm:text-xs text-gray-600">
+                Son 24 saat özeti baz alınmıştır.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Stats */}
