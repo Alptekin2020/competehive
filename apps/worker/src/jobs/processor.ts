@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
-import { normalizeProductImage } from "@competehive/shared";
+import { normalizeProductImage } from "../utils/normalize-product-image";
 
 const prisma = new PrismaClient();
 
