@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
+import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 
 interface OnboardJobData {
   productId: string;
@@ -34,10 +35,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
   // Mark as processing
   try {
-    await prisma.trackedProduct.update({
-      where: { id: productId },
-      data: { refreshStatus: "processing" },
-    });
+    await updateTrackedProductRefresh(productId, { refreshStatus: "processing" });
   } catch {
     // Product may not exist yet, continue
   }
@@ -59,13 +57,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     if (!results || results.length === 0) {
       console.log(`⚠️ Sonuç bulunamadı: ${title}`);
       // Mark as completed even with 0 results
-      await prisma.trackedProduct.update({
-        where: { id: productId },
-        data: {
-          refreshStatus: "completed",
-          refreshCompletedAt: new Date(),
-          refreshError: null,
-        },
+      await updateTrackedProductRefresh(productId, {
+        refreshStatus: "completed",
+        refreshCompletedAt: new Date(),
+        refreshError: null,
       });
       return { found: 0 };
     }
@@ -193,13 +188,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     }
 
     // Mark as completed
-    await prisma.trackedProduct.update({
-      where: { id: productId },
-      data: {
-        refreshStatus: "completed",
-        refreshCompletedAt: new Date(),
-        refreshError: null,
-      },
+    await updateTrackedProductRefresh(productId, {
+      refreshStatus: "completed",
+      refreshCompletedAt: new Date(),
+      refreshError: null,
     });
 
     console.log(`✅ ${productId}: ${savedCount} competitor bulundu ve kaydedildi`);
@@ -207,13 +199,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   } catch (error) {
     // Mark as failed
     try {
-      await prisma.trackedProduct.update({
-        where: { id: productId },
-        data: {
-          refreshStatus: "failed",
-          refreshCompletedAt: new Date(),
-          refreshError: error instanceof Error ? error.message : "Bilinmeyen hata",
-        },
+      await updateTrackedProductRefresh(productId, {
+        refreshStatus: "failed",
+        refreshCompletedAt: new Date(),
+        refreshError: error instanceof Error ? error.message : "Bilinmeyen hata",
       });
     } catch (statusUpdateError) {
       console.error("Failed to update refresh status:", statusUpdateError);
