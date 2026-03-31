@@ -13,6 +13,7 @@ import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 import { getPlanFeatures } from "@/lib/plan-gates";
+import { normalizeProductImage } from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 export async function GET() {
@@ -92,9 +93,16 @@ export async function GET() {
 
 // POST - Yeni urun ekle + AI analiz + capraz marketplace arama
 export async function POST(req: NextRequest) {
+  const logContext: {
+    userId?: string;
+    productUrl?: string;
+    marketplace?: string;
+  } = {};
+
   try {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
+    logContext.userId = user.id;
 
     // Rate limit: 10 products per minute per user
     const rl = await rateLimit(`rate:products:${user.id}`, 10, 60);
@@ -105,8 +113,10 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return badRequest(parsed.error.errors[0].message);
 
     const { productUrl } = parsed.data;
+    logContext.productUrl = productUrl;
 
     const marketplace = detectMarketplaceFromUrl(productUrl);
+    logContext.marketplace = marketplace;
 
     const productCount = await prisma.trackedProduct.count({
       where: { userId: user.id },
@@ -169,24 +179,8 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // 3. Görsel URL temizleme — bazen JSON object geliyor
-    let cleanImage: string | null = null;
-    if (scraped.image) {
-      if (typeof scraped.image === "string") {
-        cleanImage = scraped.image;
-      } else if (typeof scraped.image === "object") {
-        const imgObj = scraped.image as Record<string, unknown>;
-        if (imgObj.contentUrl) {
-          cleanImage = Array.isArray(imgObj.contentUrl)
-            ? (imgObj.contentUrl[0] as string)
-            : (imgObj.contentUrl as string);
-        } else if (imgObj.url) {
-          cleanImage = imgObj.url as string;
-        } else if (Array.isArray(imgObj) && imgObj.length > 0) {
-          cleanImage = typeof imgObj[0] === "string" ? imgObj[0] : null;
-        }
-      }
-    }
+    // 3. Görsel URL normalize et — Prisma String? alanına sadece string/null gitsin
+    const cleanImage = normalizeProductImage(scraped.image);
 
     // 4. Urunu veritabanina kaydet
     const productName = analysis.shortTitle || scraped.name;
@@ -263,6 +257,14 @@ export async function POST(req: NextRequest) {
       analysis,
     });
   } catch (error) {
+    logger.error(
+      {
+        route: "POST /api/products",
+        ...logContext,
+        err: error,
+      },
+      "Product creation failed",
+    );
     return serverError(error, "POST /api/products error");
   }
 }

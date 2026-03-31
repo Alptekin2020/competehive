@@ -1,6 +1,7 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
+import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 
 interface RefreshJobData {
   productId: string;
@@ -25,10 +26,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
   console.log(`🔄 Fiyat yenileniyor: ${product.productName} (${productId})`);
 
   // Mark as processing
-  await prisma.trackedProduct.update({
-    where: { id: productId },
-    data: { refreshStatus: "processing" },
-  });
+  await updateTrackedProductRefresh(productId, { refreshStatus: "processing" });
 
   try {
     // Serper'dan güncel fiyatları çek
@@ -110,13 +108,10 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     }
 
     // Mark as completed
-    await prisma.trackedProduct.update({
-      where: { id: productId },
-      data: {
-        refreshStatus: "completed",
-        refreshCompletedAt: new Date(),
-        refreshError: null,
-      },
+    await updateTrackedProductRefresh(productId, {
+      refreshStatus: "completed",
+      refreshCompletedAt: new Date(),
+      refreshError: null,
     });
 
     console.log(`✅ Refresh tamamlandı: ${productId} — ${updatedCount} competitor güncellendi`);
@@ -124,13 +119,10 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
   } catch (error) {
     // Mark as failed
     try {
-      await prisma.trackedProduct.update({
-        where: { id: productId },
-        data: {
-          refreshStatus: "failed",
-          refreshCompletedAt: new Date(),
-          refreshError: error instanceof Error ? error.message : "Bilinmeyen hata",
-        },
+      await updateTrackedProductRefresh(productId, {
+        refreshStatus: "failed",
+        refreshCompletedAt: new Date(),
+        refreshError: error instanceof Error ? error.message : "Bilinmeyen hata",
       });
     } catch (statusUpdateError) {
       console.error("Failed to update refresh status:", statusUpdateError);
