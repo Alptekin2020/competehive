@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
+import { normalizeProductImage } from "@competehive/shared";
 
 const prisma = new PrismaClient();
 
@@ -97,7 +98,7 @@ export const scrapeWorker = new Worker(
         data: {
           currentPrice: result.price,
           productName: result.name || undefined,
-          productImage: result.imageUrl || undefined,
+          productImage: normalizeProductImage(result.imageUrl),
           sellerName: result.sellerName || undefined,
           category: result.category || undefined,
           lastScrapedAt: new Date(),

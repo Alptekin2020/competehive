@@ -3,6 +3,7 @@
 // ============================================
 
 export { validateWebEnv, validateWorkerEnv, webEnvSchema, workerEnvSchema } from "./env";
+export { normalizeProductImage } from "./normalize-product-image";
 export type { WebEnv, WorkerEnv } from "./env";
 export type {
   TrackedProductRow,

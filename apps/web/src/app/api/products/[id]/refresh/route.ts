@@ -5,6 +5,7 @@ import { unauthorized, notFound, serverError } from "@/lib/api-response";
 import { NextRequest, NextResponse } from "next/server";
 import { applyRateLimit } from "@/lib/with-rate-limit";
 import { RATE_LIMITS } from "@/lib/rate-limit";
+import { updateTrackedProductRefresh } from "@/lib/tracked-product-refresh";
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -31,14 +32,11 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     // Update product status to pending
-    await prisma.trackedProduct.update({
-      where: { id: productId },
-      data: {
-        refreshStatus: "pending",
-        refreshRequestedAt: new Date(),
-        refreshCompletedAt: null,
-        refreshError: null,
-      },
+    await updateTrackedProductRefresh(productId, {
+      refreshStatus: "pending",
+      refreshRequestedAt: new Date(),
+      refreshCompletedAt: null,
+      refreshError: null,
     });
 
     // Add job to BullMQ queue
