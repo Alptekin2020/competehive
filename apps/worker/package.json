@@ -10,7 +10,6 @@
     "lint": "eslint . --ext .ts && tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@competehive/shared": "*",
     "@prisma/client": "^6.4.0",
     "bullmq": "^5.30.0",
     "cheerio": "^1.0.0",
