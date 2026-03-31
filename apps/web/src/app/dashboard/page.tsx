@@ -49,32 +49,32 @@ export default function DashboardPage() {
 
   const statCards = [
     {
-      label: "Takip Edilen",
+      label: "Takip Edilen Ürünler",
       value: stats?.trackedProducts ?? 0,
-      sub: "ürün",
+      sub: "toplam ürün",
       icon: "📦",
       href: "/dashboard/products",
     },
     {
-      label: "Fiyat Değişimi",
+      label: "Son 24 Saat Değişim",
       value: stats?.priceChanges24h ?? 0,
-      sub: "son 24 saat",
-      icon: "📊",
+      sub: "fiyat güncellemesi",
+      icon: "📈",
       href: "/dashboard/products",
     },
     {
-      label: "Rakip Sayısı",
-      value: stats?.trackedProducts ?? 0,
-      sub: "toplam",
-      icon: "🏪",
-      href: "/dashboard/products",
-    },
-    {
-      label: "Aktif Uyarı",
+      label: "Aktif Uyarılar",
       value: stats?.activeAlerts ?? 0,
-      sub: "kural",
+      sub: "çalışan kural",
       icon: "🔔",
       href: "/dashboard/alerts",
+    },
+    {
+      label: "Okunmamış Bildirimler",
+      value: stats?.unreadNotifications ?? 0,
+      sub: "incelemeyi bekliyor",
+      icon: "📬",
+      href: "/dashboard/notifications",
     },
   ];
 
