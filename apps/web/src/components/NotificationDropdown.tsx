@@ -139,10 +139,22 @@ export default function NotificationDropdown() {
       {/* Bell Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative text-dark-400 hover:text-white transition p-2"
+        aria-label={
+          unreadCount > 0 ? `${unreadCount} okunmamış bildiriminiz var` : "Bildirimleri görüntüle"
+        }
+        title={
+          unreadCount > 0 ? `${unreadCount} okunmamış bildiriminiz var` : "Bildirimleri görüntüle"
+        }
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        className={`relative h-10 sm:h-11 rounded-xl border px-2.5 sm:px-3 flex items-center gap-2 transition ${
+          isOpen
+            ? "border-hive-500/50 bg-hive-500/10 text-white"
+            : "border-dark-700 bg-dark-900/80 text-dark-300 hover:text-white hover:border-dark-600"
+        }`}
       >
         <svg
-          className="w-5 h-5"
+          className="w-5 h-5 shrink-0"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -153,10 +165,11 @@ export default function NotificationDropdown() {
           <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
           <path d="M13.73 21a2 2 0 01-3.46 0" />
         </svg>
+        <span className="hidden sm:inline text-sm font-medium">Bildirimler</span>
 
         {/* Unread Badge */}
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-hive-500 text-dark-1000 text-[10px] font-semibold rounded-full flex items-center justify-center px-1 ring-2 ring-dark-950">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}

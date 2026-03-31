@@ -244,9 +244,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </svg>
           </button>
           <div className="flex-1" />
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-3 bg-dark-900/70 border border-dark-800 rounded-2xl px-2 py-1.5 sm:px-2.5">
             <NotificationDropdown />
-            <UserButton />
+            <div className="h-10 w-10 sm:h-11 sm:w-11 flex items-center justify-center rounded-xl border border-dark-700 bg-dark-900/80">
+              <UserButton />
+            </div>
           </div>
         </header>
 
