@@ -122,9 +122,16 @@ function prepareChartData(history: PriceHistoryEntry[], ownSellerHints: string[]
           ? competitorEntries.reduce((acc, [, price]) => acc + price, 0) / competitorEntries.length
           : null;
 
+      const ownEntries = sellerEntries.filter(([seller]) => {
+        const normalizedSeller = seller.toLowerCase();
+        return ownHints.some((hint) => normalizedSeller.includes(hint));
+      });
+      const ownPriceLine = ownEntries.length > 0 ? ownEntries[ownEntries.length - 1][1] : null;
+
       return {
         ...row,
         date,
+        ownPriceLine,
         lowestCompetitor,
         avgCompetitor,
       };
@@ -363,14 +370,31 @@ export default function ProductDetailPage() {
           .sort((a, b) => a - b)
           .indexOf(ownPrice) + 1
       : null;
+  const rankLabel =
+    ownRankAmongAll !== null && validCompetitors.length >= 2
+      ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
+      : "Yeterli rakip verisi yok";
 
   const weakCompetitors = competitors.filter((c) => c.matchScore !== null && c.matchScore < 70);
+  const staleCompetitors = competitors.filter((c) => {
+    if (!c.lastScrapedAt) return true;
+    const ageHours = (now.getTime() - new Date(c.lastScrapedAt).getTime()) / (1000 * 60 * 60);
+    return ageHours > 72;
+  });
   const hasSuspiciousSignal = weakCompetitors.length > 0;
   const freshnessBaseDate = product.refreshCompletedAt || product.lastScrapedAt;
   const freshnessHours = freshnessBaseDate
     ? (now.getTime() - new Date(freshnessBaseDate).getTime()) / (1000 * 60 * 60)
     : null;
   const isFresh = freshnessHours !== null ? freshnessHours <= 24 : false;
+  const freshnessLabel =
+    freshnessHours === null
+      ? "Yenileme zamanı bilinmiyor"
+      : freshnessHours <= 24
+        ? "Veri güncel (24s içinde)"
+        : freshnessHours <= 72
+          ? "Kısmen güncel (72s içinde)"
+          : "Veri eski olabilir";
 
   const marketPositionLabel = (() => {
     if (!ownPrice || validCompetitors.length === 0) return "Rakip verisi yetersiz";
@@ -542,13 +566,12 @@ export default function ProductDetailPage() {
             </div>
             <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
               <p className="text-gray-500 text-xs mb-1">Sıralama</p>
-              <p className="text-white font-semibold">
-                {ownRankAmongAll !== null
-                  ? `${validCompetitors.length + 1} fiyat içinde ${ownRankAmongAll}. en ucuz`
-                  : "Hesaplanamadı"}
-              </p>
+              <p className="text-white font-semibold">{rankLabel}</p>
             </div>
           </div>
+          <p className="mt-3 text-xs text-gray-500">
+            Konum, yalnızca geçerli fiyatı olan rakiplere göre hesaplanır.
+          </p>
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5">
           <h3 className="text-white font-semibold mb-3">Veri Kalitesi / Güven</h3>
@@ -573,6 +596,10 @@ export default function ProductDetailPage() {
               <span>Şüpheli eşleşme</span>
               <span className="text-white">{weakCompetitors.length}</span>
             </li>
+            <li className="flex justify-between text-gray-300">
+              <span>Eski / eksik rakip verisi</span>
+              <span className="text-white">{staleCompetitors.length}</span>
+            </li>
             <li className="pt-2 border-t border-[#1F1F23]">
               <span
                 className={`inline-flex px-2.5 py-1 rounded-full text-xs border ${
@@ -581,7 +608,7 @@ export default function ProductDetailPage() {
                     : "text-amber-300 bg-amber-500/10 border-amber-500/30"
                 }`}
               >
-                {isFresh ? "Veri güncel (24s içinde)" : "Veri eski olabilir"}
+                {freshnessLabel}
               </span>
             </li>
           </ul>
@@ -604,7 +631,7 @@ export default function ProductDetailPage() {
                   : "Hesaplanamadı"}
               </p>
               <p className="text-[11px] text-gray-500 mt-1">
-                En düşük rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
+                En düşük geçerli rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
               </p>
             </div>
             <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
@@ -759,6 +786,15 @@ export default function ProductDetailPage() {
                         connectNulls
                       />
                     ))}
+                    <Line
+                      type="monotone"
+                      dataKey="ownPriceLine"
+                      name="Benim Fiyatım"
+                      stroke="#F59E0B"
+                      strokeWidth={3.5}
+                      dot={false}
+                      connectNulls
+                    />
                     <Line
                       type="monotone"
                       dataKey="lowestCompetitor"
@@ -920,6 +956,11 @@ export default function ProductDetailPage() {
                               >
                                 {diff > 0 ? "+" : ""}
                                 {diff.toFixed(1)}%
+                              </p>
+                            )}
+                            {competitor.lastScrapedAt && (
+                              <p className="text-[11px] text-gray-500 mt-0.5">
+                                {timeAgo(competitor.lastScrapedAt)}
                               </p>
                             )}
                           </>
