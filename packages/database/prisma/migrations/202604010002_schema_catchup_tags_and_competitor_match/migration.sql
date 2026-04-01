@@ -18,6 +18,34 @@ CREATE TABLE IF NOT EXISTS "product_tags" (
     CONSTRAINT "product_tags_pkey" PRIMARY KEY ("product_id", "tag_id")
 );
 
+-- Normalize FK column types to whatever existing baseline tables currently use
+-- (some production databases still have UUID ids from older pre-Prisma baselines).
+DO $$
+DECLARE
+  users_id_udt TEXT;
+  tracked_products_id_udt TEXT;
+BEGIN
+  SELECT c.udt_name INTO users_id_udt
+  FROM information_schema.columns c
+  WHERE c.table_schema = 'public' AND c.table_name = 'users' AND c.column_name = 'id';
+
+  IF users_id_udt = 'uuid' THEN
+    ALTER TABLE "tags" ALTER COLUMN "user_id" TYPE UUID USING "user_id"::uuid;
+  ELSE
+    ALTER TABLE "tags" ALTER COLUMN "user_id" TYPE TEXT USING "user_id"::text;
+  END IF;
+
+  SELECT c.udt_name INTO tracked_products_id_udt
+  FROM information_schema.columns c
+  WHERE c.table_schema = 'public' AND c.table_name = 'tracked_products' AND c.column_name = 'id';
+
+  IF tracked_products_id_udt = 'uuid' THEN
+    ALTER TABLE "product_tags" ALTER COLUMN "product_id" TYPE UUID USING "product_id"::uuid;
+  ELSE
+    ALTER TABLE "product_tags" ALTER COLUMN "product_id" TYPE TEXT USING "product_id"::text;
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS "tags_user_id_name_key"
 ON "tags"("user_id", "name");
 
