@@ -43,6 +43,20 @@ function parsePrice(priceStr: string): number | null {
   return isNaN(num) ? null : num;
 }
 
+function pickValidPrice(...prices: Array<number | null | undefined>): number | null {
+  for (const price of prices) {
+    if (typeof price === "number" && Number.isFinite(price) && price > 0) return price;
+  }
+  return null;
+}
+
+function pickString(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
 // Görsel URL'yi temizle — bazen JSON object geliyor, string olmalı
 function cleanImageUrl(img: unknown): string | null {
   if (!img) return null;
@@ -80,12 +94,20 @@ function extractFromJsonLd($: cheerio.CheerioAPI): {
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const json = JSON.parse($(el).html() || "");
-      const product = json["@type"] === "Product" ? json : null;
+      const product =
+        json?.["@type"] === "Product"
+          ? json
+          : Array.isArray(json?.["@graph"])
+            ? json["@graph"].find((item: Record<string, unknown>) => item?.["@type"] === "Product")
+            : null;
       if (product) {
         if (!name) name = product.name || "";
         if (!image) image = cleanImageUrl(product.image);
         const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
-        if (!price && offers?.price) price = parseFloat(offers.price);
+        if (!price && offers?.price) {
+          const parsed = parsePrice(String(offers.price));
+          if (parsed && parsed > 0) price = parsed;
+        }
         if (!seller && offers?.seller?.name) seller = offers.seller.name;
       }
     } catch {
@@ -94,6 +116,76 @@ function extractFromJsonLd($: cheerio.CheerioAPI): {
   });
 
   return { name, price, image, seller };
+}
+
+export async function scrapeMediaMarkt(url: string): Promise<ScrapedProduct> {
+  try {
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) throw new Error(`Status: ${res.status}`);
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const jsonLd = extractFromJsonLd($);
+    const meta = extractFromMeta($);
+
+    const metaPrice = parsePrice(
+      $("meta[property='product:price:amount']").attr("content") ||
+        $("meta[property='og:price:amount']").attr("content") ||
+        $("meta[itemprop='price']").attr("content") ||
+        "",
+    );
+
+    const selectorName = pickString(
+      $("h1[data-test='product-title']").first().text(),
+      $("h1[data-test='mms-product-name']").first().text(),
+      $("h1[data-test-id='pdp-product-name']").first().text(),
+      $("h1").first().text(),
+    );
+
+    const selectorPrice = pickValidPrice(
+      parsePrice($("[data-test='branded-price-whole-value']").first().text()),
+      parsePrice($("[data-test='product-price']").first().text()),
+      parsePrice($("[data-test='mms-price']").first().text()),
+      parsePrice($("[itemprop='price']").first().attr("content") || ""),
+      parsePrice($(".price").first().text()),
+    );
+
+    const selectorImage = pickString(
+      $("img[data-test='product-image']").first().attr("src"),
+      $("img[data-test='product-image']").first().attr("data-src"),
+      $("img[itemprop='image']").first().attr("src"),
+      $("meta[property='og:image']").attr("content"),
+    );
+
+    const selectorSeller = pickString(
+      $("[data-test='marketplace-seller-name']").first().text(),
+      $("[data-test='sold-and-shipped-by']").first().text(),
+      $("[itemprop='seller']").first().text(),
+    );
+
+    return {
+      name:
+        pickString(jsonLd.name, selectorName, meta.name, "MediaMarkt ürünü") || "MediaMarkt ürünü",
+      price: pickValidPrice(jsonLd.price, selectorPrice, metaPrice),
+      currency: "TRY",
+      image: pickString(jsonLd.image, selectorImage, meta.image),
+      seller: pickString(jsonLd.seller, selectorSeller),
+      inStock:
+        !html.toLowerCase().includes("out-of-stock") &&
+        !html.toLowerCase().includes("stokta yok") &&
+        !html.toLowerCase().includes("ürün tükendi"),
+    };
+  } catch (e) {
+    console.error("MediaMarkt scrape error:", e);
+    return {
+      name: "MediaMarkt ürünü",
+      price: null,
+      currency: "TRY",
+      image: null,
+      seller: null,
+      inStock: true,
+    };
+  }
 }
 
 // Meta tag'lardan bilgi çek
@@ -383,6 +475,8 @@ export async function scrapeProduct(url: string, marketplace: string): Promise<S
       return scrapeAmazonTR(url);
     case "N11":
       return scrapeN11(url);
+    case "MEDIAMARKT":
+      return scrapeMediaMarkt(url);
     default:
       return scrapeGeneric(url, marketplace);
   }

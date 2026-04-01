@@ -707,6 +707,98 @@ export async function scrapeN11(url: string, config: ScraperConfig = {}): Promis
 }
 
 // ============================================
+// MEDIAMARKT SCRAPER
+// ============================================
+
+function parseMediaMarktHtml(html: string): ScrapedProduct | null {
+  const $ = cheerio.load(html);
+
+  const holder: { data: Partial<ScrapedProduct> } = { data: {} };
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (holder.data.price && holder.data.price > 0) return;
+    const jsonLd = $(el).html();
+    if (!jsonLd) return;
+    try {
+      const ld = JSON.parse(jsonLd);
+      const product =
+        ld?.["@type"] === "Product"
+          ? ld
+          : Array.isArray(ld?.["@graph"])
+            ? ld["@graph"].find((item: Record<string, unknown>) => item?.["@type"] === "Product")
+            : null;
+      if (product) {
+        const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+        const price = parsePrice(String(offer?.price || ""));
+        holder.data = {
+          name: product.name || undefined,
+          price,
+          currency: offer?.priceCurrency || "TRY",
+          inStock: offer?.availability?.includes("InStock") ?? true,
+          imageUrl: Array.isArray(product.image) ? product.image[0] : product.image || undefined,
+          sellerName: offer?.seller?.name || undefined,
+        };
+      }
+    } catch {
+      // continue
+    }
+  });
+
+  const parsedFromLd = holder.data;
+
+  const htmlName =
+    $('h1[data-test="product-title"]').first().text().trim() ||
+    $('h1[data-test="mms-product-name"]').first().text().trim() ||
+    $("h1").first().text().trim();
+
+  const htmlPrice = parsePrice(
+    $('[data-test="branded-price-whole-value"]').first().text().trim() ||
+      $('[data-test="product-price"]').first().text().trim() ||
+      $('[itemprop="price"]').attr("content") ||
+      $(".price").first().text().trim(),
+  );
+
+  const imageUrl =
+    $('img[data-test="product-image"]').first().attr("src") ||
+    $('img[data-test="product-image"]').first().attr("data-src") ||
+    $('meta[property="og:image"]').attr("content");
+
+  const sellerName =
+    $('[data-test="marketplace-seller-name"]').first().text().trim() ||
+    $('[data-test="sold-and-shipped-by"]').first().text().trim() ||
+    undefined;
+
+  const htmlLower = html.toLowerCase();
+  const inStock =
+    !htmlLower.includes("out-of-stock") &&
+    !htmlLower.includes("stokta yok") &&
+    !htmlLower.includes("ürün tükendi");
+
+  const result: ScrapedProduct = {
+    name: parsedFromLd.name || htmlName,
+    price: parsedFromLd.price || htmlPrice,
+    currency: parsedFromLd.currency || "TRY",
+    inStock: parsedFromLd.inStock ?? inStock,
+    sellerName: parsedFromLd.sellerName || sellerName,
+    imageUrl: parsedFromLd.imageUrl || imageUrl || undefined,
+  };
+
+  if (result.name || result.price > 0) {
+    return result;
+  }
+
+  return null;
+}
+
+export async function scrapeMediaMarkt(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  logger.info(`Scraping MediaMarkt: ${url}`);
+  return scrapeWithFallbackCached(url, config, parseMediaMarktHtml, "MediaMarkt");
+}
+
+// ============================================
 // GENERIC SCRAPER (JSON-LD + Meta Tags)
 // ============================================
 
@@ -816,8 +908,9 @@ export function getScraper(marketplace: string) {
     case "TEKNOSA":
     case "VATAN":
     case "DECATHLON":
-    case "MEDIAMARKT":
       return scrapeGeneric;
+    case "MEDIAMARKT":
+      return scrapeMediaMarkt;
     default:
       // Fallback to generic for unknown marketplaces
       logger.warn(`No specific scraper for ${marketplace}, using generic`);
