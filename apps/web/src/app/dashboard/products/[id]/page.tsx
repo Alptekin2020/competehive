@@ -85,7 +85,10 @@ function retailerColor(name: string): string {
 function prepareChartData(history: PriceHistoryEntry[], ownSellerHints: string[]) {
   const byDate: Record<
     string,
-    Record<string, number | string> & { _timestamp: number; _prices: Record<string, number> }
+    { _timestamp: number; _prices: Record<string, number> } & Record<
+      string,
+      number | Record<string, number>
+    >
   > = {};
   const ownHints = ownSellerHints.map((hint) => hint.toLowerCase());
 
@@ -96,7 +99,8 @@ function prepareChartData(history: PriceHistoryEntry[], ownSellerHints: string[]
       day: "2-digit",
       month: "2-digit",
     });
-    if (!byDate[date]) byDate[date] = { _timestamp: entryDate.getTime(), _prices: {} };
+    if (!byDate[date])
+      byDate[date] = { _timestamp: entryDate.getTime(), _prices: {} as Record<string, number> };
     byDate[date][seller] = Number(entry.price);
     byDate[date]._prices[seller] = Number(entry.price);
   }
@@ -370,6 +374,7 @@ export default function ProductDetailPage() {
 
   const marketPositionLabel = (() => {
     if (!ownPrice || validCompetitors.length === 0) return "Rakip verisi yetersiz";
+    if (absoluteDiffToCheapest === null) return "Rakip verisi yetersiz";
     if (absoluteDiffToCheapest === 0) return "En düşük fiyat";
     if (absoluteDiffToCheapest < 0) return "Piyasa altında";
     return "Rakipten pahalı";
