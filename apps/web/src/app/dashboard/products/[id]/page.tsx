@@ -61,6 +61,10 @@ interface ProductData {
   competitors: CompetitorEntry[];
 }
 
+type CompetitorSort = "lowest" | "highest" | "closest";
+type CompetitorFilter = "all" | "priced" | "suspicious";
+type TimeRange = "7d" | "30d" | "all";
+
 // Retailer renklerini döndür
 function retailerColor(name: string): string {
   const map: Record<string, string> = {
@@ -78,20 +82,54 @@ function retailerColor(name: string): string {
 }
 
 // price_history'yi Recharts için hazırla
-function prepareChartData(history: PriceHistoryEntry[]) {
-  const byDate: Record<string, Record<string, number>> = {};
+function prepareChartData(history: PriceHistoryEntry[], ownSellerHints: string[]) {
+  const byDate: Record<
+    string,
+    { _timestamp: number; _prices: Record<string, number> } & Record<
+      string,
+      number | Record<string, number>
+    >
+  > = {};
+  const ownHints = ownSellerHints.map((hint) => hint.toLowerCase());
 
   for (const entry of history) {
     const seller = entry.sellerName || "Bilinmeyen";
-    const date = new Date(entry.scrapedAt).toLocaleDateString("tr-TR", {
+    const entryDate = new Date(entry.scrapedAt);
+    const date = entryDate.toLocaleDateString("tr-TR", {
       day: "2-digit",
       month: "2-digit",
     });
-    if (!byDate[date]) byDate[date] = {};
+    if (!byDate[date])
+      byDate[date] = { _timestamp: entryDate.getTime(), _prices: {} as Record<string, number> };
     byDate[date][seller] = Number(entry.price);
+    byDate[date]._prices[seller] = Number(entry.price);
   }
 
-  return Object.entries(byDate).map(([date, prices]) => ({ date, ...prices }));
+  return Object.entries(byDate)
+    .map(([date, row]) => {
+      const sellerEntries = Object.entries(row._prices);
+      const competitorEntries = sellerEntries.filter(([seller]) => {
+        const normalizedSeller = seller.toLowerCase();
+        return !ownHints.some((hint) => normalizedSeller.includes(hint));
+      });
+
+      const lowestCompetitor =
+        competitorEntries.length > 0
+          ? Math.min(...competitorEntries.map(([, price]) => price))
+          : null;
+      const avgCompetitor =
+        competitorEntries.length > 0
+          ? competitorEntries.reduce((acc, [, price]) => acc + price, 0) / competitorEntries.length
+          : null;
+
+      return {
+        ...row,
+        date,
+        lowestCompetitor,
+        avgCompetitor,
+      };
+    })
+    .sort((a, b) => a._timestamp - b._timestamp);
 }
 
 function formatPrice(price: number, currency = "TRY") {
@@ -147,6 +185,9 @@ export default function ProductDetailPage() {
   const [isComparing, setIsComparing] = useState(false);
   const [compareStatus, setCompareStatus] = useState<string | null>(null);
   const [compareError, setCompareError] = useState<string | null>(null);
+  const [competitorSort, setCompetitorSort] = useState<CompetitorSort>("lowest");
+  const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>("all");
+  const [timeRange, setTimeRange] = useState<TimeRange>("30d");
 
   const fetchProduct = useCallback(async () => {
     setLoading(true);
@@ -279,8 +320,19 @@ export default function ProductDetailPage() {
 
   const priceHistory = product.priceHistory || [];
   const competitors = product.competitors || [];
-  const chartData = prepareChartData(priceHistory);
-  const retailers = [...new Set(priceHistory.map((h) => h.sellerName || "Bilinmeyen"))];
+  const ownSellerHints = ["Benim Ürünüm", "Kendi Mağazam", product.marketplace];
+  const now = new Date();
+  const rangeStart =
+    timeRange === "7d"
+      ? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+      : timeRange === "30d"
+        ? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        : null;
+  const filteredHistory = rangeStart
+    ? priceHistory.filter((entry) => new Date(entry.scrapedAt) >= rangeStart)
+    : priceHistory;
+  const chartData = prepareChartData(filteredHistory, ownSellerHints);
+  const retailers = [...new Set(filteredHistory.map((h) => h.sellerName || "Bilinmeyen"))];
 
   // Stats
   const ownPrice = product.currentPrice ? Number(product.currentPrice) : null;
@@ -292,6 +344,81 @@ export default function ProductDetailPage() {
   const highestPrice = allPrices.length > 0 ? Math.max(...allPrices) : null;
   const avgPrice =
     allPrices.length > 0 ? allPrices.reduce((a, b) => a + b, 0) / allPrices.length : null;
+  const validCompetitors = competitors.filter((c) => c.currentPrice && Number(c.currentPrice) > 0);
+  const cheapestCompetitor = validCompetitors
+    .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
+    .sort((a, b) => a.parsedPrice - b.parsedPrice)[0];
+  const cheapestCompetitorPrice = cheapestCompetitor?.parsedPrice ?? null;
+  const absoluteDiffToCheapest =
+    ownPrice !== null && ownPrice > 0 && cheapestCompetitorPrice !== null
+      ? ownPrice - cheapestCompetitorPrice
+      : null;
+  const percentageDiffToCheapest =
+    absoluteDiffToCheapest !== null && cheapestCompetitorPrice && cheapestCompetitorPrice > 0
+      ? (absoluteDiffToCheapest / cheapestCompetitorPrice) * 100
+      : null;
+  const ownRankAmongAll =
+    ownPrice !== null && ownPrice > 0
+      ? [...validCompetitors.map((c) => Number(c.currentPrice)), ownPrice]
+          .sort((a, b) => a - b)
+          .indexOf(ownPrice) + 1
+      : null;
+
+  const weakCompetitors = competitors.filter((c) => c.matchScore !== null && c.matchScore < 70);
+  const hasSuspiciousSignal = weakCompetitors.length > 0;
+  const freshnessBaseDate = product.refreshCompletedAt || product.lastScrapedAt;
+  const freshnessHours = freshnessBaseDate
+    ? (now.getTime() - new Date(freshnessBaseDate).getTime()) / (1000 * 60 * 60)
+    : null;
+  const isFresh = freshnessHours !== null ? freshnessHours <= 24 : false;
+
+  const marketPositionLabel = (() => {
+    if (!ownPrice || validCompetitors.length === 0) return "Rakip verisi yetersiz";
+    if (absoluteDiffToCheapest === null) return "Rakip verisi yetersiz";
+    if (absoluteDiffToCheapest === 0) return "En düşük fiyat";
+    if (absoluteDiffToCheapest < 0) return "Piyasa altında";
+    return "Rakipten pahalı";
+  })();
+  const marketPositionClass = (() => {
+    if (marketPositionLabel === "En düşük fiyat")
+      return "text-emerald-300 bg-emerald-500/10 border-emerald-500/30";
+    if (marketPositionLabel === "Piyasa altında")
+      return "text-green-300 bg-green-500/10 border-green-500/30";
+    if (marketPositionLabel === "Rakipten pahalı")
+      return "text-rose-300 bg-rose-500/10 border-rose-500/30";
+    return "text-amber-300 bg-amber-500/10 border-amber-500/30";
+  })();
+
+  const undercutSuggestion =
+    cheapestCompetitorPrice && cheapestCompetitorPrice > 1 ? cheapestCompetitorPrice - 1 : null;
+  const top3AvgSuggestion =
+    validCompetitors.length >= 3
+      ? validCompetitors
+          .map((c) => Number(c.currentPrice))
+          .sort((a, b) => a - b)
+          .slice(0, 3)
+          .reduce((acc, price) => acc + price, 0) / 3
+      : null;
+
+  const filteredCompetitors = competitors
+    .filter((competitor) => {
+      if (competitorFilter === "priced")
+        return !!competitor.currentPrice && Number(competitor.currentPrice) > 0;
+      if (competitorFilter === "suspicious")
+        return competitor.matchScore !== null && competitor.matchScore < 70;
+      return true;
+    })
+    .sort((a, b) => {
+      const aPrice = a.currentPrice ? Number(a.currentPrice) : Number.POSITIVE_INFINITY;
+      const bPrice = b.currentPrice ? Number(b.currentPrice) : Number.POSITIVE_INFINITY;
+
+      if (competitorSort === "highest") return bPrice - aPrice;
+      if (competitorSort === "closest") {
+        const base = ownPrice ?? 0;
+        return Math.abs(aPrice - base) - Math.abs(bPrice - base);
+      }
+      return aPrice - bPrice;
+    });
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -387,6 +514,116 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
+      {/* Karar Kartları */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
+        <div className="bg-gradient-to-br from-[#151518] to-[#101012] border border-[#2A2A2F] rounded-2xl p-5 sm:p-6 lg:col-span-2">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <h2 className="text-white font-semibold text-lg">Piyasa Pozisyonu</h2>
+            <span className={`text-xs px-2.5 py-1 rounded-full border ${marketPositionClass}`}>
+              {marketPositionLabel}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
+              <p className="text-gray-500 text-xs mb-1">En düşük rakibe fark (TL)</p>
+              <p className="text-white font-semibold">
+                {absoluteDiffToCheapest !== null
+                  ? `${absoluteDiffToCheapest > 0 ? "+" : ""}${formatPrice(absoluteDiffToCheapest, product.currency)}`
+                  : "—"}
+              </p>
+            </div>
+            <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
+              <p className="text-gray-500 text-xs mb-1">En düşük rakibe fark (%)</p>
+              <p className="text-white font-semibold">
+                {percentageDiffToCheapest !== null
+                  ? `${percentageDiffToCheapest > 0 ? "+" : ""}${percentageDiffToCheapest.toFixed(1)}%`
+                  : "—"}
+              </p>
+            </div>
+            <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
+              <p className="text-gray-500 text-xs mb-1">Sıralama</p>
+              <p className="text-white font-semibold">
+                {ownRankAmongAll !== null
+                  ? `${validCompetitors.length + 1} fiyat içinde ${ownRankAmongAll}. en ucuz`
+                  : "Hesaplanamadı"}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5">
+          <h3 className="text-white font-semibold mb-3">Veri Kalitesi / Güven</h3>
+          <ul className="space-y-2 text-sm">
+            <li className="flex justify-between text-gray-300">
+              <span>Son yenileme</span>
+              <span className="text-white">
+                {freshnessBaseDate
+                  ? new Date(freshnessBaseDate).toLocaleString("tr-TR")
+                  : "Bilinmiyor"}
+              </span>
+            </li>
+            <li className="flex justify-between text-gray-300">
+              <span>Rakip sayısı</span>
+              <span className="text-white">{competitors.length}</span>
+            </li>
+            <li className="flex justify-between text-gray-300">
+              <span>Geçerli fiyatı olan</span>
+              <span className="text-white">{validCompetitors.length}</span>
+            </li>
+            <li className="flex justify-between text-gray-300">
+              <span>Şüpheli eşleşme</span>
+              <span className="text-white">{weakCompetitors.length}</span>
+            </li>
+            <li className="pt-2 border-t border-[#1F1F23]">
+              <span
+                className={`inline-flex px-2.5 py-1 rounded-full text-xs border ${
+                  isFresh
+                    ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
+                    : "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                }`}
+              >
+                {isFresh ? "Veri güncel (24s içinde)" : "Veri eski olabilir"}
+              </span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6">
+        <h3 className="text-white font-semibold mb-2">Önerilen Fiyat</h3>
+        {validCompetitors.length === 0 ? (
+          <p className="text-sm text-gray-400">Öneri üretmek için yeterli rakip verisi yok.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
+              <p className="text-xs text-gray-500 mb-1">
+                En düşük rakibi geçmek için önerilen fiyat
+              </p>
+              <p className="text-lg font-semibold text-emerald-300">
+                {undercutSuggestion
+                  ? formatPrice(undercutSuggestion, product.currency)
+                  : "Hesaplanamadı"}
+              </p>
+              <p className="text-[11px] text-gray-500 mt-1">
+                En düşük rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
+              </p>
+            </div>
+            <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
+              <p className="text-xs text-gray-500 mb-1">
+                İlk 3 rakip ortalamasına göre önerilen fiyat
+              </p>
+              <p className="text-lg font-semibold text-amber-300">
+                {top3AvgSuggestion
+                  ? formatPrice(top3AvgSuggestion, product.currency)
+                  : "Öneri için en az 3 rakip gerekli"}
+              </p>
+              <p className="text-[11px] text-gray-500 mt-1">
+                En ucuz 3 geçerli rakip fiyatının aritmetik ortalaması alınır.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Stats Kartları */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
@@ -456,8 +693,27 @@ export default function ProductDetailPage() {
             </div>
           ) : (
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4 sm:p-6">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 gap-2">
                 <h2 className="text-base font-semibold text-white">Fiyat Geçmişi</h2>
+                <div className="inline-flex items-center gap-1 bg-[#0B0B0D] border border-[#1F1F23] rounded-lg p-1">
+                  {[
+                    { key: "7d", label: "7G" },
+                    { key: "30d", label: "30G" },
+                    { key: "all", label: "Tümü" },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      onClick={() => setTimeRange(option.key as TimeRange)}
+                      className={`px-2 py-1 rounded text-xs transition ${
+                        timeRange === option.key
+                          ? "bg-amber-500/20 text-amber-300"
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="h-48 sm:h-72">
                 <ResponsiveContainer width="100%" height="100%">
@@ -494,11 +750,35 @@ export default function ProductDetailPage() {
                         type="monotone"
                         dataKey={retailer}
                         stroke={retailerColor(retailer)}
-                        strokeWidth={2}
+                        strokeWidth={
+                          retailer.toLowerCase().includes(product.marketplace.toLowerCase())
+                            ? 3
+                            : 1.8
+                        }
                         dot={false}
                         connectNulls
                       />
                     ))}
+                    <Line
+                      type="monotone"
+                      dataKey="lowestCompetitor"
+                      name="En Düşük Rakip"
+                      stroke="#34D399"
+                      strokeWidth={2}
+                      strokeDasharray="5 4"
+                      dot={false}
+                      connectNulls
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="avgCompetitor"
+                      name="Rakip Ortalama"
+                      stroke="#60A5FA"
+                      strokeWidth={2}
+                      strokeDasharray="2 4"
+                      dot={false}
+                      connectNulls
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -534,21 +814,65 @@ export default function ProductDetailPage() {
             </div>
           ) : (
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6">
-              <h2 className="text-base font-semibold text-white mb-4">
-                Rakip Fiyatları
-                <span className="text-gray-500 font-normal text-sm ml-2">
-                  ({competitors.length} rakip)
-                </span>
-              </h2>
+              <div className="mb-4">
+                <h2 className="text-base font-semibold text-white">
+                  Rakip Fiyatları
+                  <span className="text-gray-500 font-normal text-sm ml-2">
+                    ({competitors.length} rakip)
+                  </span>
+                </h2>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <select
+                    value={competitorSort}
+                    onChange={(e) => setCompetitorSort(e.target.value as CompetitorSort)}
+                    className="bg-[#0B0B0D] border border-[#1F1F23] rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                  >
+                    <option value="lowest">En düşük fiyat</option>
+                    <option value="highest">En yüksek fiyat</option>
+                    <option value="closest">Fiyatıma en yakın</option>
+                  </select>
+                  {[
+                    { key: "all", label: "Tümü", show: true },
+                    { key: "priced", label: "Fiyatı olanlar", show: true },
+                    { key: "suspicious", label: "Şüpheli olanlar", show: hasSuspiciousSignal },
+                  ]
+                    .filter((f) => f.show)
+                    .map((filter) => (
+                      <button
+                        key={filter.key}
+                        onClick={() => setCompetitorFilter(filter.key as CompetitorFilter)}
+                        className={`px-2.5 py-1 rounded-full text-xs border transition ${
+                          competitorFilter === filter.key
+                            ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                            : "text-gray-400 border-[#2B2B30] hover:text-white"
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    ))}
+                </div>
+              </div>
               <div className="space-y-3">
-                {competitors.map((competitor, index) => {
+                {filteredCompetitors.map((competitor, index) => {
                   const cPrice = competitor.currentPrice ? Number(competitor.currentPrice) : null;
                   const diff = cPrice && ownPrice ? ((cPrice - ownPrice) / ownPrice) * 100 : null;
+                  const isCheapest = cheapestCompetitor?.id === competitor.id;
+                  const isCheaperThanMe = cPrice !== null && ownPrice !== null && cPrice < ownPrice;
+                  const isExpensiveThanMe =
+                    cPrice !== null && ownPrice !== null && cPrice > ownPrice;
 
                   return (
                     <div
                       key={competitor.id}
-                      className="flex items-center gap-3 p-3 rounded-lg bg-[#0A0A0B] border border-[#1F1F23] hover:border-[#2F2F33] transition-colors"
+                      className={`flex items-center gap-3 p-3 rounded-lg bg-[#0A0A0B] border transition-colors ${
+                        isCheapest
+                          ? "border-emerald-500/40"
+                          : isCheaperThanMe
+                            ? "border-green-500/25"
+                            : isExpensiveThanMe
+                              ? "border-red-500/25"
+                              : "border-[#1F1F23] hover:border-[#2F2F33]"
+                      }`}
                     >
                       <span className="text-gray-500 text-xs w-5 text-center">{index + 1}</span>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -581,6 +905,9 @@ export default function ProductDetailPage() {
                             <p className="text-sm font-bold text-white">
                               {formatPrice(cPrice, product.currency)}
                             </p>
+                            {isCheapest && (
+                              <p className="text-[11px] text-emerald-300">En düşük rakip</p>
+                            )}
                             {diff !== null && (
                               <p
                                 className={`text-xs ${
