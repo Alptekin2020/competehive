@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -63,6 +63,18 @@ interface ProductItem {
   tags?: { tag: { id: string; name: string; color: string } }[];
 }
 
+type QuickFilter = "ALL" | "NO_COMPETITOR" | "STALE" | "CHANGED" | "ACTIVE";
+type SortOption =
+  | "updated_desc"
+  | "updated_asc"
+  | "price_desc"
+  | "price_asc"
+  | "competitors_desc"
+  | "biggest_drop";
+type ViewMode = "cards" | "table";
+
+const STALE_HOURS = 24;
+
 function timeAgo(dateStr: string): string {
   const now = new Date();
   const date = new Date(dateStr);
@@ -73,6 +85,13 @@ function timeAgo(dateStr: string): string {
   if (diffHour < 24) return `${diffHour} sa önce`;
   const diffDay = Math.floor(diffHour / 24);
   return `${diffDay} gün önce`;
+}
+
+function isStale(lastScrapedAt: string | null): boolean {
+  if (!lastScrapedAt) return true;
+  const ts = new Date(lastScrapedAt).getTime();
+  if (Number.isNaN(ts)) return true;
+  return Date.now() - ts > STALE_HOURS * 60 * 60 * 1000;
 }
 
 export default function ProductsPage() {
@@ -87,6 +106,10 @@ export default function ProductsPage() {
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [showTagManager, setShowTagManager] = useState(false);
   const [planFeatures, setPlanFeatures] = useState<PlanFeaturesData | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
+  const [sortBy, setSortBy] = useState<SortOption>("updated_desc");
+  const [viewMode, setViewMode] = useState<ViewMode>("cards");
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -134,7 +157,6 @@ export default function ProductsPage() {
       setUrl("");
       setShowModal(false);
 
-      // Background compare search
       fetch("/api/products/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -159,24 +181,85 @@ export default function ProductsPage() {
     }
   };
 
-  const _handleDelete = async (productId: string) => {
-    try {
-      await fetch(`/api/products?id=${productId}`, { method: "DELETE" });
-      setProducts((prev) => prev.filter((p) => p.id !== productId));
-    } catch (err) {
-      console.error("Delete error:", err);
-    }
-  };
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    const withMeta = products
+      .filter((p) => (selectedTagId ? p.tags?.some((pt) => pt.tag?.id === selectedTagId) : true))
+      .map((p) => {
+        const myPrice = p.current_price ? Number(p.current_price) : null;
+        const competitorCount = p.competitorCount ?? p.competitors?.length ?? 0;
+        const competitorPrices = (p.competitors ?? [])
+          .map((c) => (c.current_price ? Number(c.current_price) : null))
+          .filter((price): price is number => price !== null && Number.isFinite(price));
+        const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
+        const stale = isStale(p.last_scraped_at);
+        const priceChange = p.trend?.priceChange ?? null;
+
+        return {
+          product: p,
+          myPrice,
+          competitorCount,
+          minCompetitorPrice,
+          stale,
+          priceChange,
+        };
+      })
+      .filter(({ product }) => {
+        if (!normalizedQuery) return true;
+        return (
+          product.product_name?.toLowerCase().includes(normalizedQuery) ||
+          product.marketplace?.toLowerCase().includes(normalizedQuery)
+        );
+      })
+      .filter(({ product, competitorCount, stale, priceChange }) => {
+        if (quickFilter === "NO_COMPETITOR") return competitorCount === 0;
+        if (quickFilter === "STALE") return stale;
+        if (quickFilter === "CHANGED") return Boolean(priceChange);
+        if (quickFilter === "ACTIVE") return product.status === "ACTIVE";
+        return true;
+      });
+
+    return withMeta.sort((a, b) => {
+      if (sortBy === "updated_desc") {
+        return (
+          new Date(b.product.last_scraped_at || 0).getTime() -
+          new Date(a.product.last_scraped_at || 0).getTime()
+        );
+      }
+      if (sortBy === "updated_asc") {
+        return (
+          new Date(a.product.last_scraped_at || 0).getTime() -
+          new Date(b.product.last_scraped_at || 0).getTime()
+        );
+      }
+      if (sortBy === "price_desc") return (b.myPrice ?? -Infinity) - (a.myPrice ?? -Infinity);
+      if (sortBy === "price_asc") return (a.myPrice ?? Infinity) - (b.myPrice ?? Infinity);
+      if (sortBy === "competitors_desc") return b.competitorCount - a.competitorCount;
+      return (a.priceChange ?? 0) - (b.priceChange ?? 0);
+    });
+  }, [products, quickFilter, searchQuery, selectedTagId, sortBy]);
+
+  const quickFilters: { key: QuickFilter; label: string }[] = [
+    { key: "ALL", label: "Tümü" },
+    { key: "NO_COMPETITOR", label: "Rakipsiz" },
+    { key: "STALE", label: "Veri Eski" },
+    { key: "CHANGED", label: "Fiyat Değişti" },
+    { key: "ACTIVE", label: "Aktif" },
+  ];
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6 sm:mb-8">
         <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Ürünler</h1>
-          <p className="text-dark-500 text-xs sm:text-sm">Takip ettiğiniz ürünleri yönetin.</p>
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
+            Ürünler
+          </h1>
+          <p className="text-dark-500 text-xs sm:text-sm">
+            Takip ettiğiniz ürünleri yönetin ve önceliklendirin.
+          </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-4">
-          {/* Bulk Import Button */}
           {planFeatures?.features?.hasBulkImport ? (
             <button
               onClick={() => setShowBulkModal(true)}
@@ -220,7 +303,6 @@ export default function ProductsPage() {
             </button>
           )}
 
-          {/* Single Add Button */}
           <button
             onClick={() => setShowModal(true)}
             className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-3 sm:px-5 py-2.5 rounded-xl font-semibold text-sm transition"
@@ -240,7 +322,6 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Tag Filter Bar — only show if plan supports tags */}
       {planFeatures?.features?.hasTagSystem && (
         <TagFilterBar
           selectedTagId={selectedTagId}
@@ -249,22 +330,13 @@ export default function ProductsPage() {
         />
       )}
 
-      {/* Product limit indicator — show when at 80%+ */}
       {planFeatures && planFeatures.usage.products >= planFeatures.features.maxProducts * 0.8 && (
         <div
-          className={`flex items-center justify-between px-4 py-3 rounded-xl mb-4 ${
-            planFeatures.usage.products >= planFeatures.features.maxProducts
-              ? "bg-red-500/10 border border-red-500/20"
-              : "bg-amber-500/10 border border-amber-500/20"
-          }`}
+          className={`flex items-center justify-between px-4 py-3 rounded-xl mb-4 ${planFeatures.usage.products >= planFeatures.features.maxProducts ? "bg-red-500/10 border border-red-500/20" : "bg-amber-500/10 border border-amber-500/20"}`}
         >
           <div className="flex items-center gap-2">
             <span
-              className={`text-sm font-medium ${
-                planFeatures.usage.products >= planFeatures.features.maxProducts
-                  ? "text-red-400"
-                  : "text-amber-400"
-              }`}
+              className={`text-sm font-medium ${planFeatures.usage.products >= planFeatures.features.maxProducts ? "text-red-400" : "text-amber-400"}`}
             >
               {planFeatures.usage.products >= planFeatures.features.maxProducts
                 ? `Ürün limitine ulaştınız (${planFeatures.usage.products}/${planFeatures.features.maxProducts})`
@@ -280,7 +352,74 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Loading State */}
+      {!loading && !error && products.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-[#1F1F23] bg-[#111113] p-3 sm:p-4 space-y-3">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+            <div className="relative flex-1">
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Ürün adı veya marketplace ara"
+                className="w-full bg-[#151519] border border-[#2A2A2F] rounded-xl pl-10 pr-3 py-2.5 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+              />
+              <svg
+                className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+            </div>
+
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              className="bg-[#151519] border border-[#2A2A2F] rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+            >
+              <option value="updated_desc">En yeni güncellenen</option>
+              <option value="updated_asc">En eski güncellenen</option>
+              <option value="price_desc">En yüksek fiyat</option>
+              <option value="price_asc">En düşük fiyat</option>
+              <option value="competitors_desc">En çok rakip</option>
+              <option value="biggest_drop">En büyük fiyat düşüşü</option>
+            </select>
+
+            <div className="inline-flex rounded-xl border border-[#2A2A2F] overflow-hidden">
+              <button
+                onClick={() => setViewMode("cards")}
+                className={`px-3 py-2 text-xs sm:text-sm transition ${viewMode === "cards" ? "bg-amber-500/15 text-amber-400" : "bg-[#151519] text-gray-400 hover:text-white"}`}
+              >
+                Kart
+              </button>
+              <button
+                onClick={() => setViewMode("table")}
+                className={`px-3 py-2 text-xs sm:text-sm transition border-l border-[#2A2A2F] ${viewMode === "table" ? "bg-amber-500/15 text-amber-400" : "bg-[#151519] text-gray-400 hover:text-white"}`}
+              >
+                Tablo
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {quickFilters.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setQuickFilter(item.key)}
+                className={`px-3 py-1.5 rounded-full text-xs border transition ${quickFilter === item.key ? "border-amber-500/40 bg-amber-500/10 text-amber-400" : "border-[#2A2A2F] text-gray-400 hover:text-white hover:border-[#3A3A40]"}`}
+              >
+                {item.label}
+              </button>
+            ))}
+            <span className="text-xs text-gray-600 ml-auto">
+              {filteredProducts.length} ürün gösteriliyor
+            </span>
+          </div>
+        </div>
+      )}
+
       {loading && (
         <div className="grid gap-4">
           <CardSkeleton />
@@ -289,12 +428,10 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Error State */}
       {!loading && error && (
         <ErrorState title="Ürünler yüklenemedi" message={error} onRetry={fetchProducts} />
       )}
 
-      {/* Empty State */}
       {!loading && !error && products.length === 0 && (
         <div>
           <EmptyState
@@ -314,22 +451,24 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Product List */}
-      {!loading && !error && products.length > 0 && (
+      {!loading && !error && products.length > 0 && viewMode === "cards" && (
         <div className="grid gap-4">
-          {products
-            .filter((p) =>
-              selectedTagId ? p.tags?.some((pt) => pt.tag?.id === selectedTagId) : true,
-            )
-            .map((product) => {
-              const myPrice = product.current_price ? Number(product.current_price) : null;
-              const competitorCount = product.competitorCount ?? product.competitors?.length ?? 0;
+          {filteredProducts.map(
+            ({ product, myPrice, competitorCount, minCompetitorPrice, stale }) => {
+              const pricePositionHint =
+                competitorCount === 0
+                  ? "Rakip yok"
+                  : myPrice === null || minCompetitorPrice === null
+                    ? "Karşılaştırma yok"
+                    : myPrice <= minCompetitorPrice
+                      ? "Piyasanın altında"
+                      : "Rakipten pahalı";
 
               return (
                 <Link
                   key={product.id}
                   href={`/dashboard/products/${product.id}`}
-                  className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4 hover:border-amber-500/20 transition group"
+                  className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4 hover:border-amber-500/30 transition group"
                 >
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1F1F23] rounded-lg sm:rounded-xl flex items-center justify-center overflow-hidden shrink-0">
                     {product.product_image ? (
@@ -342,7 +481,7 @@ export default function ProductsPage() {
                         }}
                       />
                     ) : (
-                      <span className="text-gray-500 text-lg">📦</span>
+                      <span className="text-gray-500 text-xs font-medium">ÜRN</span>
                     )}
                   </div>
 
@@ -351,21 +490,34 @@ export default function ProductsPage() {
                       <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
                         {product.product_name || "İsimsiz Ürün"}
                       </h3>
-                      {/* Price — mobile only inline */}
                       <div className="text-right shrink-0 sm:hidden">
                         <div className="text-white font-semibold text-sm">
                           {myPrice ? `₺${myPrice.toLocaleString("tr-TR")}` : "—"}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+
+                    <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
                       <MarketplaceBadge marketplace={product.marketplace} />
-                      {competitorCount > 0 && (
-                        <span className="text-xs text-gray-600">{competitorCount} rakip</span>
+                      <span className="text-gray-500">{competitorCount} rakip</span>
+                      {stale && (
+                        <span className="px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300">
+                          Veri Eski
+                        </span>
                       )}
                       {product.last_scraped_at && (
-                        <span className="text-xs text-gray-600 hidden sm:inline">
+                        <span className="text-gray-600 hidden sm:inline">
                           · {timeAgo(product.last_scraped_at)}
+                        </span>
+                      )}
+                      <span
+                        className={`px-2 py-0.5 rounded-full border ${pricePositionHint === "Piyasanın altında" ? "border-emerald-500/20 text-emerald-300 bg-emerald-500/10" : pricePositionHint === "Rakipten pahalı" ? "border-red-500/20 text-red-300 bg-red-500/10" : "border-[#323239] text-gray-400 bg-[#1A1A1E]"}`}
+                      >
+                        {pricePositionHint}
+                      </span>
+                      {minCompetitorPrice !== null && (
+                        <span className="text-gray-500">
+                          En düşük rakip: ₺{minCompetitorPrice.toLocaleString("tr-TR")}
                         </span>
                       )}
                       {product.tags?.map((pt) => {
@@ -375,29 +527,15 @@ export default function ProductsPage() {
                           <span
                             key={tag.id}
                             className="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                            style={{
-                              backgroundColor: `${tag.color}15`,
-                              color: tag.color,
-                            }}
+                            style={{ backgroundColor: `${tag.color}15`, color: tag.color }}
                           >
                             {tag.name}
                           </span>
                         );
                       })}
-                      {/* Trend — mobile only inline */}
-                      {product.trend && (
-                        <span className="sm:hidden">
-                          <PriceTrend
-                            priceChange={product.trend.priceChange}
-                            priceChangePct={product.trend.priceChangePct}
-                            size="sm"
-                          />
-                        </span>
-                      )}
                     </div>
                   </div>
 
-                  {/* Desktop-only price + trend column */}
                   <div className="text-right shrink-0 hidden sm:block">
                     <div className="text-white font-semibold">
                       {myPrice
@@ -446,7 +584,70 @@ export default function ProductsPage() {
                   </svg>
                 </Link>
               );
-            })}
+            },
+          )}
+        </div>
+      )}
+
+      {!loading && !error && products.length > 0 && viewMode === "table" && (
+        <div className="overflow-x-auto rounded-2xl border border-[#1F1F23] bg-[#111113]">
+          <table className="min-w-full text-sm">
+            <thead className="bg-[#151519] text-gray-400">
+              <tr>
+                <th className="text-left font-medium px-4 py-3">Ürün</th>
+                <th className="text-left font-medium px-4 py-3">Marketplace</th>
+                <th className="text-left font-medium px-4 py-3">Fiyatım</th>
+                <th className="text-left font-medium px-4 py-3">Rakip</th>
+                <th className="text-left font-medium px-4 py-3">Son Güncelleme</th>
+                <th className="text-left font-medium px-4 py-3">Trend / Durum</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredProducts.map(({ product, myPrice, competitorCount, stale }) => (
+                <tr
+                  key={product.id}
+                  className="border-t border-[#1F1F23] hover:bg-[#151519] transition"
+                >
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/dashboard/products/${product.id}`}
+                      className="text-white hover:text-amber-400 transition line-clamp-1"
+                    >
+                      {product.product_name || "İsimsiz Ürün"}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3">
+                    <MarketplaceBadge marketplace={product.marketplace} />
+                  </td>
+                  <td className="px-4 py-3 text-white">
+                    {myPrice ? `₺${myPrice.toLocaleString("tr-TR")}` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-gray-300">{competitorCount}</td>
+                  <td className="px-4 py-3 text-gray-400">
+                    {product.last_scraped_at ? timeAgo(product.last_scraped_at) : "—"}
+                    {stale && <span className="ml-2 text-amber-300 text-xs">(Veri Eski)</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {product.trend ? (
+                      <PriceTrend
+                        priceChange={product.trend.priceChange}
+                        priceChangePct={product.trend.priceChangePct}
+                        size="sm"
+                      />
+                    ) : (
+                      <span className="text-xs text-gray-500">
+                        {product.status === "ACTIVE"
+                          ? "Aktif"
+                          : product.status === "ERROR"
+                            ? "Hata"
+                            : "Bekliyor"}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
