@@ -27,7 +27,7 @@ if (isVercel && vercelEnv === "preview" && !databaseUrl) {
   process.exit(0);
 }
 
-const schemaArg = ["--schema", "./packages/database/prisma/schema.prisma"];
+const schemaArg = ["--schema", "../../packages/database/prisma/schema.prisma"];
 const spawnOpts = { shell: process.platform === "win32" };
 
 console.log("[db:migrate] Running prisma migrate deploy...");
