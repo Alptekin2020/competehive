@@ -16,6 +16,21 @@ import { getPlanFeatures } from "@/lib/plan-gates";
 import { normalizeProductImage } from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
+
+function isMissingTagSchemaError(error: unknown): boolean {
+  const prismaError = error as { code?: unknown; meta?: { table?: unknown } } | undefined;
+  if (prismaError?.code === "P2021") {
+    const table = String(prismaError.meta?.table ?? "").toLowerCase();
+    if (table.includes("tags") || table.includes("product_tags")) return true;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    (message.includes("public.tags") || message.includes("public.product_tags")) &&
+    message.includes("does not exist")
+  );
+}
+
 export async function GET() {
   try {
     const user = await getCurrentUser();
@@ -27,6 +42,13 @@ export async function GET() {
       include: {
         competitors: {
           orderBy: { currentPrice: "asc" },
+          select: {
+            id: true,
+            marketplace: true,
+            competitorName: true,
+            currentPrice: true,
+            competitorUrl: true,
+          },
         },
         priceHistory: {
           orderBy: { scrapedAt: "desc" },
@@ -39,18 +61,45 @@ export async function GET() {
             scrapedAt: true,
           },
         },
-        tags: {
-          include: {
-            tag: {
-              select: { id: true, name: true, color: true },
-            },
-          },
-        },
         _count: {
           select: { competitors: true },
         },
       },
     });
+
+    const productIds = products.map((p) => p.id);
+    let tagsByProductId = new Map<
+      string,
+      Array<{ tag: { id: string; name: string; color: string } }>
+    >();
+
+    if (productIds.length > 0) {
+      try {
+        const productTags = await prisma.productTag.findMany({
+          where: { productId: { in: productIds } },
+          include: {
+            tag: {
+              select: { id: true, name: true, color: true },
+            },
+          },
+        });
+
+        tagsByProductId = productTags.reduce((map, pt) => {
+          const existing = map.get(pt.productId) ?? [];
+          existing.push({ tag: pt.tag });
+          map.set(pt.productId, existing);
+          return map;
+        }, new Map<string, Array<{ tag: { id: string; name: string; color: string } }>>());
+      } catch (error) {
+        if (isMissingTagSchemaError(error)) {
+          console.warn(
+            "[GET /api/products] tag tables are missing during rollout; returning products with empty tags",
+          );
+        } else {
+          throw error;
+        }
+      }
+    }
 
     // Map to snake_case for frontend compatibility + enrich with trend data
     const mapped = products.map((p) => {
@@ -73,7 +122,7 @@ export async function GET() {
               lastUpdated: latestHistory.scrapedAt,
             }
           : null,
-        tags: p.tags.map((pt) => ({ tag: pt.tag })),
+        tags: tagsByProductId.get(p.id) ?? [],
         competitorCount: p._count.competitors,
         competitors: p.competitors.map((c) => ({
           id: c.id,

@@ -3,6 +3,17 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { getPlanFeatures } from "@/lib/plan-gates";
 
+function isMissingTagsTableError(error: unknown): boolean {
+  const prismaError = error as { code?: unknown; meta?: { table?: unknown } } | undefined;
+  if (prismaError?.code === "P2021") {
+    const table = String(prismaError.meta?.table ?? "").toLowerCase();
+    if (table.includes("tags")) return true;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("public.tags") && message.includes("does not exist");
+}
+
 export async function GET() {
   try {
     const user = await getCurrentUser();
@@ -25,9 +36,20 @@ export async function GET() {
       prisma.alertRule.count({
         where: { userId: user.id, isActive: true },
       }),
-      prisma.tag.count({
-        where: { userId: user.id },
-      }),
+      prisma.tag
+        .count({
+          where: { userId: user.id },
+        })
+        .catch((error) => {
+          if (isMissingTagsTableError(error)) {
+            console.warn(
+              "[GET /api/user/features] tags table is missing during rollout; defaulting tag usage to 0",
+            );
+            return 0;
+          }
+
+          throw error;
+        }),
       prisma.trackedProduct
         .groupBy({
           by: ["marketplace"],
