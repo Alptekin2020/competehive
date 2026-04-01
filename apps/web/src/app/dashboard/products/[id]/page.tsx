@@ -144,6 +144,9 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<ProductData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isComparing, setIsComparing] = useState(false);
+  const [compareStatus, setCompareStatus] = useState<string | null>(null);
+  const [compareError, setCompareError] = useState<string | null>(null);
 
   const fetchProduct = useCallback(async () => {
     setLoading(true);
@@ -168,6 +171,37 @@ export default function ProductDetailPage() {
     if (!id) return;
     fetchProduct();
   }, [id, fetchProduct]);
+
+  const handleCompare = async () => {
+    if (!product || isComparing) return;
+
+    setIsComparing(true);
+    setCompareError(null);
+    setCompareStatus("Rakipler taranıyor...");
+
+    try {
+      const res = await fetch("/api/products/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: product.id }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setCompareStatus(null);
+        setCompareError(data?.error || "Rakip taraması başlatılamadı");
+        return;
+      }
+
+      setCompareStatus("Rakip taraması tamamlandı");
+      await fetchProduct();
+    } catch {
+      setCompareStatus(null);
+      setCompareError("Rakip taraması sırasında bağlantı hatası oluştu");
+    } finally {
+      setIsComparing(false);
+    }
+  };
 
   // Full-page loading state
   if (loading) {
@@ -310,11 +344,45 @@ export default function ProductDetailPage() {
                 </p>
               </div>
             )}
-            <RefreshButton
-              productId={product.id}
-              initialStatus={product.refreshStatus}
-              onRefreshComplete={() => fetchProduct()}
-            />
+            <div className="flex flex-col items-start sm:items-end gap-2">
+              <RefreshButton
+                productId={product.id}
+                initialStatus={product.refreshStatus}
+                onRefreshComplete={() => fetchProduct()}
+              />
+              <button
+                onClick={handleCompare}
+                disabled={isComparing}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  isComparing
+                    ? "bg-blue-500/10 text-blue-400 border border-blue-500/20 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-500 text-white"
+                }`}
+              >
+                {isComparing && (
+                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      className="opacity-25"
+                    />
+                    <path
+                      d="M4 12a8 8 0 018-8"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                )}
+                {isComparing ? "Rakipler Taranıyor..." : "Rakipleri Tara"}
+              </button>
+              {compareStatus && <span className="text-xs text-blue-300">{compareStatus}</span>}
+              {compareError && <span className="text-xs text-red-400">{compareError}</span>}
+            </div>
           </div>
         </div>
       </div>
@@ -460,8 +528,8 @@ export default function ProductDetailPage() {
               </div>
               <h3 className="text-white font-semibold mb-1">Rakip bulunamadı</h3>
               <p className="text-gray-500 text-sm">
-                Bu ürün için henüz rakip tespit edilemedi. &quot;Fiyatları Yenile&quot; ile tekrar
-                tarayabilirsiniz.
+                Bu ürün için henüz rakip tespit edilemedi. Yukarıdaki &quot;Rakipleri Tara&quot;
+                butonuyla tekrar deneyebilirsiniz.
               </p>
             </div>
           ) : (
