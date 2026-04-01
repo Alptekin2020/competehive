@@ -18,6 +18,89 @@ const ROLLOUT_FALLBACK_MISSING_COLUMNS = [
   "plan_expires_at",
 ] as const;
 
+const ADMIN_OVERRIDE_PLAN = "ENTERPRISE";
+const ADMIN_OVERRIDE_MAX_PRODUCTS = 99999;
+
+function parseAllowlist(raw: string | undefined): string[] {
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isAdminUser({ clerkId, email }: { clerkId: string; email: string }): boolean {
+  const adminClerkIds = parseAllowlist(process.env.ADMIN_CLERK_IDS);
+  const adminEmails = parseAllowlist(process.env.ADMIN_EMAILS).map((value) => value.toLowerCase());
+
+  return adminClerkIds.includes(clerkId) || adminEmails.includes(email.toLowerCase());
+}
+
+async function applyAdminOverride(user: {
+  id: string;
+  clerkId: string | null;
+  email: string;
+  name: string | null;
+  plan: string;
+  maxProducts: number;
+  isActive: boolean;
+}): Promise<AppUser> {
+  if (!user.clerkId || !isAdminUser({ clerkId: user.clerkId, email: user.email })) {
+    return {
+      id: user.id,
+      clerkId: user.clerkId!,
+      email: user.email,
+      name: user.name,
+      plan: user.plan,
+      maxProducts: user.maxProducts,
+      isActive: user.isActive,
+    };
+  }
+
+  const needsAdminUpdate =
+    user.plan !== ADMIN_OVERRIDE_PLAN ||
+    user.maxProducts !== ADMIN_OVERRIDE_MAX_PRODUCTS ||
+    user.isActive !== true;
+
+  if (needsAdminUpdate) {
+    console.info(
+      `[getCurrentUser] Applying admin ENTERPRISE override for ${user.email} (${user.clerkId}).`,
+    );
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        plan: ADMIN_OVERRIDE_PLAN,
+        maxProducts: ADMIN_OVERRIDE_MAX_PRODUCTS,
+        isActive: true,
+      },
+    });
+
+    return {
+      id: updatedUser.id,
+      clerkId: updatedUser.clerkId!,
+      email: updatedUser.email,
+      name: updatedUser.name,
+      plan: updatedUser.plan,
+      maxProducts: updatedUser.maxProducts,
+      isActive: updatedUser.isActive,
+    };
+  }
+
+  return {
+    id: user.id,
+    clerkId: user.clerkId,
+    email: user.email,
+    name: user.name,
+    plan: ADMIN_OVERRIDE_PLAN,
+    maxProducts: ADMIN_OVERRIDE_MAX_PRODUCTS,
+    isActive: true,
+  };
+}
+
 function shouldUseLegacyUserUpsertFallback(error: unknown): boolean {
   if (!(error instanceof PrismaClientKnownRequestError)) {
     return false;
@@ -78,15 +161,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       });
     }
 
-    return {
-      id: user.id,
-      clerkId: user.clerkId!,
-      email: user.email,
-      name: user.name,
-      plan: user.plan,
-      maxProducts: user.maxProducts,
-      isActive: user.isActive,
-    };
+    return applyAdminOverride(user);
   } catch (error) {
     console.error("Failed to provision Clerk user in database", error);
 
@@ -97,15 +172,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       });
       if (!user) return null;
 
-      return {
-        id: user.id,
-        clerkId: user.clerkId!,
-        email: user.email,
-        name: user.name,
-        plan: user.plan,
-        maxProducts: user.maxProducts,
-        isActive: user.isActive,
-      };
+      return applyAdminOverride(user);
     } catch (fallbackError) {
       console.error("Fallback user lookup failed", fallbackError);
       throw fallbackError;

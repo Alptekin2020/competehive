@@ -31,6 +31,10 @@ export const webEnvSchema = baseSchema.extend({
 
   // Optional Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
+
+  // Optional admin bootstrap override
+  ADMIN_EMAILS: z.string().optional(),
+  ADMIN_CLERK_IDS: z.string().optional(),
 });
 
 export const workerEnvSchema = baseSchema.extend({
