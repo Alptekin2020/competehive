@@ -112,6 +112,12 @@ export default function ProductsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [showFirstProductSuccess, setShowFirstProductSuccess] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [deleteConfirmProductId, setDeleteConfirmProductId] = useState<string | null>(null);
+  const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -272,6 +278,29 @@ export default function ProductsPage() {
     }
   };
 
+  const handleDelete = async (productId: string) => {
+    setDeleteLoadingId(productId);
+    setDeleteFeedback(null);
+    try {
+      const res = await fetch(`/api/products?id=${productId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || "Ürün silinirken bir hata oluştu.");
+      }
+
+      setProducts((prev) => prev.filter((product) => product.id !== productId));
+      setDeleteFeedback({ type: "success", message: "Ürün silindi." });
+    } catch (err: unknown) {
+      setDeleteFeedback({
+        type: "error",
+        message: err instanceof Error ? err.message : "Ürün silinemedi. Lütfen tekrar deneyin.",
+      });
+    } finally {
+      setDeleteLoadingId(null);
+      setDeleteConfirmProductId(null);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6 sm:mb-8">
@@ -387,6 +416,33 @@ export default function ProductsPage() {
           <button
             onClick={() => setShowFirstProductSuccess(false)}
             className="text-xs text-emerald-200/80 hover:text-emerald-100 transition"
+          >
+            Kapat
+          </button>
+        </div>
+      )}
+      {deleteFeedback && (
+        <div
+          className={`mb-4 flex items-start justify-between gap-3 rounded-xl px-4 py-3 border ${
+            deleteFeedback.type === "success"
+              ? "border-emerald-500/25 bg-emerald-500/10"
+              : "border-red-500/25 bg-red-500/10"
+          }`}
+        >
+          <p
+            className={`text-sm font-medium ${
+              deleteFeedback.type === "success" ? "text-emerald-300" : "text-red-300"
+            }`}
+          >
+            {deleteFeedback.message}
+          </p>
+          <button
+            onClick={() => setDeleteFeedback(null)}
+            className={`text-xs transition ${
+              deleteFeedback.type === "success"
+                ? "text-emerald-200/80 hover:text-emerald-100"
+                : "text-red-200/80 hover:text-red-100"
+            }`}
           >
             Kapat
           </button>
@@ -651,6 +707,30 @@ export default function ProductsPage() {
                     }
                     onUpdated={fetchProducts}
                   />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDeleteConfirmProductId(product.id);
+                    }}
+                    className="p-2 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
+                    title="Ürünü sil"
+                    aria-label="Ürünü sil"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                    </svg>
+                  </button>
 
                   <svg
                     className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0 hidden sm:block"
@@ -681,12 +761,13 @@ export default function ProductsPage() {
                 <th className="text-left font-medium px-4 py-3">Rakip</th>
                 <th className="text-left font-medium px-4 py-3">Son Güncelleme</th>
                 <th className="text-left font-medium px-4 py-3">Trend / Durum</th>
+                <th className="text-left font-medium px-4 py-3">Aksiyon</th>
               </tr>
             </thead>
             <tbody>
               {filteredProducts.length === 0 && (
                 <tr className="border-t border-[#1F1F23]">
-                  <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-gray-500">
                     Filtreye uygun ürün yok. Arama veya hızlı filtreleri temizleyin.
                   </td>
                 </tr>
@@ -732,10 +813,62 @@ export default function ProductsPage() {
                       </span>
                     )}
                   </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirmProductId(product.id)}
+                      className="p-2 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
+                      title="Ürünü sil"
+                      aria-label="Ürünü sil"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      </svg>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {deleteConfirmProductId && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setDeleteConfirmProductId(null)}
+          />
+          <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-sm relative z-10 safe-bottom">
+            <h2 className="text-lg font-bold text-white mb-2">Ürünü Sil</h2>
+            <p className="text-dark-500 text-sm mb-6">
+              Bu ürünü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteConfirmProductId(null)}
+                className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 transition"
+              >
+                İptal
+              </button>
+              <button
+                onClick={() => handleDelete(deleteConfirmProductId)}
+                disabled={deleteLoadingId === deleteConfirmProductId}
+                className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white py-2.5 rounded-xl text-sm font-semibold transition"
+              >
+                {deleteLoadingId === deleteConfirmProductId ? "Siliniyor..." : "Sil"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

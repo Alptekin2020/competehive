@@ -84,7 +84,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     const results = await searchProduct(searchQuery);
 
     // Az sonuç geldiyse ve ek keyword'ler varsa, onlarla da ara
-    let allResults = [...(results || [])];
+    const allResults = [...(results || [])];
     if (allResults.length < 5 && metadata) {
       const analysis = (metadata.analysis || metadata) as Record<string, unknown>;
       const keywords = analysis.searchKeywords as string[] | undefined;

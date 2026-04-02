@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   LineChart,
@@ -192,6 +192,7 @@ function timeAgo(dateStr: string): string {
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [product, setProduct] = useState<ProductData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,6 +202,9 @@ export default function ProductDetailPage() {
   const [competitorSort, setCompetitorSort] = useState<CompetitorSort>("lowest");
   const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>("all");
   const [timeRange, setTimeRange] = useState<TimeRange>("30d");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const fetchProduct = useCallback(async () => {
     setLoading(true);
@@ -259,6 +263,27 @@ export default function ProductDetailPage() {
       setCompareError("Rakip taraması sırasında bağlantı hatası oluştu");
     } finally {
       setIsComparing(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!product || deleteLoading) return;
+
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/products?id=${product.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || "Ürün silinirken bir hata oluştu.");
+      }
+      router.push("/dashboard/products");
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : "Ürün silinemedi. Lütfen tekrar deneyin.",
+      );
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -524,6 +549,24 @@ export default function ProductDetailPage() {
                 initialStatus={product.refreshStatus}
                 onRefreshComplete={() => fetchProduct()}
               />
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-500/30 text-red-300 hover:text-red-200 hover:bg-red-500/10 transition"
+              >
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                </svg>
+                Ürünü Sil
+              </button>
               <button
                 onClick={handleCompare}
                 disabled={isComparing}
@@ -1050,6 +1093,46 @@ export default function ProductDetailPage() {
           )}
         </div>
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (!deleteLoading) {
+                setShowDeleteConfirm(false);
+                setDeleteError(null);
+              }
+            }}
+          />
+          <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-sm relative z-10 safe-bottom">
+            <h2 className="text-lg font-bold text-white mb-2">Ürünü Sil</h2>
+            <p className="text-dark-500 text-sm mb-3">
+              Bu ürünü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.
+            </p>
+            {deleteError && <p className="text-sm text-red-300 mb-4">{deleteError}</p>}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteError(null);
+                }}
+                disabled={deleteLoading}
+                className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 disabled:opacity-60 transition"
+              >
+                İptal
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteLoading}
+                className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white py-2.5 rounded-xl text-sm font-semibold transition"
+              >
+                {deleteLoading ? "Siliniyor..." : "Sil"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
