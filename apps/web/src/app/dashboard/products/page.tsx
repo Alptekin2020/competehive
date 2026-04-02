@@ -111,6 +111,7 @@ export default function ProductsPage() {
   const [sortBy, setSortBy] = useState<SortOption>("updated_desc");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [showFirstProductSuccess, setShowFirstProductSuccess] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -250,6 +251,27 @@ export default function ProductsPage() {
     { key: "ACTIVE", label: "Aktif" },
   ];
 
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await fetch("/api/products/export");
+      if (!response.ok) throw new Error("Dışa aktarma başarısız");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `competehive-products-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("CSV dışa aktarma sırasında bir hata oluştu.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6 sm:mb-8">
@@ -262,6 +284,27 @@ export default function ProductsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-4">
+          <button
+            onClick={handleExport}
+            disabled={exporting || loading || products.length === 0}
+            className="inline-flex items-center gap-2 border border-[#1F1F23] hover:border-emerald-500/30 text-gray-400 hover:text-white disabled:opacity-50 p-2.5 sm:px-4 sm:py-2.5 rounded-xl font-medium text-sm transition"
+            title="CSV olarak dışa aktar"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M12 15V3" />
+              <path d="m7 10 5 5 5-5" />
+              <path d="M5 21h14" />
+            </svg>
+            <span className="hidden sm:inline">
+              {exporting ? "Dışa Aktarılıyor..." : "CSV Dışa Aktar"}
+            </span>
+          </button>
           {planFeatures?.features?.hasBulkImport ? (
             <button
               onClick={() => setShowBulkModal(true)}

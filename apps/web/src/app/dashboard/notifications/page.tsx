@@ -51,6 +51,7 @@ export default function NotificationsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<NotificationFilter>("all");
   const [showFirstNotificationSuccess, setShowFirstNotificationSuccess] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const fetchNotifications = useCallback(
     async (reset = true) => {
@@ -221,6 +222,27 @@ export default function NotificationsPage() {
     { key: "stock", label: "Stok" },
   ];
 
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await fetch("/api/notifications/export");
+      if (!response.ok) throw new Error("export failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `competehive-notifications-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("Bildirim CSV dışa aktarma sırasında hata oluştu.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6 sm:mb-8">
@@ -232,14 +254,23 @@ export default function NotificationsPage() {
               : "Bildirim kutunuz güncel ve temiz görünüyor"}
           </p>
         </div>
-        {unreadCount > 0 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={markAllAsRead}
-            className="text-sm text-hive-500 hover:text-hive-400 transition font-medium"
+            onClick={handleExport}
+            disabled={exporting || notifications.length === 0}
+            className="text-xs sm:text-sm px-3 py-2 rounded-lg border border-dark-700 text-dark-400 hover:text-white hover:border-emerald-500/30 disabled:opacity-50 transition"
           >
-            Tümünü Okundu İşaretle
+            {exporting ? "CSV hazırlanıyor..." : "CSV Dışa Aktar"}
           </button>
-        )}
+          {unreadCount > 0 && (
+            <button
+              onClick={markAllAsRead}
+              className="text-sm text-hive-500 hover:text-hive-400 transition font-medium"
+            >
+              Tümünü Okundu İşaretle
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mb-4 sm:mb-6 bg-dark-900 border border-dark-800 rounded-2xl p-3 sm:p-4">
