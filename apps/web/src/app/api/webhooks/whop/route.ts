@@ -7,9 +7,9 @@ const prisma = new PrismaClient();
 
 // Verify Whop webhook signature (Standard Webhooks spec)
 function verifyWebhookSignature(body: string, headers: Headers): boolean {
-  const webhookKey = process.env.WHOP_WEBHOOK_KEY;
+  const webhookKey = process.env.WHOP_WEBHOOK_SECRET;
   if (!webhookKey) {
-    console.warn("WHOP_WEBHOOK_KEY not set — skipping signature verification");
+    console.warn("WHOP_WEBHOOK_SECRET not set — skipping signature verification");
     return true; // Allow in dev, but MUST set in production
   }
 
