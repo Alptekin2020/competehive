@@ -98,8 +98,24 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       );
     }
 
+    // Optimize edilmiş sorgu kullan (metadata varsa)
+    let refreshQuery = product.productName;
+    const refreshMetadata = product.metadata as Record<string, unknown> | null;
+    if (refreshMetadata) {
+      const analysis = (refreshMetadata.analysis || refreshMetadata) as Record<string, unknown>;
+      if (
+        analysis.searchKeywords &&
+        Array.isArray(analysis.searchKeywords) &&
+        analysis.searchKeywords.length > 0
+      ) {
+        refreshQuery = analysis.searchKeywords[0] as string;
+      } else if (analysis.shortTitle && typeof analysis.shortTitle === "string") {
+        refreshQuery = analysis.shortTitle;
+      }
+    }
+
     // Serper'dan güncel fiyatları çek
-    const results = await searchProduct(product.productName);
+    const results = await searchProduct(refreshQuery);
 
     let updatedCount = 0;
 
