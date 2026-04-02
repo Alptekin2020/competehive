@@ -98,7 +98,9 @@ KURALLAR:
 3. Aynı markanın farklı modelleri AYNI DEĞİLDİR (ör: iPhone 15 ≠ iPhone 15 Pro)
 4. Set/paket ürünler tekli ürünle AYNI DEĞİLDİR
 5. Yenilenmiş/refurbished ürünler orijinaliyle farklı kabul edilebilir (skor düşük)
-6. Fiyat farkı %300'den fazlaysa büyük olasılıkla farklı üründür
+6. Fiyat farkı %200'den fazlaysa büyük olasılıkla farklı üründür — skor 30'un altında olmalı
+7. Ambalaj, koli, kutu, aksesuar, kılıf gibi ürünler orijinal ürünle ASLA eşleşmez — skor 0 olmalı
+8. Farklı kategorideki ürünler (ör: giyim vs. ambalaj, elektronik vs. aksesuar) ASLA eşleşmez — skor 0 olmalı
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
@@ -117,7 +119,8 @@ SKOR REHBERİ:
 - 90-100: Kesinlikle aynı ürün (marka, model, tüm özellikler eşleşiyor)
 - 70-89: Büyük olasılıkla aynı ürün (küçük belirsizlikler var)
 - 40-69: Belirsiz (benzer ama emin değilim)
-- 0-39: Farklı ürün`;
+- 10-39: Farklı ürün ama aynı kategoride
+- 0-9: Tamamen alakasız ürün (farklı kategori, ambalaj, aksesuar vb.)`;
 
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",

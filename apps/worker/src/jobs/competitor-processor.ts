@@ -51,10 +51,62 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   }
 
   try {
-    // 1. Serper ile ürünü ara
-    const results = await searchProduct(title);
+    // Ürünün metadata'sında AI'ın ürettiği searchKeywords varsa onları kullan
+    let searchQuery = title;
+    const metadata = product.metadata as Record<string, unknown> | null;
 
-    if (!results || results.length === 0) {
+    if (metadata) {
+      const analysis = (metadata.analysis || metadata) as Record<string, unknown>;
+
+      if (
+        analysis.searchKeywords &&
+        Array.isArray(analysis.searchKeywords) &&
+        analysis.searchKeywords.length > 0
+      ) {
+        searchQuery = analysis.searchKeywords[0] as string;
+        console.log(
+          `🔍 Optimize edilmiş sorgu: "${searchQuery}" (orijinal: "${title.substring(0, 50)}...")`,
+        );
+      } else if (analysis.shortTitle && typeof analysis.shortTitle === "string") {
+        searchQuery = analysis.shortTitle;
+        console.log(`🔍 shortTitle sorgusu: "${searchQuery}"`);
+      }
+    }
+
+    // Sorgu hâlâ çok uzunsa (7+ kelime), ilk 6 kelimeye kısalt
+    const queryWords = searchQuery.split(/\s+/);
+    if (queryWords.length > 7) {
+      searchQuery = queryWords.slice(0, 6).join(" ");
+      console.log(`🔍 Sorgu kısaltıldı: "${searchQuery}"`);
+    }
+
+    // 1. Serper ile ürünü ara
+    const results = await searchProduct(searchQuery);
+
+    // Az sonuç geldiyse ve ek keyword'ler varsa, onlarla da ara
+    let allResults = [...(results || [])];
+    if (allResults.length < 5 && metadata) {
+      const analysis = (metadata.analysis || metadata) as Record<string, unknown>;
+      const keywords = analysis.searchKeywords as string[] | undefined;
+
+      if (keywords && keywords.length > 1) {
+        const seenLinks = new Set(allResults.map((r) => r.link));
+
+        for (let i = 1; i < Math.min(keywords.length, 3); i++) {
+          console.log(`🔍 Ek arama: "${keywords[i]}"`);
+          const moreResults = await searchProduct(keywords[i]);
+          for (const r of moreResults) {
+            if (!seenLinks.has(r.link)) {
+              seenLinks.add(r.link);
+              allResults.push(r);
+            }
+          }
+          if (allResults.length >= 15) break;
+        }
+      }
+    }
+
+    if (!allResults || allResults.length === 0) {
       console.log(`⚠️ Sonuç bulunamadı: ${title}`);
       // Mark as completed even with 0 results
       await updateTrackedProductRefresh(productId, {
@@ -68,12 +120,35 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     const now = new Date();
     let savedCount = 0;
 
-    for (const result of results) {
+    for (const result of allResults) {
       // Kendi URL'imizi atla
       if (result.link === url) continue;
 
       const price = parsePrice(result.price);
       if (!price || price <= 0) continue;
+
+      // --- Fiyat mantık filtresi (AI çağrısından ÖNCE) ---
+      const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
+      if (sourcePrice && sourcePrice > 0) {
+        const priceRatio = price / sourcePrice;
+
+        // Rakip fiyatı, kaynak fiyatın %5'inden az → farklı ürün kategorisi
+        if (priceRatio < 0.05) {
+          console.log(
+            `⚠️ Fiyat filtresi: "${result.title}" — ₺${price} çok düşük (kaynak: ₺${sourcePrice}, oran: ${(priceRatio * 100).toFixed(1)}%)`,
+          );
+          continue;
+        }
+
+        // Rakip fiyatı, kaynak fiyatın 10 katından fazla → farklı ürün/paket
+        if (priceRatio > 10) {
+          console.log(
+            `⚠️ Fiyat filtresi: "${result.title}" — ₺${price} çok yüksek (kaynak: ₺${sourcePrice}, oran: ${priceRatio.toFixed(1)}x)`,
+          );
+          continue;
+        }
+      }
+      // --- Fiyat filtresi sonu ---
 
       const retailer = extractRetailer(result.link);
 
