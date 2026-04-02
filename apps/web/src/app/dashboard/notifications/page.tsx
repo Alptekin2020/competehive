@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 
 interface Notification {
@@ -15,14 +15,19 @@ interface Notification {
   marketplace?: string | null;
 }
 
-const RULE_TYPE_ICONS: Record<string, string> = {
-  PRICE_DROP: "📉",
-  PRICE_INCREASE: "📈",
-  PRICE_THRESHOLD: "🎯",
-  PERCENTAGE_CHANGE: "📊",
-  COMPETITOR_CHEAPER: "⚡",
-  OUT_OF_STOCK: "🚫",
-  BACK_IN_STOCK: "✅",
+type NotificationFilter = "all" | "unread" | "critical" | "price" | "stock";
+
+const RULE_TYPE_META: Record<
+  string,
+  { icon: string; label: string; category: "price" | "stock" | "other"; critical?: boolean }
+> = {
+  PRICE_DROP: { icon: "📉", label: "Fiyat Düşüşü", category: "price" },
+  PRICE_INCREASE: { icon: "📈", label: "Fiyat Artışı", category: "price" },
+  PRICE_THRESHOLD: { icon: "🎯", label: "Fiyat Eşiği", category: "price", critical: true },
+  PERCENTAGE_CHANGE: { icon: "📊", label: "Yüzde Değişim", category: "price" },
+  COMPETITOR_CHEAPER: { icon: "⚡", label: "Rakip Daha Ucuz", category: "price", critical: true },
+  OUT_OF_STOCK: { icon: "🚫", label: "Stoktan Çıktı", category: "stock", critical: true },
+  BACK_IN_STOCK: { icon: "✅", label: "Stoğa Girdi", category: "stock" },
 };
 
 const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
@@ -44,7 +49,7 @@ export default function NotificationsPage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [filter, setFilter] = useState<NotificationFilter>("all");
 
   const fetchNotifications = useCallback(
     async (reset = true) => {
@@ -70,6 +75,7 @@ export default function NotificationsPage() {
         } else {
           setNotifications((prev) => [...prev, ...items]);
         }
+
         setTotal(data.total ?? 0);
         setUnreadCount(data.unreadCount ?? 0);
         setHasMore(data.hasMore ?? false);
@@ -119,6 +125,66 @@ export default function NotificationsPage() {
     }
   };
 
+  const filteredNotifications = useMemo(() => {
+    return notifications.filter((notification) => {
+      const meta = notification.rule_type ? RULE_TYPE_META[notification.rule_type] : undefined;
+
+      if (filter === "all") return true;
+      if (filter === "unread") return !notification.is_read;
+      if (filter === "critical") {
+        return Boolean(
+          meta?.critical ||
+          /acil|kritik|urgent/i.test(`${notification.title} ${notification.message}`),
+        );
+      }
+      if (filter === "price") return meta?.category === "price";
+      if (filter === "stock") return meta?.category === "stock";
+      return true;
+    });
+  }, [notifications, filter]);
+
+  const counts = useMemo(() => {
+    return {
+      all: total,
+      unread: unreadCount,
+      critical: notifications.filter((n) => {
+        const meta = n.rule_type ? RULE_TYPE_META[n.rule_type] : undefined;
+        return Boolean(meta?.critical || /acil|kritik|urgent/i.test(`${n.title} ${n.message}`));
+      }).length,
+      price: notifications.filter((n) => {
+        const meta = n.rule_type ? RULE_TYPE_META[n.rule_type] : undefined;
+        return meta?.category === "price";
+      }).length,
+      stock: notifications.filter((n) => {
+        const meta = n.rule_type ? RULE_TYPE_META[n.rule_type] : undefined;
+        return meta?.category === "stock";
+      }).length,
+    };
+  }, [notifications, total, unreadCount]);
+
+  const groupedNotifications = useMemo(() => {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - 7);
+
+    const groups = {
+      today: [] as Notification[],
+      thisWeek: [] as Notification[],
+      older: [] as Notification[],
+    };
+
+    filteredNotifications.forEach((notification) => {
+      const sentAt = new Date(notification.sent_at);
+      if (sentAt >= todayStart) groups.today.push(notification);
+      else if (sentAt >= weekStart) groups.thisWeek.push(notification);
+      else groups.older.push(notification);
+    });
+
+    return groups;
+  }, [filteredNotifications]);
+
   function formatDate(dateStr: string): string {
     const now = new Date();
     const date = new Date(dateStr);
@@ -140,14 +206,23 @@ export default function NotificationsPage() {
     });
   }
 
+  const filterTabs: Array<{ key: NotificationFilter; label: string }> = [
+    { key: "all", label: "Tümü" },
+    { key: "unread", label: "Okunmamış" },
+    { key: "critical", label: "Kritikler" },
+    { key: "price", label: "Fiyat" },
+    { key: "stock", label: "Stok" },
+  ];
+
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6 sm:mb-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6 sm:mb-8">
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Bildirimler</h1>
           <p className="text-dark-500 text-xs sm:text-sm">
-            {unreadCount > 0 ? `${unreadCount} okunmamış bildiriminiz var` : "Tüm bildirimleriniz"}
+            {unreadCount > 0
+              ? `${unreadCount} okunmamış bildiriminiz var`
+              : "Bildirim kutunuz güncel ve temiz görünüyor"}
           </p>
         </div>
         {unreadCount > 0 && (
@@ -160,27 +235,27 @@ export default function NotificationsPage() {
         )}
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex gap-1 mb-4 sm:mb-6 bg-dark-900 border border-dark-800 rounded-xl p-1 w-fit">
-        <button
-          onClick={() => setFilter("all")}
-          className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
-            filter === "all" ? "bg-hive-500/10 text-hive-500" : "text-dark-500 hover:text-white"
-          }`}
-        >
-          Tümü ({total})
-        </button>
-        <button
-          onClick={() => setFilter("unread")}
-          className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
-            filter === "unread" ? "bg-hive-500/10 text-hive-500" : "text-dark-500 hover:text-white"
-          }`}
-        >
-          Okunmamış ({unreadCount})
-        </button>
+      <div className="mb-4 sm:mb-6 bg-dark-900 border border-dark-800 rounded-2xl p-3 sm:p-4">
+        <div className="flex flex-wrap gap-1 bg-dark-950 border border-dark-800 rounded-xl p-1 w-fit">
+          {filterTabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
+                filter === tab.key
+                  ? "bg-hive-500/12 text-hive-400"
+                  : "text-dark-500 hover:text-white"
+              }`}
+            >
+              {tab.label} ({counts[tab.key]})
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] sm:text-xs text-dark-600 mt-2">
+          Kritik ve kategori filtreleri görünürlüğü artırır; backend akışını değiştirmez.
+        </p>
       </div>
 
-      {/* Loading */}
       {loading && (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
@@ -201,7 +276,6 @@ export default function NotificationsPage() {
         </div>
       )}
 
-      {/* Error */}
       {!loading && error && (
         <div className="bg-dark-900 border border-red-500/20 rounded-2xl p-8 text-center">
           <h3 className="text-white font-semibold mb-2">Bildirimler yüklenemedi</h3>
@@ -215,8 +289,7 @@ export default function NotificationsPage() {
         </div>
       )}
 
-      {/* Empty State */}
-      {!loading && !error && notifications.length === 0 && (
+      {!loading && !error && filteredNotifications.length === 0 && (
         <div className="bg-dark-900 border border-dark-800 rounded-2xl p-12 text-center">
           <div className="w-16 h-16 bg-dark-800 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <svg
@@ -233,110 +306,154 @@ export default function NotificationsPage() {
             </svg>
           </div>
           <h2 className="text-lg font-bold text-white mb-2">
-            {filter === "unread" ? "Okunmamış bildirim yok" : "Henüz bildirim yok"}
+            {filter === "unread" ? "Okunmamış bildirim yok" : "Bu filtrede bildirim bulunamadı"}
           </h2>
           <p className="text-dark-500 text-sm max-w-md mx-auto mb-6">
-            {filter === "unread"
-              ? "Tüm bildirimlerinizi okudunuz."
-              : "Uyarı kurallarınız tetiklendiğinde bildirimler burada görünecek."}
+            Filtreyi genişletin veya uyarı kurallarınızın bekleme sürelerini düzenleyerek daha
+            dengeli bir akış kurun.
           </p>
-          {filter !== "unread" && (
-            <Link
-              href="/dashboard/alerts"
-              className="inline-flex items-center gap-2 text-sm font-semibold text-dark-1000 bg-hive-500 hover:bg-hive-600 px-4 py-2 rounded-lg transition"
-            >
-              Uyarı Kuralı Oluştur
-            </Link>
-          )}
+          <Link
+            href="/dashboard/alerts"
+            className="inline-flex items-center gap-2 text-sm font-semibold text-dark-1000 bg-hive-500 hover:bg-hive-600 px-4 py-2 rounded-lg transition"
+          >
+            Uyarıları Düzenle
+          </Link>
         </div>
       )}
 
-      {/* Notification List */}
-      {!loading && !error && notifications.length > 0 && (
-        <div className="space-y-2">
-          {notifications.map((notification) => {
-            const icon = notification.rule_type
-              ? RULE_TYPE_ICONS[notification.rule_type] || "🔔"
-              : "🔔";
-            const marketplace = notification.marketplace
-              ? MARKETPLACE_LABELS[notification.marketplace]
-              : null;
+      {!loading && !error && filteredNotifications.length > 0 && (
+        <div className="space-y-5">
+          {[
+            { key: "today", label: "Bugün", items: groupedNotifications.today },
+            { key: "week", label: "Bu Hafta", items: groupedNotifications.thisWeek },
+            { key: "older", label: "Daha Eski", items: groupedNotifications.older },
+          ]
+            .filter((section) => section.items.length > 0)
+            .map((section) => (
+              <section key={section.key}>
+                <h2 className="text-xs font-semibold tracking-wide uppercase text-dark-500 mb-2 px-1">
+                  {section.label}
+                </h2>
+                <div className="space-y-2">
+                  {section.items.map((notification) => {
+                    const meta = notification.rule_type
+                      ? RULE_TYPE_META[notification.rule_type]
+                      : undefined;
+                    const icon = meta?.icon || "🔔";
+                    const marketplace = notification.marketplace
+                      ? MARKETPLACE_LABELS[notification.marketplace]
+                      : null;
+                    const isCritical =
+                      Boolean(meta?.critical) ||
+                      /acil|kritik|urgent/i.test(`${notification.title} ${notification.message}`);
 
-            return (
-              <div
-                key={notification.id}
-                className={`bg-dark-900 border rounded-xl sm:rounded-2xl p-3 sm:p-4 transition cursor-pointer hover:border-dark-700 ${
-                  !notification.is_read
-                    ? "border-hive-500/20 bg-hive-500/[0.02]"
-                    : "border-dark-800"
-                }`}
-                onClick={() => {
-                  if (!notification.is_read) markAsRead(notification.id);
-                }}
-              >
-                <div className="flex gap-3 sm:gap-4">
-                  {/* Icon */}
-                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-hive-500/10 flex items-center justify-center shrink-0 text-sm sm:text-lg">
-                    {icon}
-                  </div>
+                    return (
+                      <article
+                        key={notification.id}
+                        className={`bg-dark-900 border rounded-xl sm:rounded-2xl p-3 sm:p-4 transition cursor-pointer hover:border-dark-700 ${
+                          !notification.is_read
+                            ? "border-hive-500/30 bg-hive-500/[0.03]"
+                            : "border-dark-800"
+                        } ${isCritical ? "ring-1 ring-red-500/20" : ""}`}
+                        onClick={() => {
+                          if (!notification.is_read) markAsRead(notification.id);
+                        }}
+                      >
+                        <div className="flex gap-3 sm:gap-4">
+                          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-hive-500/10 flex items-center justify-center shrink-0 text-sm sm:text-lg">
+                            {icon}
+                          </div>
 
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h3
-                            className={`text-sm ${!notification.is_read ? "text-white font-semibold" : "text-dark-300"}`}
-                          >
-                            {notification.title}
-                          </h3>
-                          {!notification.is_read && (
-                            <span className="w-2 h-2 bg-hive-500 rounded-full shrink-0" />
-                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3
+                                    className={`text-sm ${!notification.is_read ? "text-white font-semibold" : "text-dark-300"}`}
+                                  >
+                                    {notification.title}
+                                  </h3>
+                                  {!notification.is_read && (
+                                    <span className="w-2 h-2 bg-hive-500 rounded-full shrink-0" />
+                                  )}
+                                  {isCritical && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-300">
+                                      Kritik
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-dark-500 text-sm mt-1 leading-relaxed">
+                                  {notification.message}
+                                </p>
+                              </div>
+                              <span className="text-dark-600 text-[10px] sm:text-xs shrink-0 whitespace-nowrap hidden sm:block">
+                                {formatDate(notification.sent_at)}
+                              </span>
+                            </div>
+
+                            <span className="text-dark-600 text-[10px] mt-1 block sm:hidden">
+                              {formatDate(notification.sent_at)}
+                            </span>
+
+                            <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                              {meta?.label && (
+                                <span className="text-[11px] text-hive-400 bg-hive-500/10 px-2 py-1 rounded-full">
+                                  {meta.label}
+                                </span>
+                              )}
+                              {notification.product_name && (
+                                <span className="text-xs text-dark-400 truncate max-w-[220px]">
+                                  {notification.product_name}
+                                </span>
+                              )}
+                              {marketplace && (
+                                <span
+                                  className="text-xs font-medium px-1.5 py-0.5 rounded"
+                                  style={{
+                                    backgroundColor: `${marketplace.color}20`,
+                                    color: marketplace.color,
+                                  }}
+                                >
+                                  {marketplace.name}
+                                </span>
+                              )}
+                              <span className="text-xs text-dark-600 bg-dark-800 px-1.5 py-0.5 rounded">
+                                {notification.channel}
+                              </span>
+                            </div>
+
+                            {notification.product_name && (
+                              <div className="mt-3">
+                                <Link
+                                  href={`/dashboard/products?search=${encodeURIComponent(notification.product_name)}`}
+                                  className="inline-flex items-center gap-1 text-xs text-hive-400 hover:text-hive-300"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  Ürünü aç
+                                  <svg
+                                    className="w-3 h-3"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                  >
+                                    <path d="M7 17L17 7" />
+                                    <path d="M7 7h10v10" />
+                                  </svg>
+                                </Link>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-dark-500 text-sm mt-1">{notification.message}</p>
-                      </div>
-                      <span className="text-dark-600 text-[10px] sm:text-xs shrink-0 whitespace-nowrap hidden sm:block">
-                        {formatDate(notification.sent_at)}
-                      </span>
-                    </div>
-
-                    {/* Timestamp — mobile only below message */}
-                    <span className="text-dark-600 text-[10px] mt-1 block sm:hidden">
-                      {formatDate(notification.sent_at)}
-                    </span>
-
-                    {/* Meta info */}
-                    <div className="flex items-center gap-2 mt-2">
-                      {notification.product_name && (
-                        <span className="text-xs text-dark-600 truncate max-w-[200px]">
-                          {notification.product_name}
-                        </span>
-                      )}
-                      {marketplace && (
-                        <span
-                          className="text-xs font-medium px-1.5 py-0.5 rounded"
-                          style={{
-                            backgroundColor: `${marketplace.color}20`,
-                            color: marketplace.color,
-                          }}
-                        >
-                          {marketplace.name}
-                        </span>
-                      )}
-                      <span className="text-xs text-dark-600 bg-dark-800 px-1.5 py-0.5 rounded">
-                        {notification.channel}
-                      </span>
-                    </div>
-                  </div>
+                      </article>
+                    );
+                  })}
                 </div>
-              </div>
-            );
-          })}
+              </section>
+            ))}
 
-          {/* Load More */}
           {hasMore && (
-            <div className="text-center py-4">
+            <div className="text-center py-2">
               <button
                 onClick={() => fetchNotifications(false)}
                 disabled={loadingMore}
