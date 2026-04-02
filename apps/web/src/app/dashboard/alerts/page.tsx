@@ -183,6 +183,7 @@ export default function AlertsPage() {
   const [activeFilter, setActiveFilter] = useState<AlertFilter>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [modalPrefill, setModalPrefill] = useState<AlertModalPrefill | null>(null);
+  const [showFirstAlertSuccess, setShowFirstAlertSuccess] = useState(false);
 
   const fetchRules = useCallback(async () => {
     setLoading(true);
@@ -315,6 +316,24 @@ export default function AlertsPage() {
 
       {!loading && !error && (
         <div className="mb-5 sm:mb-7 space-y-4">
+          {showFirstAlertSuccess && (
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3">
+              <div>
+                <p className="text-sm text-emerald-300 font-medium">İlk uyarınız aktif.</p>
+                <p className="text-xs text-emerald-100/80 mt-0.5">
+                  Şimdi bildirimler sayfasından akışı izleyerek eşik ve bekleme süresini optimize
+                  edebilirsiniz.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowFirstAlertSuccess(false)}
+                className="text-xs text-emerald-200/80 hover:text-emerald-100 transition"
+              >
+                Kapat
+              </button>
+            </div>
+          )}
+
           <div className="bg-dark-900 border border-dark-800 rounded-2xl p-4">
             <div className="flex items-start justify-between gap-3 mb-3">
               <div>
@@ -408,7 +427,7 @@ export default function AlertsPage() {
             </svg>
           }
           title="Henüz uyarı kuralı yok"
-          description="İlk kuralınızı birkaç saniyede oluşturun. Doğru bekleme süresi ile hem spam azalır hem kritik hareketleri kaçırmazsınız."
+          description="İlk kuralınızı birkaç saniyede oluşturun. Özellikle “Rakip daha ucuz” veya “Yüzde değişim” ile başlayarak ilk değerli sinyali hızlıca yakalayabilirsiniz."
           actionLabel="İlk Uyarıyı Oluştur"
           onAction={() => openCreateModal()}
         />
@@ -613,8 +632,10 @@ export default function AlertsPage() {
           initialValues={modalPrefill}
           onClose={() => setShowCreateModal(false)}
           onCreated={() => {
+            const wasFirstAlert = rules.length === 0;
             setShowCreateModal(false);
             setModalPrefill(null);
+            if (wasFirstAlert) setShowFirstAlertSuccess(true);
             fetchRules();
           }}
         />
@@ -707,7 +728,7 @@ function CreateAlertModal({
       if (!res.ok) {
         if (res.status === 403 && data.upgradeRequired) {
           setError(
-            `${data.error} Planınızı yükseltmek için Ayarlar > Plan sayfasını ziyaret edin.`,
+            `${data.error} Daha fazla kural/kanal ile kritik değişimleri daha hızlı yakalamak için Ayarlar > Plan sayfasından yükseltebilirsiniz.`,
           );
         } else {
           setError(data.error || "Uyarı oluşturulamadı");
@@ -753,6 +774,14 @@ function CreateAlertModal({
             {error}
           </div>
         )}
+
+        {planFeatures?.features?.allowedChannels &&
+          planFeatures.features.allowedChannels.length < Object.keys(CHANNEL_LABELS).length && (
+            <div className="bg-amber-500/10 border border-amber-500/25 text-amber-200 text-xs rounded-xl px-4 py-3 mb-4">
+              Bazı bildirim kanalları mevcut planınızda kapalı olabilir. Daha hızlı ekip
+              koordinasyonu için Telegram/Webhook kanallarını Plan sayfasından açabilirsiniz.
+            </div>
+          )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <section className="rounded-xl border border-dark-800 bg-dark-950 p-4 space-y-3">

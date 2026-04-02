@@ -110,6 +110,7 @@ export default function ProductsPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
   const [sortBy, setSortBy] = useState<SortOption>("updated_desc");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
+  const [showFirstProductSuccess, setShowFirstProductSuccess] = useState(false);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -154,6 +155,7 @@ export default function ProductsPage() {
       if (!res.ok) throw new Error(data.error);
 
       setProducts((prev) => [data.product, ...prev]);
+      setShowFirstProductSuccess(true);
       setUrl("");
       setShowModal(false);
 
@@ -285,7 +287,7 @@ export default function ProductsPage() {
             <button
               onClick={() => (window.location.href = "/dashboard/pricing")}
               className="inline-flex items-center gap-2 border border-amber-500/20 text-amber-500/70 p-2.5 sm:px-4 sm:py-2.5 rounded-xl font-medium text-sm transition hover:bg-amber-500/5"
-              title="Toplu Ekle — Başlangıç planı gerekli"
+              title="Toplu URL ekleme ile onlarca ürünü tek seferde takibe alabilirsiniz"
             >
               <svg
                 className="w-4 h-4"
@@ -299,7 +301,7 @@ export default function ProductsPage() {
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                 <path d="M7 11V7a5 5 0 0110 0v4" />
               </svg>
-              <span className="hidden sm:inline">Toplu Ekle</span>
+              <span className="hidden sm:inline">Toplu Ekle · Üst Plan</span>
             </button>
           )}
 
@@ -330,6 +332,24 @@ export default function ProductsPage() {
         />
       )}
 
+      {showFirstProductSuccess && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3">
+          <div>
+            <p className="text-sm text-emerald-300 font-medium">İlk ürününüz başarıyla eklendi.</p>
+            <p className="text-xs text-emerald-100/80 mt-0.5">
+              Sıradaki adım: ürün detayından rakip taramasını başlatıp ilk fiyat sinyalini
+              yakalayın.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowFirstProductSuccess(false)}
+            className="text-xs text-emerald-200/80 hover:text-emerald-100 transition"
+          >
+            Kapat
+          </button>
+        </div>
+      )}
+
       {planFeatures && planFeatures.usage.products >= planFeatures.features.maxProducts * 0.8 && (
         <div
           className={`flex items-center justify-between px-4 py-3 rounded-xl mb-4 ${planFeatures.usage.products >= planFeatures.features.maxProducts ? "bg-red-500/10 border border-red-500/20" : "bg-amber-500/10 border border-amber-500/20"}`}
@@ -347,7 +367,7 @@ export default function ProductsPage() {
             href="/dashboard/pricing"
             className="text-xs text-amber-500 hover:text-amber-400 font-semibold transition"
           >
-            Planı Yükselt →
+            Limiti artır →
           </Link>
         </div>
       )}
@@ -453,6 +473,24 @@ export default function ProductsPage() {
 
       {!loading && !error && products.length > 0 && viewMode === "cards" && (
         <div className="grid gap-4">
+          {filteredProducts.length === 0 && (
+            <div className="rounded-2xl border border-[#1F1F23] bg-[#111113] p-8 text-center">
+              <h3 className="text-white font-semibold">Bu görünümde ürün bulunamadı</h3>
+              <p className="text-gray-500 text-sm mt-2">
+                Arama veya filtreleri sadeleştirin. Özellikle “Rakipsiz” filtresiyle ürün detayına
+                geçip rakip taraması başlatabilirsiniz.
+              </p>
+              <button
+                onClick={() => {
+                  setSearchQuery("");
+                  setQuickFilter("ALL");
+                }}
+                className="mt-4 text-sm text-amber-400 hover:text-amber-300 transition"
+              >
+                Filtreleri temizle
+              </button>
+            </div>
+          )}
           {filteredProducts.map(
             ({ product, myPrice, competitorCount, minCompetitorPrice, stale }) => {
               const pricePositionHint =
@@ -603,6 +641,13 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody>
+              {filteredProducts.length === 0 && (
+                <tr className="border-t border-[#1F1F23]">
+                  <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                    Filtreye uygun ürün yok. Arama veya hızlı filtreleri temizleyin.
+                  </td>
+                </tr>
+              )}
               {filteredProducts.map(({ product, myPrice, competitorCount, stale }) => (
                 <tr
                   key={product.id}

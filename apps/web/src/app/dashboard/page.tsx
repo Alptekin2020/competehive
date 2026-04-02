@@ -165,6 +165,73 @@ export default function DashboardPage() {
     ];
   }, [products]);
 
+  const onboardingChecklist = useMemo(() => {
+    const hasFirstProduct = (stats?.trackedProducts ?? 0) > 0;
+    const hasCompetitorScan = products.some(
+      (product) => (product.competitorCount ?? product.competitors?.length ?? 0) > 0,
+    );
+    const hasFirstAlert = (stats?.activeAlerts ?? 0) > 0;
+    const reviewedNotifications = (stats?.unreadNotifications ?? 0) === 0;
+    const hasPriceMovement =
+      movers.length > 0 ||
+      products.some((product) => Boolean(product.trend && product.trend.priceChange));
+
+    return [
+      {
+        key: "first-product",
+        title: "İlk ürünü ekle",
+        description: "Takibin başlangıcı için en az 1 ürün ekleyin.",
+        done: hasFirstProduct,
+        href: "/dashboard/products",
+        cta: "Ürün ekle",
+      },
+      {
+        key: "scan-competitors",
+        title: "Rakipleri tara",
+        description: "En az bir ürün için rakip verisi çekin.",
+        done: hasCompetitorScan,
+        href: "/dashboard/products",
+        cta: "Rakipleri gör",
+      },
+      {
+        key: "first-alert",
+        title: "İlk uyarıyı oluştur",
+        description: "Kritik hareketleri kaçırmamak için alarm kurun.",
+        done: hasFirstAlert,
+        href: "/dashboard/alerts",
+        cta: "Uyarı kur",
+      },
+      {
+        key: "review-notifications",
+        title: "Bildirimleri gözden geçir",
+        description: "Gelenleri okuyup akışı temiz tutun.",
+        done: reviewedNotifications,
+        href: "/dashboard/notifications",
+        cta: "Bildirimleri aç",
+      },
+      {
+        key: "first-price-move",
+        title: "İlk fiyat hareketini incele",
+        description: "Trendleri inceleyip ilk aksiyonunuzu belirleyin.",
+        done: hasPriceMovement,
+        href: "/dashboard/products",
+        cta: "Fiyat hareketleri",
+      },
+    ];
+  }, [
+    movers.length,
+    products,
+    stats?.activeAlerts,
+    stats?.trackedProducts,
+    stats?.unreadNotifications,
+  ]);
+
+  const completedChecklistCount = onboardingChecklist.filter((step) => step.done).length;
+  const showOnboardingChecklist =
+    !loading &&
+    stats &&
+    (completedChecklistCount < onboardingChecklist.length || stats.trackedProducts < 3);
+
   const statCards = [
     {
       label: "Takip Edilen Ürünler",
@@ -271,6 +338,67 @@ export default function DashboardPage() {
           ))
         )}
       </div>
+
+      {showOnboardingChecklist && (
+        <section className="mb-6 sm:mb-8 rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/8 to-transparent p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4 mb-4">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-amber-300/80">
+                Başlangıç Kontrol Listesi
+              </p>
+              <h2 className="text-white font-semibold mt-1">İlk değeri dakikalar içinde görün</h2>
+              <p className="text-xs sm:text-sm text-gray-400 mt-1">
+                Temel kurulumu tamamladığınızda fiyat hareketlerini ve kritik riskleri çok daha net
+                görürsünüz.
+              </p>
+            </div>
+            <span className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-full px-2.5 py-1 w-fit">
+              {completedChecklistCount}/{onboardingChecklist.length} tamamlandı
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+            {onboardingChecklist.map((step) => (
+              <div
+                key={step.key}
+                className={`rounded-xl border px-3.5 py-3 flex items-start justify-between gap-3 ${
+                  step.done
+                    ? "border-emerald-500/20 bg-emerald-500/5"
+                    : "border-[#26262B] bg-[#151519]"
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
+                        step.done
+                          ? "bg-emerald-500/20 text-emerald-300"
+                          : "bg-[#1E1E23] text-gray-500"
+                      }`}
+                    >
+                      {step.done ? "✓" : "•"}
+                    </span>
+                    <p
+                      className={`text-sm font-medium ${step.done ? "text-emerald-200" : "text-white"}`}
+                    >
+                      {step.title}
+                    </p>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">{step.description}</p>
+                </div>
+                {!step.done && (
+                  <Link
+                    href={step.href}
+                    className="text-xs text-amber-400 hover:text-amber-300 transition whitespace-nowrap"
+                  >
+                    {step.cta} →
+                  </Link>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {!loading && stats && stats.trackedProducts === 0 && (
         <EmptyState

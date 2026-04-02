@@ -32,7 +32,7 @@ export default async function Home() {
                   href="/dashboard"
                   className="border border-dark-700 hover:border-hive-500/60 hover:text-hive-300 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold transition"
                 >
-                  Dashboard
+                  Panele Devam Et
                 </Link>
                 <div className="flex items-center justify-center rounded-full ring-1 ring-dark-700/80 bg-dark-900/80 p-1">
                   <UserButton
@@ -87,7 +87,7 @@ export default async function Home() {
             </p>
             <div className="flex flex-col sm:flex-row justify-center lg:justify-start gap-3 sm:gap-4 px-4 lg:px-0">
               <Link
-                href="/register"
+                href={userId ? "/dashboard/products" : "/register"}
                 className="bg-hive-500 hover:bg-hive-600 text-dark-1000 px-8 py-3.5 rounded-xl font-semibold transition inline-flex items-center justify-center gap-2"
               >
                 <svg
@@ -102,15 +102,21 @@ export default async function Home() {
                 >
                   <polygon points="5 3 19 12 5 21 5 3" />
                 </svg>
-                Ücretsiz Başla
+                {userId ? "İlk Ürünü Ekle" : "Ücretsiz Başla"}
               </Link>
               <Link
-                href="#features"
+                href={userId ? "/dashboard" : "#features"}
                 className="border border-dark-700 hover:border-dark-500 text-white px-8 py-3.5 rounded-xl font-medium transition text-center"
               >
-                Nasıl Çalışır →
+                {userId ? "Başlangıç Akışını Aç →" : "Nasıl Çalışır →"}
               </Link>
             </div>
+            {userId && (
+              <p className="text-xs text-hive-300/80 mt-4 px-2 lg:px-0">
+                İpucu: Ürün ekleyin → rakipleri tarayın → ilk uyarıyı kurun. İlk değerli içgörüyü
+                genellikle birkaç dakika içinde görürsünüz.
+              </p>
+            )}
           </div>
 
           <div className="relative">
