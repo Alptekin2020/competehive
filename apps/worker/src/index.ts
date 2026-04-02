@@ -107,26 +107,58 @@ async function start() {
   // İlk çalıştırmada da tarama planla
   await scheduleScans();
 
-  // 6 saatlik periyodik refresh scheduler — tüm ürünleri competitor fiyatları ile güncelle
+  // 3 saatlik periyodik refresh — URL dedup ile (aynı URL için tek Serper çağrısı)
   setInterval(
     async () => {
       try {
-        const products = await prisma.trackedProduct.findMany({
-          where: { status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
-          select: { id: true },
-        });
+        // Unique URL'leri bul — her URL için sadece 1 temsilci ürün seç
+        const uniqueProducts = await prisma.$queryRaw<
+          Array<{
+            id: string;
+            product_url: string;
+            product_name: string;
+            marketplace: string;
+            total_subscribers: number;
+          }>
+        >`
+          SELECT DISTINCT ON (product_url)
+            id, product_url, product_name, marketplace,
+            (SELECT COUNT(*) FROM tracked_products tp2
+             WHERE tp2.product_url = tracked_products.product_url
+             AND tp2.status IN ('ACTIVE', 'OUT_OF_STOCK')) as total_subscribers
+          FROM tracked_products
+          WHERE status IN ('ACTIVE', 'OUT_OF_STOCK')
+          ORDER BY product_url, last_scraped_at ASC NULLS FIRST
+        `;
 
-        for (const product of products) {
-          await productQueue.add("refresh", { productId: product.id });
+        let scheduled = 0;
+        for (const product of uniqueProducts) {
+          await productQueue.add(
+            "refresh",
+            {
+              productId: product.id,
+              isDeduped: true, // Flag: bu refresh sonucu aynı URL'deki diğer ürünlere de yansıtılacak
+            },
+            {
+              jobId: `refresh-dedup-${product.id}-${Date.now()}`,
+            },
+          );
+          scheduled++;
         }
 
-        logger.info(`Scheduled ${products.length} refresh jobs`);
+        logger.info(
+          {
+            uniqueUrls: uniqueProducts.length,
+            scheduled,
+          },
+          "Dedup refresh scheduled (3h cycle)",
+        );
       } catch (err) {
         logger.error({ err }, "Refresh scheduler error");
       }
     },
-    6 * 60 * 60 * 1000,
-  ); // 6 saat
+    3 * 60 * 60 * 1000,
+  ); // 3 saat
 
   // Start health check HTTP server (Railway uses this for health checks)
   startHealthServer(parseInt(process.env.PORT || "8080"));

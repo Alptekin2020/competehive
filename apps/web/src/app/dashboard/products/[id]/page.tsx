@@ -1076,9 +1076,35 @@ export default function ProductDetailPage() {
                               </p>
                             )}
                             {competitor.lastScrapedAt && (
-                              <p className="text-[11px] text-gray-500 mt-0.5">
-                                {timeAgo(competitor.lastScrapedAt)}
-                              </p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <p className="text-[11px] text-gray-500">
+                                  {timeAgo(competitor.lastScrapedAt)}
+                                </p>
+                                {(() => {
+                                  const hours =
+                                    (Date.now() - new Date(competitor.lastScrapedAt).getTime()) /
+                                    (1000 * 60 * 60);
+                                  if (hours > 72)
+                                    return (
+                                      <span
+                                        className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded"
+                                        title="Bu fiyat 72+ saat önce alındı, güncel olmayabilir"
+                                      >
+                                        Eski
+                                      </span>
+                                    );
+                                  if (hours > 24)
+                                    return (
+                                      <span
+                                        className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded"
+                                        title="Bu fiyat 24+ saat önce alındı"
+                                      >
+                                        {Math.floor(hours)}sa
+                                      </span>
+                                    );
+                                  return null;
+                                })()}
+                              </div>
                             )}
                           </>
                         ) : (
