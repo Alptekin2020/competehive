@@ -247,7 +247,12 @@ export default function ProductDetailPage() {
         return;
       }
 
-      setCompareStatus("Rakip taraması tamamlandı");
+      const foundCount = Array.isArray(data?.competitors) ? data.competitors.length : null;
+      setCompareStatus(
+        foundCount && foundCount > 0
+          ? `Rakip taraması tamamlandı · ${foundCount} rakip bulundu`
+          : "Rakip taraması tamamlandı",
+      );
       await fetchProduct();
     } catch {
       setCompareStatus(null);
@@ -549,8 +554,16 @@ export default function ProductDetailPage() {
                 )}
                 {isComparing ? "Rakipler Taranıyor..." : "Rakipleri Tara"}
               </button>
-              {compareStatus && <span className="text-xs text-blue-300">{compareStatus}</span>}
-              {compareError && <span className="text-xs text-red-400">{compareError}</span>}
+              {compareStatus && (
+                <span className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md">
+                  {compareStatus}
+                </span>
+              )}
+              {compareError && (
+                <span className="text-xs text-red-300 bg-red-500/10 border border-red-500/25 px-2 py-1 rounded-md">
+                  {compareError}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -890,10 +903,17 @@ export default function ProductDetailPage() {
                 </svg>
               </div>
               <h3 className="text-white font-semibold mb-1">Rakip bulunamadı</h3>
-              <p className="text-gray-500 text-sm">
-                Bu ürün için henüz rakip tespit edilemedi. Yukarıdaki &quot;Rakipleri Tara&quot;
-                butonuyla tekrar deneyebilirsiniz.
+              <p className="text-gray-500 text-sm mb-4">
+                İlk değerli analiz için bu üründe en az bir rakip gerekli. Taramayı başlatıp eşleşme
+                sonuçlarını birkaç saniye içinde burada görebilirsiniz.
               </p>
+              <button
+                onClick={handleCompare}
+                disabled={isComparing}
+                className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition"
+              >
+                {isComparing ? "Taranıyor..." : "Rakip Taramasını Başlat"}
+              </button>
             </div>
           ) : (
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6">

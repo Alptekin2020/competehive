@@ -50,6 +50,7 @@ export default function NotificationsPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<NotificationFilter>("all");
+  const [showFirstNotificationSuccess, setShowFirstNotificationSuccess] = useState(false);
 
   const fetchNotifications = useCallback(
     async (reset = true) => {
@@ -94,6 +95,12 @@ export default function NotificationsPage() {
     fetchNotifications(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
+
+  useEffect(() => {
+    if (total === 1 && notifications.length > 0) {
+      setShowFirstNotificationSuccess(true);
+    }
+  }, [notifications.length, total]);
 
   const markAsRead = async (notificationId: string) => {
     try {
@@ -236,6 +243,24 @@ export default function NotificationsPage() {
       </div>
 
       <div className="mb-4 sm:mb-6 bg-dark-900 border border-dark-800 rounded-2xl p-3 sm:p-4">
+        {showFirstNotificationSuccess && (
+          <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs sm:text-sm text-emerald-300 font-medium">
+                İlk bildiriminiz ulaştı.
+              </p>
+              <p className="text-[11px] sm:text-xs text-emerald-100/80 mt-0.5">
+                Artık kuralların ürettiği sinyalleri bu akıştan takip edebilirsiniz.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowFirstNotificationSuccess(false)}
+              className="text-[11px] sm:text-xs text-emerald-200/80 hover:text-emerald-100"
+            >
+              Kapat
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1 bg-dark-950 border border-dark-800 rounded-xl p-1 w-fit">
           {filterTabs.map((tab) => (
             <button
@@ -309,15 +334,26 @@ export default function NotificationsPage() {
             {filter === "unread" ? "Okunmamış bildirim yok" : "Bu filtrede bildirim bulunamadı"}
           </h2>
           <p className="text-dark-500 text-sm max-w-md mx-auto mb-6">
-            Filtreyi genişletin veya uyarı kurallarınızın bekleme sürelerini düzenleyerek daha
-            dengeli bir akış kurun.
+            {total === 0
+              ? "Henüz bildirim üretilmedi. Önce ürün ekleyip bir uyarı kuralı oluşturun; ilk sinyal burada görünecek."
+              : "Filtreyi genişletin veya uyarı kurallarınızın bekleme sürelerini düzenleyerek daha dengeli bir akış kurun."}
           </p>
-          <Link
-            href="/dashboard/alerts"
-            className="inline-flex items-center gap-2 text-sm font-semibold text-dark-1000 bg-hive-500 hover:bg-hive-600 px-4 py-2 rounded-lg transition"
-          >
-            Uyarıları Düzenle
-          </Link>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <Link
+              href="/dashboard/alerts"
+              className="inline-flex items-center gap-2 text-sm font-semibold text-dark-1000 bg-hive-500 hover:bg-hive-600 px-4 py-2 rounded-lg transition"
+            >
+              Uyarıları Düzenle
+            </Link>
+            {total === 0 && (
+              <Link
+                href="/dashboard/products"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-white border border-dark-700 hover:border-hive-500/40 px-4 py-2 rounded-lg transition"
+              >
+                Ürünlere Git
+              </Link>
+            )}
+          </div>
         </div>
       )}
 
