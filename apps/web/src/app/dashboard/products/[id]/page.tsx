@@ -147,6 +147,12 @@ function formatPrice(price: number, currency = "TRY") {
   }).format(price);
 }
 
+function safePrice(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function MatchScoreBadge({ score }: { score: number | null }) {
   if (score === null || score === undefined) return null;
 
@@ -344,14 +350,14 @@ export default function ProductDetailPage() {
   // Stats
   const ownPrice = product.currentPrice ? Number(product.currentPrice) : null;
   const competitorPrices = competitors
-    .map((c) => (c.currentPrice ? Number(c.currentPrice) : null))
-    .filter((p): p is number => p !== null && p > 0);
+    .map((c) => safePrice(c.currentPrice))
+    .filter((p): p is number => p !== null);
   const allPrices = [...(ownPrice && ownPrice > 0 ? [ownPrice] : []), ...competitorPrices];
   const lowestPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
   const highestPrice = allPrices.length > 0 ? Math.max(...allPrices) : null;
   const avgPrice =
     allPrices.length > 0 ? allPrices.reduce((a, b) => a + b, 0) / allPrices.length : null;
-  const validCompetitors = competitors.filter((c) => c.currentPrice && Number(c.currentPrice) > 0);
+  const validCompetitors = competitors.filter((c) => safePrice(c.currentPrice) !== null);
   const cheapestCompetitor = validCompetitors
     .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
     .sort((a, b) => a.parsedPrice - b.parsedPrice)[0];
@@ -424,21 +430,33 @@ export default function ProductDetailPage() {
           .reduce((acc, price) => acc + price, 0) / 3
       : null;
 
+  const qualityRatio = competitors.length > 0 ? validCompetitors.length / competitors.length : 0;
+  const qualityLabel =
+    competitors.length === 0
+      ? "Rakip verisi bekleniyor"
+      : qualityRatio >= 0.8 && isFresh
+        ? "Aksiyon için güçlü"
+        : qualityRatio >= 0.5
+          ? "Temkinli değerlendir"
+          : "Düşük güven";
+
   const filteredCompetitors = competitors
     .filter((competitor) => {
-      if (competitorFilter === "priced")
-        return !!competitor.currentPrice && Number(competitor.currentPrice) > 0;
+      if (competitorFilter === "priced") return safePrice(competitor.currentPrice) !== null;
       if (competitorFilter === "suspicious")
         return competitor.matchScore !== null && competitor.matchScore < 70;
       return true;
     })
     .sort((a, b) => {
-      const aPrice = a.currentPrice ? Number(a.currentPrice) : Number.POSITIVE_INFINITY;
-      const bPrice = b.currentPrice ? Number(b.currentPrice) : Number.POSITIVE_INFINITY;
+      const aPrice = safePrice(a.currentPrice);
+      const bPrice = safePrice(b.currentPrice);
+      if (aPrice === null && bPrice === null) return 0;
+      if (aPrice === null) return 1;
+      if (bPrice === null) return -1;
 
       if (competitorSort === "highest") return bPrice - aPrice;
       if (competitorSort === "closest") {
-        const base = ownPrice ?? 0;
+        const base = ownPrice ?? aPrice;
         return Math.abs(aPrice - base) - Math.abs(bPrice - base);
       }
       return aPrice - bPrice;
@@ -538,6 +556,24 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
+      <div className="mb-4 sm:mb-6 bg-gradient-to-r from-amber-500/10 via-[#17171A] to-[#121214] border border-amber-500/20 rounded-2xl p-4 sm:p-5">
+        <p className="text-xs uppercase tracking-wide text-amber-300/90 mb-1">Karar Özeti</p>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+          <div>
+            <p className="text-white text-lg sm:text-xl font-semibold">{marketPositionLabel}</p>
+            <p className="text-sm text-gray-300 mt-1">
+              {absoluteDiffToCheapest !== null
+                ? `En düşük rakibe göre ${absoluteDiffToCheapest > 0 ? "+" : ""}${formatPrice(
+                    absoluteDiffToCheapest,
+                    product.currency,
+                  )} (${percentageDiffToCheapest?.toFixed(1) ?? "0.0"}%).`
+                : "Sağlıklı konum analizi için geçerli rakip fiyatı gerekli."}
+            </p>
+          </div>
+          <div className="text-xs text-gray-400">Sıralama: {rankLabel}</div>
+        </div>
+      </div>
+
       {/* Karar Kartları */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
         <div className="bg-gradient-to-br from-[#151518] to-[#101012] border border-[#2A2A2F] rounded-2xl p-5 sm:p-6 lg:col-span-2">
@@ -609,6 +645,17 @@ export default function ProductDetailPage() {
                 }`}
               >
                 {freshnessLabel}
+              </span>
+              <span
+                className={`ml-2 inline-flex px-2.5 py-1 rounded-full text-xs border ${
+                  qualityLabel === "Aksiyon için güçlü"
+                    ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
+                    : qualityLabel === "Temkinli değerlendir"
+                      ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                      : "text-rose-300 bg-rose-500/10 border-rose-500/30"
+                }`}
+              >
+                {qualityLabel}
               </span>
             </li>
           </ul>
@@ -889,6 +936,13 @@ export default function ProductDetailPage() {
                 </div>
               </div>
               <div className="space-y-3">
+                {filteredCompetitors.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-[#2A2A2F] p-5 text-center">
+                    <p className="text-sm text-gray-400">
+                      Seçili filtre için görüntülenecek rakip bulunamadı.
+                    </p>
+                  </div>
+                )}
                 {filteredCompetitors.map((competitor, index) => {
                   const cPrice = competitor.currentPrice ? Number(competitor.currentPrice) : null;
                   const diff = cPrice && ownPrice ? ((cPrice - ownPrice) / ownPrice) * 100 : null;
