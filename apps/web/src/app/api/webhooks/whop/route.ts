@@ -9,9 +9,12 @@ const prisma = new PrismaClient();
 function verifyWebhookSignature(body: string, headers: Headers): boolean {
   const webhookKey = process.env.WHOP_WEBHOOK_SECRET;
   if (!webhookKey) {
-    if (process.env.NODE_ENV === "production") return false;
-    console.warn("WHOP_WEBHOOK_SECRET not set — skipping signature verification (dev only)");
-    return true;
+    if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
+      console.warn("WHOP_WEBHOOK_SECRET not set — skipping signature verification (dev only)");
+      return true;
+    }
+    console.error("WHOP_WEBHOOK_SECRET is not set. Signature verification is required.");
+    return false;
   }
 
   const svixId = headers.get("svix-id");
