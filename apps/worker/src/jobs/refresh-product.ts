@@ -2,10 +2,12 @@ import { Job } from "bullmq";
 import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
+import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
 import { getScraper } from "../scrapers";
 
 interface RefreshJobData {
   productId: string;
+  isDeduped?: boolean;
 }
 
 export async function processRefreshJob(job: Job<RefreshJobData>) {
@@ -137,8 +139,32 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       const existingCompetitor = competitorByUrl.get(result.link);
       if (!existingCompetitor) continue;
 
-      const price = parsePrice(result.price);
-      if (!price || price <= 0) continue;
+      const serperPrice = parsePrice(result.price);
+      if (!serperPrice || serperPrice <= 0) continue;
+
+      // Lightweight fetch ile fiyat doğrulama (server-rendered siteler için)
+      let verifiedPrice = serperPrice;
+      if (existingCompetitor) {
+        try {
+          const verification = await verifyCompetitorPrice(
+            existingCompetitor.competitorUrl,
+            serperPrice,
+          );
+          if (verification.price && verification.price > 0) {
+            verifiedPrice = verification.price;
+            if (
+              verification.source !== "serper-cache" &&
+              Math.abs(verifiedPrice - serperPrice) > 1
+            ) {
+              console.log(
+                `🔄 Fiyat düzeltildi: ${existingCompetitor.competitorUrl.slice(0, 50)} — Serper: ₺${serperPrice} → Gerçek: ₺${verifiedPrice}`,
+              );
+            }
+          }
+        } catch {
+          // Doğrulama başarısız — Serper fiyatını kullan
+        }
+      }
 
       const retailer = extractRetailer(result.link);
 
@@ -147,7 +173,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
         await prisma.competitor.update({
           where: { id: existingCompetitor.id },
           data: {
-            currentPrice: price,
+            currentPrice: verifiedPrice,
             competitorName: result.title || existingCompetitor.competitorName,
             lastScrapedAt: now,
           },
@@ -157,7 +183,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
         await prisma.competitorPrice.create({
           data: {
             competitorId: existingCompetitor.id,
-            price,
+            price: verifiedPrice,
             currency: "TRY",
             inStock: true,
             scrapedAt: now,
@@ -168,7 +194,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
         await prisma.priceHistory.create({
           data: {
             trackedProductId: productId,
-            price,
+            price: verifiedPrice,
             currency: "TRY",
             inStock: true,
             sellerName: retailer.name,
@@ -198,6 +224,47 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
         });
       } catch (err) {
         console.error(`Kendi fiyatı kaydetme hatası:`, err);
+      }
+    }
+
+    // --- Sonuç Yayma: Aynı URL'deki diğer kullanıcıların ürünlerini de güncelle ---
+    if (job.data.isDeduped) {
+      const siblingProducts = await prisma.trackedProduct.findMany({
+        where: {
+          productUrl: product.productUrl,
+          id: { not: product.id },
+          status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+        },
+        select: { id: true },
+      });
+
+      if (siblingProducts.length > 0) {
+        // Kaynak ürünün güncel fiyatını ve son tarama zamanını al
+        const updatedSource = await prisma.trackedProduct.findUnique({
+          where: { id: product.id },
+          select: {
+            currentPrice: true,
+            lastScrapedAt: true,
+            productName: true,
+            productImage: true,
+          },
+        });
+
+        if (updatedSource) {
+          await prisma.trackedProduct.updateMany({
+            where: { id: { in: siblingProducts.map((s) => s.id) } },
+            data: {
+              currentPrice: updatedSource.currentPrice,
+              lastScrapedAt: updatedSource.lastScrapedAt,
+              productName: updatedSource.productName,
+              productImage: updatedSource.productImage,
+            },
+          });
+
+          console.log(
+            `📡 Sonuç yayıldı: ${siblingProducts.length} sibling ürün güncellendi (${product.productUrl.slice(0, 60)})`,
+          );
+        }
       }
     }
 
