@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import { trTR } from "@clerk/localizations";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,7 +17,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ClerkProvider afterSignOutUrl="/">
+    <ClerkProvider localization={trTR} afterSignOutUrl="/">
       <html lang="tr">
         <body className="bg-[#0A0A0B] text-white antialiased">{children}</body>
       </html>

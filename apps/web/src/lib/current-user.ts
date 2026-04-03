@@ -101,7 +101,7 @@ async function applyAdminOverride(user: {
   };
 }
 
-function shouldUseLegacyUserUpsertFallback(error: unknown): boolean {
+function _shouldUseLegacyUserUpsertFallback(error: unknown): boolean {
   if (!(error instanceof PrismaClientKnownRequestError)) {
     return false;
   }
