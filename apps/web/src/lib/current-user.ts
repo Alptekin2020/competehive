@@ -137,54 +137,56 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       clerkUser.username ||
       null;
 
-    let user;
+    let dbUser;
     try {
-      user = await prisma.user.upsert({
+      dbUser = await prisma.user.upsert({
         where: { clerkId: userId },
-        update: { email, name, isActive: true },
-        create: { clerkId: userId, email, name, isActive: true },
+        update: {
+          email,
+          name,
+        },
+        create: {
+          clerkId: userId,
+          email,
+          name,
+        },
       });
-    } catch (upsertError) {
-      // Handle P2002: unique constraint violation on email.
-      // This occurs when a user registered with email/password first, then signs
-      // in with Google OAuth using the same email — merge the accounts.
-      if (
-        upsertError instanceof PrismaClientKnownRequestError &&
-        upsertError.code === "P2002" &&
-        Array.isArray(upsertError.meta?.target) &&
-        (upsertError.meta.target as string[]).includes("email")
-      ) {
-        console.info(
-          `[getCurrentUser] Email unique constraint hit for "${email}"; merging OAuth account with existing user.`,
-        );
-
-        const existingUser = await prisma.user.findUnique({ where: { email } });
-        if (existingUser) {
-          user = await prisma.user.update({
+    } catch (upsertError: any) {
+      // P2002: unique constraint on email — same email used with different auth method
+      if (upsertError?.code === "P2002" && upsertError?.meta?.target?.includes("email")) {
+        try {
+          dbUser = await prisma.user.update({
             where: { email },
-            data: { clerkId: userId, name, isActive: true },
+            data: {
+              clerkId: userId,
+              name,
+            },
           });
-        } else {
-          // Shouldn't happen, but re-throw if we can't find the conflicting row
-          throw upsertError;
+        } catch (mergeError) {
+          dbUser = await prisma.user.findUnique({ where: { email } });
         }
-      } else if (shouldUseLegacyUserUpsertFallback(upsertError)) {
-        console.warn(
-          "[getCurrentUser] Missing newer users columns during rollout; retrying with legacy-safe user upsert payload.",
-          upsertError,
-        );
-
-        user = await prisma.user.upsert({
-          where: { clerkId: userId },
-          update: { email, name },
-          create: { clerkId: userId, email, name },
-        });
+      }
+      // P2022: missing column — migration rollout
+      else if (upsertError?.code === "P2022") {
+        try {
+          dbUser = await prisma.user.upsert({
+            where: { clerkId: userId },
+            update: { email, name },
+            create: { clerkId: userId, email, name },
+          });
+        } catch {
+          dbUser = await prisma.user.findUnique({ where: { clerkId: userId } });
+        }
       } else {
-        throw upsertError;
+        dbUser = await prisma.user.findUnique({ where: { clerkId: userId } });
       }
     }
 
-    return applyAdminOverride(user);
+    if (!dbUser) {
+      return null;
+    }
+
+    return applyAdminOverride(dbUser);
   } catch (error) {
     console.error("Failed to provision Clerk user in database", error);
 
