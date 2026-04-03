@@ -48,7 +48,12 @@ input:-webkit-autofill {
 .cl-card {
   background: #111113 !important;
   border: 1px solid #1F1F23 !important;
-  box-shadow: none !important;
+  box-shadow: 0 0 0 1px #1F1F23 !important;
+  outline: none !important;
+}
+.cl-card:focus-within {
+  border-color: #1F1F23 !important;
+  box-shadow: 0 0 0 1px #1F1F23 !important;
 }
 .cl-headerTitle,
 .cl-headerSubtitle,
