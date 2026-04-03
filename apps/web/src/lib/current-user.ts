@@ -145,20 +145,43 @@ export async function getCurrentUser(): Promise<AppUser | null> {
         create: { clerkId: userId, email, name, isActive: true },
       });
     } catch (upsertError) {
-      if (!shouldUseLegacyUserUpsertFallback(upsertError)) {
+      // Handle P2002: unique constraint violation on email.
+      // This occurs when a user registered with email/password first, then signs
+      // in with Google OAuth using the same email — merge the accounts.
+      if (
+        upsertError instanceof PrismaClientKnownRequestError &&
+        upsertError.code === "P2002" &&
+        Array.isArray(upsertError.meta?.target) &&
+        (upsertError.meta.target as string[]).includes("email")
+      ) {
+        console.info(
+          `[getCurrentUser] Email unique constraint hit for "${email}"; merging OAuth account with existing user.`,
+        );
+
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+          user = await prisma.user.update({
+            where: { email },
+            data: { clerkId: userId, name, isActive: true },
+          });
+        } else {
+          // Shouldn't happen, but re-throw if we can't find the conflicting row
+          throw upsertError;
+        }
+      } else if (shouldUseLegacyUserUpsertFallback(upsertError)) {
+        console.warn(
+          "[getCurrentUser] Missing newer users columns during rollout; retrying with legacy-safe user upsert payload.",
+          upsertError,
+        );
+
+        user = await prisma.user.upsert({
+          where: { clerkId: userId },
+          update: { email, name },
+          create: { clerkId: userId, email, name },
+        });
+      } else {
         throw upsertError;
       }
-
-      console.warn(
-        "[getCurrentUser] Missing newer users columns during rollout; retrying with legacy-safe user upsert payload.",
-        upsertError,
-      );
-
-      user = await prisma.user.upsert({
-        where: { clerkId: userId },
-        update: { email, name },
-        create: { clerkId: userId, email, name },
-      });
     }
 
     return applyAdminOverride(user);
