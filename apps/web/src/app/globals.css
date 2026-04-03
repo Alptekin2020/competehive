@@ -42,29 +42,35 @@ input:-webkit-autofill {
 }
 
 /* Clerk UI overrides */
+.cl-rootBox,
+.cl-card {
+  background: #111113 !important;
+  color: white !important;
+}
 .cl-rootBox {
   width: 100%;
 }
 .cl-card {
-  background-color: #111113 !important;
   border: 1px solid #1f1f23 !important;
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.6) !important;
   border-radius: 16px !important;
 }
 .cl-headerTitle,
 .cl-headerSubtitle,
-.cl-socialButtonsBlockButtonText,
 .cl-formFieldLabel,
-.cl-footerActionText,
+.cl-footerActionText {
+  color: white !important;
+}
+.cl-socialButtonsBlockButtonText,
 .cl-dividerText,
 .cl-identityPreviewText,
 .cl-formFieldInfoText {
   color: #e5e5e5 !important;
 }
 .cl-formFieldInput {
-  background-color: #0a0a0b !important;
-  border-color: #2a2a2e !important;
-  color: #ffffff !important;
+  background: #1F1F23 !important;
+  color: white !important;
+  border-color: #374151 !important;
 }
 .cl-formFieldInput:focus {
   border-color: #f59e0b !important;
