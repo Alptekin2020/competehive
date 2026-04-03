@@ -99,6 +99,66 @@ input:-webkit-autofill {
   background: #D97706 !important;
 }
 
+/* Clerk password validation text — make readable on dark bg */
+.cl-formFieldSuccessText,
+.cl-formFieldWarningText,
+.cl-formFieldErrorText,
+.cl-formFieldHintText,
+.cl-passwordStrength__text,
+.cl-formField__password .cl-formFieldSuccessText,
+.cl-formFieldInfoText,
+.cl-unstable__passwordStrength,
+[data-localization-key*="password"] {
+  color: #a3a3a3 !important;
+}
+
+/* Green checkmark text specifically */
+.cl-formFieldSuccessText {
+  color: #4ade80 !important;
+}
+
+/* Warning/error text */
+.cl-formFieldWarningText {
+  color: #fbbf24 !important;
+}
+.cl-formFieldErrorText {
+  color: #f87171 !important;
+}
+
+/* Clerk OTP / verification code input boxes */
+.cl-otpCodeFieldInput,
+.cl-otpCodeField__input,
+.cl-codeInput__input,
+[data-field-type="otp"] input,
+.cl-verificationCodeInput input,
+.cl-otpCodeBox,
+.cl-otpCodeFieldInputs input {
+  background-color: #1a1a1e !important;
+  border: 1px solid #3f3f46 !important;
+  color: #ffffff !important;
+  caret-color: #f59e0b !important;
+}
+
+.cl-otpCodeFieldInput:focus,
+.cl-otpCodeField__input:focus,
+.cl-codeInput__input:focus,
+[data-field-type="otp"] input:focus,
+.cl-otpCodeBox:focus,
+.cl-otpCodeFieldInputs input:focus {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 1px #f59e0b !important;
+}
+
+/* Verification page identity preview (email shown) */
+.cl-identityPreviewEditButton {
+  color: #f59e0b !important;
+}
+
+/* Resend code link */
+.cl-formResendCodeLink {
+  color: #f59e0b !important;
+}
+
 /* Hide scrollbar but keep scroll functionality */
 .scrollbar-hide {
   -ms-overflow-style: none;
