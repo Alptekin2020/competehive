@@ -1,15 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { PLANS } from "@/lib/plans";
 
 function CheckoutContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const planId = searchParams.get("plan");
-  const billing = (searchParams.get("billing") as "monthly" | "yearly") || "monthly";
+  const billing = searchParams.get("billing") === "yearly" ? "yearly" : "monthly";
 
   const [status, setStatus] = useState<"idle" | "loading" | "opened" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -103,9 +102,7 @@ function CheckoutContent() {
         </div>
 
         <div className="flex items-baseline gap-1 mb-1">
-          <span className="text-3xl font-bold text-white">
-            ₺{price.toLocaleString("tr-TR")}
-          </span>
+          <span className="text-3xl font-bold text-white">₺{price.toLocaleString("tr-TR")}</span>
           <span className="text-dark-400 text-sm">/ ay</span>
         </div>
         {billing === "yearly" && (
@@ -118,8 +115,8 @@ function CheckoutContent() {
         <div className="border-t border-dark-800 pt-4 mt-4">
           <p className="text-sm text-dark-400 mb-3">Plan dahilinde:</p>
           <ul className="space-y-2">
-            {plan.features.slice(0, 5).map((f, i) => (
-              <li key={i} className="flex items-center gap-2 text-sm text-dark-300">
+            {plan.features.slice(0, 5).map((f) => (
+              <li key={f} className="flex items-center gap-2 text-sm text-dark-300">
                 <svg
                   className="w-4 h-4 text-hive-500 shrink-0"
                   viewBox="0 0 24 24"
@@ -153,9 +150,7 @@ function CheckoutContent() {
           <div className="text-center py-4">
             <div className="w-10 h-10 border-2 border-hive-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
             <p className="text-sm text-dark-300 mb-1">Ödeme sayfası yeni sekmede açıldı</p>
-            <p className="text-xs text-dark-500 mb-4">
-              Ödemeyi tamamladıktan sonra buraya dönün.
-            </p>
+            <p className="text-xs text-dark-500 mb-4">Ödemeyi tamamladıktan sonra buraya dönün.</p>
             <div className="flex flex-col gap-2">
               <button
                 onClick={openCheckout}
@@ -163,12 +158,12 @@ function CheckoutContent() {
               >
                 Ödeme sayfası açılmadı mı? Tekrar aç
               </button>
-              <button
-                onClick={() => router.push("/dashboard/pricing?success=true&plan=" + planId)}
-                className="text-sm text-green-400 hover:text-green-300 font-medium mt-2"
+              <Link
+                href="/dashboard/pricing"
+                className="text-sm text-dark-400 hover:text-dark-300 font-medium mt-2"
               >
-                Ödemeyi tamamladım ✓
-              </button>
+                Plan durumumu kontrol et →
+              </Link>
             </div>
           </div>
         ) : (
