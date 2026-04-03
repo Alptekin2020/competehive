@@ -47,13 +47,13 @@ input:-webkit-autofill {
 }
 .cl-card {
   background: #111113 !important;
-  border: 1px solid #1F1F23 !important;
-  box-shadow: 0 0 0 1px #1F1F23 !important;
+  border: 1px solid #1f1f23 !important;
+  box-shadow: 0 0 0 1px #1f1f23 !important;
   outline: none !important;
 }
 .cl-card:focus-within {
-  border-color: #1F1F23 !important;
-  box-shadow: 0 0 0 1px #1F1F23 !important;
+  border-color: #1f1f23 !important;
+  box-shadow: 0 0 0 1px #1f1f23 !important;
 }
 .cl-headerTitle,
 .cl-headerSubtitle,
@@ -65,38 +65,38 @@ input:-webkit-autofill {
   color: white !important;
 }
 .cl-formFieldInput {
-  background: #1F1F23 !important;
+  background: #1f1f23 !important;
   border-color: #374151 !important;
   color: white !important;
 }
 .cl-footer,
 .cl-footerAction {
   background: #111113 !important;
-  border-top: 1px solid #1F1F23 !important;
+  border-top: 1px solid #1f1f23 !important;
 }
 .cl-footerActionLink {
-  color: #F59E0B !important;
+  color: #f59e0b !important;
 }
 .cl-footerActionText {
-  color: #9CA3AF !important;
+  color: #9ca3af !important;
 }
 .cl-socialButtonsBlockButton {
-  background: #1F1F23 !important;
+  background: #1f1f23 !important;
   border-color: #374151 !important;
   color: white !important;
 }
 .cl-dividerLine {
-  background: #1F1F23 !important;
+  background: #1f1f23 !important;
 }
 .cl-dividerText {
-  color: #6B7280 !important;
+  color: #6b7280 !important;
 }
 .cl-formButtonPrimary {
-  background: #F59E0B !important;
+  background: #f59e0b !important;
   color: black !important;
 }
 .cl-formButtonPrimary:hover {
-  background: #D97706 !important;
+  background: #d97706 !important;
 }
 
 /* Clerk password validation text — make readable on dark bg */
