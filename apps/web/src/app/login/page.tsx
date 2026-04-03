@@ -2,8 +2,8 @@ import { SignIn } from "@clerk/nextjs";
 
 export default function LoginPage() {
   return (
-    <main className="min-h-screen bg-dark-1000 flex items-center justify-center p-6">
-      <SignIn routing="path" path="/login" signUpUrl="/register" fallbackRedirectUrl="/dashboard" />
-    </main>
+    <div className="min-h-screen w-full flex items-center justify-center bg-[#0A0A0B]">
+      <SignIn forceRedirectUrl="/dashboard" />
+    </div>
   );
 }

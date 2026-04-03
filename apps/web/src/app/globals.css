@@ -41,66 +41,57 @@ input:-webkit-autofill {
   -webkit-text-fill-color: #ffffff !important;
 }
 
-/* Clerk UI overrides */
-.cl-rootBox,
+/* Clerk dark theme overrides */
+.cl-rootBox {
+  background: transparent !important;
+}
 .cl-card {
   background: #111113 !important;
-  color: white !important;
-}
-.cl-rootBox {
-  width: 100%;
-}
-.cl-card {
-  border: 1px solid #1f1f23 !important;
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.6) !important;
-  border-radius: 16px !important;
+  border: 1px solid #1F1F23 !important;
+  box-shadow: none !important;
 }
 .cl-headerTitle,
 .cl-headerSubtitle,
 .cl-formFieldLabel,
-.cl-footerActionText {
-  color: white !important;
-}
-.cl-socialButtonsBlockButtonText,
-.cl-dividerText,
+.cl-formFieldInput,
+.cl-footerActionText,
 .cl-identityPreviewText,
-.cl-formFieldInfoText {
-  color: #e5e5e5 !important;
+.cl-formResendCodeLink {
+  color: white !important;
 }
 .cl-formFieldInput {
-  background: #1f1f23 !important;
-  color: white !important;
+  background: #1F1F23 !important;
   border-color: #374151 !important;
+  color: white !important;
 }
-.cl-formFieldInput:focus {
-  border-color: #f59e0b !important;
+.cl-footer,
+.cl-footerAction {
+  background: #111113 !important;
+  border-top: 1px solid #1F1F23 !important;
 }
-.cl-formButtonPrimary {
-  background-color: #f59e0b !important;
-  color: #0a0a0b !important;
-  font-weight: 600 !important;
+.cl-footerActionLink {
+  color: #F59E0B !important;
 }
-.cl-formButtonPrimary:hover {
-  background-color: #d97706 !important;
-}
-.cl-footerActionLink,
-.cl-footerPages__signUp a,
-.cl-footerPages__signIn a {
-  color: #f59e0b !important;
+.cl-footerActionText {
+  color: #9CA3AF !important;
 }
 .cl-socialButtonsBlockButton {
-  background-color: #1a1a1e !important;
-  border-color: #2a2a2e !important;
-  color: #e5e5e5 !important;
-}
-.cl-socialButtonsBlockButton:hover {
-  background-color: #222226 !important;
+  background: #1F1F23 !important;
+  border-color: #374151 !important;
+  color: white !important;
 }
 .cl-dividerLine {
-  background-color: #2a2a2e !important;
+  background: #1F1F23 !important;
 }
-.cl-internal-b3fm6y {
-  background: transparent !important;
+.cl-dividerText {
+  color: #6B7280 !important;
+}
+.cl-formButtonPrimary {
+  background: #F59E0B !important;
+  color: black !important;
+}
+.cl-formButtonPrimary:hover {
+  background: #D97706 !important;
 }
 
 /* Hide scrollbar but keep scroll functionality */
