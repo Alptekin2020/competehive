@@ -35,12 +35,46 @@ async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Respons
 
 function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
-  const cleaned = priceStr
-    .replace(/[^\d.,]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
+  const cleaned = priceStr.replace(/[^\d.,]/g, "").trim();
+  if (!cleaned) return null;
+
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+
+  if (hasComma && hasDot) {
+    const lastComma = cleaned.lastIndexOf(",");
+    const lastDot = cleaned.lastIndexOf(".");
+    if (lastComma > lastDot) {
+      // Turkish: 1.299,00 → comma is decimal
+      const num = parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
+      return isNaN(num) ? null : num;
+    } else {
+      // International: 1,299.00 → dot is decimal
+      const num = parseFloat(cleaned.replace(/,/g, ""));
+      return isNaN(num) ? null : num;
+    }
+  } else if (hasComma && !hasDot) {
+    // Only comma: "472,00" → comma is decimal (Turkish)
+    const num = parseFloat(cleaned.replace(",", "."));
+    return isNaN(num) ? null : num;
+  } else if (hasDot && !hasComma) {
+    // Only dot: need to determine if decimal or thousands
+    const parts = cleaned.split(".");
+    const lastPart = parts[parts.length - 1];
+    if (parts.length === 2 && lastPart.length <= 2) {
+      // "472.00" or "1299.9" → dot is decimal (international format)
+      const num = parseFloat(cleaned);
+      return isNaN(num) ? null : num;
+    } else {
+      // "1.299" (3 digits after dot) or "1.299.000" → dots are thousands
+      const num = parseFloat(cleaned.replace(/\./g, ""));
+      return isNaN(num) ? null : num;
+    }
+  } else {
+    // No comma, no dot: "472" → plain integer
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  }
 }
 
 function pickValidPrice(...prices: Array<number | null | undefined>): number | null {

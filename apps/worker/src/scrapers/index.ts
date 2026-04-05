@@ -50,12 +50,36 @@ export function createUnsupportedMarketplaceError(marketplace: string): ScraperE
 
 function parsePrice(raw?: string | null): number {
   if (!raw) return 0;
-  const normalized = raw
-    .replace(/\u00a0/g, " ")
-    .replace(/[^\d.,]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  const value = parseFloat(normalized);
+  const cleaned = raw.replace(/\u00a0/g, " ").replace(/[^\d.,]/g, "").trim();
+  if (!cleaned) return 0;
+
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+
+  let value: number;
+
+  if (hasComma && hasDot) {
+    const lastComma = cleaned.lastIndexOf(",");
+    const lastDot = cleaned.lastIndexOf(".");
+    if (lastComma > lastDot) {
+      value = parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
+    } else {
+      value = parseFloat(cleaned.replace(/,/g, ""));
+    }
+  } else if (hasComma && !hasDot) {
+    value = parseFloat(cleaned.replace(",", "."));
+  } else if (hasDot && !hasComma) {
+    const parts = cleaned.split(".");
+    const lastPart = parts[parts.length - 1];
+    if (parts.length === 2 && lastPart.length <= 2) {
+      value = parseFloat(cleaned);
+    } else {
+      value = parseFloat(cleaned.replace(/\./g, ""));
+    }
+  } else {
+    value = parseFloat(cleaned);
+  }
+
   return Number.isFinite(value) ? value : 0;
 }
 

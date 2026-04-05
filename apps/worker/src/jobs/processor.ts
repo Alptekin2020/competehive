@@ -70,6 +70,23 @@ export const scrapeWorker = new Worker(
 
       const previousPrice = product?.currentPrice ? Number(product.currentPrice) : null;
       const previousInStock = product ? product.status !== "OUT_OF_STOCK" : null;
+
+      // Price sanity check: reject changes > 90% unless price was null/0 before
+      if (previousPrice && previousPrice > 0 && result.price > 0) {
+        const changePct = Math.abs((result.price - previousPrice) / previousPrice) * 100;
+        if (changePct > 90) {
+          logger.warn(
+            { productId, oldPrice: previousPrice, newPrice: result.price, changePct: changePct.toFixed(1) },
+            "Price change > 90% — likely parsing error, skipping update",
+          );
+          await prisma.trackedProduct.update({
+            where: { id: productId },
+            data: { lastScrapedAt: new Date() },
+          });
+          return { success: false, softFailed: true, code: "PRICE_SANITY_CHECK" };
+        }
+      }
+
       const priceChange = previousPrice ? result.price - previousPrice : null;
       const priceChangePct =
         previousPrice && previousPrice > 0

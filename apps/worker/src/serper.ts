@@ -28,12 +28,39 @@ export function extractRetailer(link: string): Retailer {
 
 export function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
-  const cleaned = priceStr
-    .replace(/[₺$€£\s]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
+  const cleaned = priceStr.replace(/[^\d.,]/g, "").trim();
+  if (!cleaned) return null;
+
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+
+  if (hasComma && hasDot) {
+    const lastComma = cleaned.lastIndexOf(",");
+    const lastDot = cleaned.lastIndexOf(".");
+    if (lastComma > lastDot) {
+      const num = parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
+      return isNaN(num) ? null : num;
+    } else {
+      const num = parseFloat(cleaned.replace(/,/g, ""));
+      return isNaN(num) ? null : num;
+    }
+  } else if (hasComma && !hasDot) {
+    const num = parseFloat(cleaned.replace(",", "."));
+    return isNaN(num) ? null : num;
+  } else if (hasDot && !hasComma) {
+    const parts = cleaned.split(".");
+    const lastPart = parts[parts.length - 1];
+    if (parts.length === 2 && lastPart.length <= 2) {
+      const num = parseFloat(cleaned);
+      return isNaN(num) ? null : num;
+    } else {
+      const num = parseFloat(cleaned.replace(/\./g, ""));
+      return isNaN(num) ? null : num;
+    }
+  } else {
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  }
 }
 
 export async function searchProduct(query: string): Promise<SerperShoppingResult[]> {
