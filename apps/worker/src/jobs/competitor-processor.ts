@@ -95,6 +95,15 @@ async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingRes
 const PRICE_BAND_MIN_RATIO = 0.3; // kaynak fiyatın %30'undan az → reddet
 const PRICE_BAND_MAX_RATIO = 3.0; // kaynak fiyatın %300'ünden fazla → reddet
 
+// Raw title fallback — searchKeywords yoksa ham title 7+ kelime ise Serper sinyali
+// gürültülü oluyor. AI keyword'leri zaten kısa olduğu için onlara dokunmuyoruz.
+const RAW_TITLE_MAX_WORDS = 6;
+function truncateRawTitleForSearch(title: string): string {
+  const words = title.trim().split(/\s+/);
+  if (words.length <= RAW_TITLE_MAX_WORDS + 1) return title.trim();
+  return words.slice(0, RAW_TITLE_MAX_WORDS).join(" ");
+}
+
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
   const { productId, title, url } = job.data;
   console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
@@ -119,7 +128,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   try {
     // 1. Metadata'dan AI tarafından üretilmiş searchKeywords'u çıkar
     const searchKeywords = extractSearchKeywords(product.metadata);
-    const queries = searchKeywords.length > 0 ? searchKeywords : [title];
+    const queries = searchKeywords.length > 0 ? searchKeywords : [truncateRawTitleForSearch(title)];
     console.log(
       `🧠 ${
         searchKeywords.length > 0 ? "Metadata keywords kullanılıyor" : "Fallback: raw title"

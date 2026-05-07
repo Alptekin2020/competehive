@@ -76,7 +76,12 @@ export const scrapeWorker = new Worker(
         const changePct = Math.abs((result.price - previousPrice) / previousPrice) * 100;
         if (changePct > 90) {
           logger.warn(
-            { productId, oldPrice: previousPrice, newPrice: result.price, changePct: changePct.toFixed(1) },
+            {
+              productId,
+              oldPrice: previousPrice,
+              newPrice: result.price,
+              changePct: changePct.toFixed(1),
+            },
             "Price change > 90% — likely parsing error, skipping update",
           );
           await prisma.trackedProduct.update({
