@@ -55,13 +55,13 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
           status: sourceData.inStock ? "ACTIVE" : "OUT_OF_STOCK",
         };
 
-        if (sourceData.name && sourceData.name.trim().length > 3) {
+        if (typeof sourceData.name === "string" && sourceData.name.trim().length > 3) {
           updateData.productName = sourceData.name.trim();
         }
-        if (sourceData.imageUrl && sourceData.imageUrl.trim().length > 0) {
+        if (typeof sourceData.imageUrl === "string" && sourceData.imageUrl.trim().length > 0) {
           updateData.productImage = sourceData.imageUrl.trim();
         }
-        if (sourceData.sellerName && sourceData.sellerName.trim().length > 0) {
+        if (typeof sourceData.sellerName === "string" && sourceData.sellerName.trim().length > 0) {
           updateData.sellerName = sourceData.sellerName.trim();
         }
 
@@ -77,7 +77,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             currency: sourceData.currency || product.currency,
             inStock: sourceData.inStock,
             sellerName:
-              sourceData.sellerName ||
+              (typeof sourceData.sellerName === "string" ? sourceData.sellerName : null) ||
               (extractRetailer(product.productUrl).name !== "Diğer"
                 ? extractRetailer(product.productUrl).name
                 : "Benim Ürünüm"),
