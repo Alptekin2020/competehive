@@ -77,7 +77,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             currency: sourceData.currency || product.currency,
             inStock: sourceData.inStock,
             sellerName:
-              (typeof sourceData.sellerName === "string" ? sourceData.sellerName : null) ||
+              updateData.sellerName ||
               (extractRetailer(product.productUrl).name !== "Diğer"
                 ? extractRetailer(product.productUrl).name
                 : "Benim Ürünüm"),
