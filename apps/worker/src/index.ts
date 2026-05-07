@@ -1,8 +1,12 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
+
 import { Worker, Queue } from "bullmq";
+
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
 import { processRefreshJob } from "./jobs/refresh-product";
+import { processRefreshUrlJob } from "./jobs/refresh-product-url";
 import { prisma } from "./db";
 import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
@@ -37,6 +41,8 @@ const productWorker = new Worker(
         return processCompetitorJob(job);
       case "refresh":
         return processRefreshJob(job);
+      case "refresh-url":
+        return processRefreshUrlJob(job);
       default:
         logger.warn({ jobName: job.name }, "Unknown product job type");
         return undefined;
@@ -107,58 +113,38 @@ async function start() {
   // İlk çalıştırmada da tarama planla
   await scheduleScans();
 
-  // 3 saatlik periyodik refresh — URL dedup ile (aynı URL için tek Serper çağrısı)
+  // 6 saatlik URL-DEDUP refresh scheduler
+  // ÖNCEDEN: her TrackedProduct için 1 job → N kullanıcı × M ürün = N×M Serper call
+  // ŞİMDİ: distinct productUrl başına 1 job → unique URL sayısı kadar Serper call
   setInterval(
     async () => {
       try {
-        // Unique URL'leri bul — her URL için sadece 1 temsilci ürün seç
-        const uniqueProducts = await prisma.$queryRaw<
-          Array<{
-            id: string;
-            product_url: string;
-            product_name: string;
-            marketplace: string;
-            total_subscribers: number;
-          }>
-        >`
-          SELECT DISTINCT ON (product_url)
-            id, product_url, product_name, marketplace,
-            (SELECT COUNT(*) FROM tracked_products tp2
-             WHERE tp2.product_url = tracked_products.product_url
-             AND tp2.status IN ('ACTIVE', 'OUT_OF_STOCK')) as total_subscribers
-          FROM tracked_products
-          WHERE status IN ('ACTIVE', 'OUT_OF_STOCK')
-          ORDER BY product_url, last_scraped_at ASC NULLS FIRST
-        `;
+        const uniqueUrlProducts = await prisma.trackedProduct.findMany({
+          where: { status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+          distinct: ["productUrl"],
+          select: { productUrl: true },
+        });
 
-        let scheduled = 0;
-        for (const product of uniqueProducts) {
+        for (const { productUrl } of uniqueUrlProducts) {
+          // Raw URL'ler özel karakter (`:` `/` `?` `#`) içeriyor ve çok uzun olabiliyor;
+          // jobId güvenliği için SHA-1 hash kullanıyoruz (kriptografik amaç değil — sadece kısa stable id).
+          const urlHash = createHash("sha1").update(productUrl).digest("hex").slice(0, 16);
           await productQueue.add(
-            "refresh",
+            "refresh-url",
+            { productUrl },
             {
-              productId: product.id,
-              isDeduped: true, // Flag: bu refresh sonucu aynı URL'deki diğer ürünlere de yansıtılacak
-            },
-            {
-              jobId: `refresh-dedup-${product.id}-${Date.now()}`,
+              jobId: `refresh-url-${urlHash}-${Date.now()}`,
             },
           );
-          scheduled++;
         }
 
-        logger.info(
-          {
-            uniqueUrls: uniqueProducts.length,
-            scheduled,
-          },
-          "Dedup refresh scheduled (3h cycle)",
-        );
+        logger.info(`Scheduled ${uniqueUrlProducts.length} refresh-url jobs (URL-deduped)`);
       } catch (err) {
-        logger.error({ err }, "Refresh scheduler error");
+        logger.error({ err }, "Refresh-url scheduler error");
       }
     },
-    3 * 60 * 60 * 1000,
-  ); // 3 saat
+    6 * 60 * 60 * 1000,
+  );
 
   // Start health check HTTP server (Railway uses this for health checks)
   startHealthServer(parseInt(process.env.PORT || "8080"));
