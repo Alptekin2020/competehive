@@ -1,6 +1,7 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
+import type { SerperShoppingResult } from "../serper";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
@@ -13,7 +14,6 @@ interface OnboardJobData {
 
 /**
  * Domain → Prisma Marketplace enum eşlemesi.
- * extractRetailer name → Marketplace enum.
  */
 function retailerToMarketplace(retailerName: string): Marketplace {
   const map: Record<string, Marketplace> = {
@@ -27,6 +27,81 @@ function retailerToMarketplace(retailerName: string): Marketplace {
     Decathlon: "DECATHLON",
   };
   return map[retailerName] ?? "CUSTOM";
+}
+
+/**
+ * TrackedProduct.metadata JSON alanından AI tarafından üretilmiş searchKeywords'u
+ * güvenli şekilde çıkar. Geçersiz/eksikse boş dizi döner.
+ */
+function extractSearchKeywords(metadata: unknown): string[] {
+  if (!metadata || typeof metadata !== "object") return [];
+  const meta = metadata as { searchKeywords?: unknown };
+  if (!Array.isArray(meta.searchKeywords)) return [];
+  return meta.searchKeywords.filter(
+    (k): k is string => typeof k === "string" && k.trim().length > 0,
+  );
+}
+
+/**
+ * Birden fazla keyword ile Serper araması yap, URL bazında dedup uygula.
+ * Primary keyword'den yeterince sonuç gelirse fallback keyword'leri çağırma —
+ * Serper maliyeti tasarrufu için early exit var.
+ */
+async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingResult[]> {
+  const seenUrls = new Set<string>();
+  const allResults: SerperShoppingResult[] = [];
+
+  const primary = keywords[0];
+  console.log(`🔎 Primary search: "${primary}"`);
+  try {
+    const primaryResults = await searchProduct(primary);
+    for (const r of primaryResults) {
+      const normalizedUrl = (r.link || "").replace(/\/$/, "").toLowerCase();
+      if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
+        seenUrls.add(normalizedUrl);
+        allResults.push(r);
+      }
+    }
+  } catch (err) {
+    console.error(`Primary search hatası ("${primary}"):`, err);
+  }
+
+  // Primary'den 5'ten az sonuç geldiyse fallback keyword'leri dene (max 2 ek call)
+  if (allResults.length < 5 && keywords.length > 1) {
+    for (let i = 1; i < Math.min(keywords.length, 3); i++) {
+      const fallback = keywords[i];
+      console.log(`🔎 Fallback search [${i}]: "${fallback}"`);
+      try {
+        const fallbackResults = await searchProduct(fallback);
+        for (const r of fallbackResults) {
+          const normalizedUrl = (r.link || "").replace(/\/$/, "").toLowerCase();
+          if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
+            seenUrls.add(normalizedUrl);
+            allResults.push(r);
+          }
+        }
+      } catch (err) {
+        console.error(`Fallback search hatası ("${fallback}"):`, err);
+      }
+      if (allResults.length >= 15) break;
+    }
+  }
+
+  console.log(`📦 Toplam unique Serper sonucu: ${allResults.length}`);
+  return allResults;
+}
+
+// Price pre-filter sabitleri — matcher.ts'in "%300 fiyat farkı" kuralı ile uyumlu
+const PRICE_BAND_MIN_RATIO = 0.3; // kaynak fiyatın %30'undan az → reddet
+const PRICE_BAND_MAX_RATIO = 3.0; // kaynak fiyatın %300'ünden fazla → reddet
+
+// Raw title fallback — searchKeywords yoksa ham title 7+ kelime ise Serper sinyali
+// gürültülü oluyor. AI keyword'leri zaten kısa olduğu için onlara dokunmuyoruz.
+const RAW_TITLE_MAX_WORDS = 6;
+function truncateRawTitleForSearch(title: string): string {
+  const words = title.trim().split(/\s+/);
+  if (words.length <= RAW_TITLE_MAX_WORDS + 1) return title.trim();
+  return words.slice(0, RAW_TITLE_MAX_WORDS).join(" ");
 }
 
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
@@ -51,64 +126,20 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   }
 
   try {
-    // Ürünün metadata'sında AI'ın ürettiği searchKeywords varsa onları kullan
-    let searchQuery = title;
-    const metadata = product.metadata as Record<string, unknown> | null;
+    // 1. Metadata'dan AI tarafından üretilmiş searchKeywords'u çıkar
+    const searchKeywords = extractSearchKeywords(product.metadata);
+    const queries = searchKeywords.length > 0 ? searchKeywords : [truncateRawTitleForSearch(title)];
+    console.log(
+      `🧠 ${
+        searchKeywords.length > 0 ? "Metadata keywords kullanılıyor" : "Fallback: raw title"
+      }: ${JSON.stringify(queries)}`,
+    );
 
-    if (metadata) {
-      const analysis = (metadata.analysis || metadata) as Record<string, unknown>;
+    // 2. Serper ile çoklu keyword araması yap (dedup ile)
+    const results = await searchWithKeywords(queries);
 
-      if (
-        analysis.searchKeywords &&
-        Array.isArray(analysis.searchKeywords) &&
-        analysis.searchKeywords.length > 0
-      ) {
-        searchQuery = analysis.searchKeywords[0] as string;
-        console.log(
-          `🔍 Optimize edilmiş sorgu: "${searchQuery}" (orijinal: "${title.substring(0, 50)}...")`,
-        );
-      } else if (analysis.shortTitle && typeof analysis.shortTitle === "string") {
-        searchQuery = analysis.shortTitle;
-        console.log(`🔍 shortTitle sorgusu: "${searchQuery}"`);
-      }
-    }
-
-    // Sorgu hâlâ çok uzunsa (7+ kelime), ilk 6 kelimeye kısalt
-    const queryWords = searchQuery.split(/\s+/);
-    if (queryWords.length > 7) {
-      searchQuery = queryWords.slice(0, 6).join(" ");
-      console.log(`🔍 Sorgu kısaltıldı: "${searchQuery}"`);
-    }
-
-    // 1. Serper ile ürünü ara
-    const results = await searchProduct(searchQuery);
-
-    // Az sonuç geldiyse ve ek keyword'ler varsa, onlarla da ara
-    const allResults = [...(results || [])];
-    if (allResults.length < 5 && metadata) {
-      const analysis = (metadata.analysis || metadata) as Record<string, unknown>;
-      const keywords = analysis.searchKeywords as string[] | undefined;
-
-      if (keywords && keywords.length > 1) {
-        const seenLinks = new Set(allResults.map((r) => r.link));
-
-        for (let i = 1; i < Math.min(keywords.length, 3); i++) {
-          console.log(`🔍 Ek arama: "${keywords[i]}"`);
-          const moreResults = await searchProduct(keywords[i]);
-          for (const r of moreResults) {
-            if (!seenLinks.has(r.link)) {
-              seenLinks.add(r.link);
-              allResults.push(r);
-            }
-          }
-          if (allResults.length >= 15) break;
-        }
-      }
-    }
-
-    if (!allResults || allResults.length === 0) {
+    if (!results || results.length === 0) {
       console.log(`⚠️ Sonuç bulunamadı: ${title}`);
-      // Mark as completed even with 0 results
       await updateTrackedProductRefresh(productId, {
         refreshStatus: "completed",
         refreshCompletedAt: new Date(),
@@ -119,46 +150,43 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     const now = new Date();
     let savedCount = 0;
+    let priceFilteredCount = 0;
+    let aiRejectedCount = 0;
 
-    for (const result of allResults) {
+    // Kaynak fiyat — pre-filter için kullanılacak
+    const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
+
+    for (const result of results) {
       // Kendi URL'imizi atla
       if (result.link === url) continue;
 
       const price = parsePrice(result.price);
       if (!price || price <= 0) continue;
 
-      // --- Fiyat mantık filtresi (AI çağrısından ÖNCE) ---
-      const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
+      // 3. PRICE PRE-FILTER — bandı dışındakileri AI'a bile gönderme
       if (sourcePrice && sourcePrice > 0) {
-        const priceRatio = price / sourcePrice;
-
-        // Rakip fiyatı, kaynak fiyatın %5'inden az → farklı ürün kategorisi
-        if (priceRatio < 0.05) {
+        const minAllowed = sourcePrice * PRICE_BAND_MIN_RATIO;
+        const maxAllowed = sourcePrice * PRICE_BAND_MAX_RATIO;
+        if (price < minAllowed || price > maxAllowed) {
+          priceFilteredCount++;
           console.log(
-            `⚠️ Fiyat filtresi: "${result.title}" — ₺${price} çok düşük (kaynak: ₺${sourcePrice}, oran: ${(priceRatio * 100).toFixed(1)}%)`,
-          );
-          continue;
-        }
-
-        // Rakip fiyatı, kaynak fiyatın 10 katından fazla → farklı ürün/paket
-        if (priceRatio > 10) {
-          console.log(
-            `⚠️ Fiyat filtresi: "${result.title}" — ₺${price} çok yüksek (kaynak: ₺${sourcePrice}, oran: ${priceRatio.toFixed(1)}x)`,
+            `⏭️  Fiyat bandı dışı (${price.toFixed(2)} ₺, kaynak ${sourcePrice.toFixed(
+              2,
+            )} ₺): ${result.title.slice(0, 60)}`,
           );
           continue;
         }
       }
-      // --- Fiyat filtresi sonu ---
 
       const retailer = extractRetailer(result.link);
 
-      // AI ile eşleştirme doğrula (enhanced: score + reason)
+      // 4. AI ile eşleştirme doğrula
       let matchResult: MatchResult;
       try {
         matchResult = await verifyProductMatch(
           {
             title,
-            price: product.currentPrice ? Number(product.currentPrice) : undefined,
+            price: sourcePrice ?? undefined,
             marketplace: product.marketplace,
           },
           {
@@ -169,20 +197,23 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           },
         );
       } catch {
-        // Hata durumunda bu sonucu atla
+        // AI hatası → bu sonucu atla, diğerlerine devam et
         continue;
       }
 
       if (!matchResult.isMatch) {
+        aiRejectedCount++;
         console.log(
-          `❌ Candidate rejected (score: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
+          `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${
+            matchResult.reason
+          }`,
         );
         continue;
       }
 
       const marketplace = retailerToMarketplace(retailer.name);
 
-      // Competitor kaydını upsert et (Prisma ORM ile)
+      // 5. Competitor kaydını upsert et
       try {
         const competitor = await prisma.competitor.upsert({
           where: {
@@ -213,7 +244,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           },
         });
 
-        // CompetitorPrice tablosuna snapshot ekle
+        // CompetitorPrice snapshot
         await prisma.competitorPrice.create({
           data: {
             competitorId: competitor.id,
@@ -224,7 +255,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           },
         });
 
-        // PriceHistory tablosuna da snapshot ekle (detail sayfası için)
+        // PriceHistory snapshot (detail sayfası grafiği için)
         await prisma.priceHistory.create({
           data: {
             trackedProductId: productId,
@@ -239,18 +270,18 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         savedCount++;
       } catch (err) {
         console.error(`Competitor kaydetme hatası (${result.link}):`, err);
-        // Tek bir competitor hatasında tüm job'ı öldürme, devam et
+        // Tek bir competitor hatasında job'ı öldürme — devam et
       }
     }
 
     // Kullanıcının kendi ürün fiyatını da PriceHistory'ye kaydet
-    if (product.currentPrice && Number(product.currentPrice) > 0) {
+    if (sourcePrice && sourcePrice > 0) {
       try {
         const ownRetailer = extractRetailer(product.productUrl);
         await prisma.priceHistory.create({
           data: {
             trackedProductId: productId,
-            price: Number(product.currentPrice),
+            price: sourcePrice,
             currency: product.currency,
             inStock: product.status !== "OUT_OF_STOCK",
             sellerName: ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm",
@@ -269,10 +300,11 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       refreshError: null,
     });
 
-    console.log(`✅ ${productId}: ${savedCount} competitor bulundu ve kaydedildi`);
+    console.log(
+      `✅ ${productId}: ${savedCount} competitor kaydedildi (price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount})`,
+    );
     return { found: savedCount };
   } catch (error) {
-    // Mark as failed
     try {
       await updateTrackedProductRefresh(productId, {
         refreshStatus: "failed",
@@ -282,6 +314,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     } catch (statusUpdateError) {
       console.error("Failed to update refresh status:", statusUpdateError);
     }
-    throw error; // re-throw so BullMQ marks the job as failed
+    throw error; // re-throw — BullMQ job failed olarak işaretlesin
   }
 }

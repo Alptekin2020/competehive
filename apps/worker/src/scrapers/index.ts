@@ -50,7 +50,10 @@ export function createUnsupportedMarketplaceError(marketplace: string): ScraperE
 
 function parsePrice(raw?: string | null): number {
   if (!raw) return 0;
-  const cleaned = raw.replace(/\u00a0/g, " ").replace(/[^\d.,]/g, "").trim();
+  const cleaned = raw
+    .replace(/\u00a0/g, " ")
+    .replace(/[^\d.,]/g, "")
+    .trim();
   if (!cleaned) return 0;
 
   const hasComma = cleaned.includes(",");
