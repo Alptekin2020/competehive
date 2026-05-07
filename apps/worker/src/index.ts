@@ -1,5 +1,8 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
+
 import { Worker, Queue } from "bullmq";
+
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
 import { processRefreshJob } from "./jobs/refresh-product";
@@ -123,11 +126,14 @@ async function start() {
         });
 
         for (const { productUrl } of uniqueUrlProducts) {
+          // Raw URL'ler özel karakter (`:` `/` `?` `#`) içeriyor ve çok uzun olabiliyor;
+          // jobId güvenliği için SHA-1 hash kullanıyoruz (kriptografik amaç değil — sadece kısa stable id).
+          const urlHash = createHash("sha1").update(productUrl).digest("hex").slice(0, 16);
           await productQueue.add(
             "refresh-url",
             { productUrl },
             {
-              jobId: `refresh-url-${productUrl}-${Date.now()}`,
+              jobId: `refresh-url-${urlHash}-${Date.now()}`,
             },
           );
         }

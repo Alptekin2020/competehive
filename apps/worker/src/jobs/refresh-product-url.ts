@@ -172,23 +172,24 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     } catch (sourceError) {
       console.error(`⚠️ Source scrape hatası: ${productUrl}`, sourceError);
       // Source scrape failure → siblings için fallback PriceHistory yaz (mevcut fiyatla)
-      for (const sibling of siblings) {
-        if (sibling.currentPrice && Number(sibling.currentPrice) > 0) {
-          try {
-            const ownRetailer = extractRetailer(productUrl);
-            await prisma.priceHistory.create({
-              data: {
-                trackedProductId: sibling.id,
-                price: Number(sibling.currentPrice),
-                currency: sibling.currency,
-                inStock: sibling.status !== "OUT_OF_STOCK",
-                sellerName: ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm",
-                scrapedAt: now,
-              },
-            });
-          } catch {
-            // ignore — bir snapshot kaybı kritik değil
-          }
+      const ownRetailer = extractRetailer(productUrl);
+      const fallbackSellerName = ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm";
+      const fallbackHistory = siblings
+        .filter((s) => s.currentPrice && Number(s.currentPrice) > 0)
+        .map((s) => ({
+          trackedProductId: s.id,
+          price: Number(s.currentPrice),
+          currency: s.currency,
+          inStock: s.status !== "OUT_OF_STOCK",
+          sellerName: fallbackSellerName,
+          scrapedAt: now,
+        }));
+
+      if (fallbackHistory.length > 0) {
+        try {
+          await prisma.priceHistory.createMany({ data: fallbackHistory });
+        } catch {
+          // ignore — bir snapshot kaybı kritik değil
         }
       }
     }
@@ -265,6 +266,21 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
 
     // 7. Her bilinen competitor URL'i için Serper'da match varsa fiyatı güncelle
     let updatedCount = 0;
+    const competitorPriceSnapshots: Array<{
+      competitorId: string;
+      price: number;
+      currency: string;
+      inStock: boolean;
+      scrapedAt: Date;
+    }> = [];
+    const priceHistorySnapshots: Array<{
+      trackedProductId: string;
+      price: number;
+      currency: string;
+      inStock: boolean;
+      sellerName: string;
+      scrapedAt: Date;
+    }> = [];
 
     for (const result of serperResults) {
       const matchingCompetitors = competitorByUrl.get(result.link);
@@ -274,43 +290,56 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       if (!price || price <= 0) continue;
 
       const retailer = extractRetailer(result.link);
+      const matchingIds = matchingCompetitors.map((c) => c.id);
 
-      for (const c of matchingCompetitors) {
-        try {
-          await prisma.competitor.update({
-            where: { id: c.id },
-            data: {
-              currentPrice: price,
-              competitorName: result.title || c.competitorName,
-              lastScrapedAt: now,
-            },
+      try {
+        // Aynı URL'i paylaşan tüm competitor kayıtlarını tek query ile güncelle.
+        // result.title boşsa undefined → Prisma alanı atlar → mevcut competitorName korunur.
+        await prisma.competitor.updateMany({
+          where: { id: { in: matchingIds } },
+          data: {
+            currentPrice: price,
+            competitorName: result.title || undefined,
+            lastScrapedAt: now,
+          },
+        });
+
+        for (const c of matchingCompetitors) {
+          competitorPriceSnapshots.push({
+            competitorId: c.id,
+            price,
+            currency: "TRY",
+            inStock: true,
+            scrapedAt: now,
           });
-
-          await prisma.competitorPrice.create({
-            data: {
-              competitorId: c.id,
-              price,
-              currency: "TRY",
-              inStock: true,
-              scrapedAt: now,
-            },
+          priceHistorySnapshots.push({
+            trackedProductId: c.trackedProductId,
+            price,
+            currency: "TRY",
+            inStock: true,
+            sellerName: retailer.name,
+            scrapedAt: now,
           });
-
-          await prisma.priceHistory.create({
-            data: {
-              trackedProductId: c.trackedProductId,
-              price,
-              currency: "TRY",
-              inStock: true,
-              sellerName: retailer.name,
-              scrapedAt: now,
-            },
-          });
-
           updatedCount++;
-        } catch (err) {
-          console.error(`Competitor update hatası (${c.id}):`, err);
         }
+      } catch (err) {
+        console.error(`Bulk competitor update hatası (${result.link}):`, err);
+      }
+    }
+
+    // Snapshotları toplu yaz — N×M tek-tek insert yerine 2 tek createMany.
+    if (competitorPriceSnapshots.length > 0) {
+      try {
+        await prisma.competitorPrice.createMany({ data: competitorPriceSnapshots });
+      } catch (err) {
+        console.error("Bulk competitorPrice insert hatası:", err);
+      }
+    }
+    if (priceHistorySnapshots.length > 0) {
+      try {
+        await prisma.priceHistory.createMany({ data: priceHistorySnapshots });
+      } catch (err) {
+        console.error("Bulk priceHistory insert hatası:", err);
       }
     }
 
