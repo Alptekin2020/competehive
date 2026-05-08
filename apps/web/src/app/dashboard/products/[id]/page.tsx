@@ -395,6 +395,7 @@ export default function ProductDetailPage() {
       safePrice(c.currentPrice) !== null &&
       (c.matchScore === null || c.matchScore === undefined || c.matchScore >= MIN_MATCH_SCORE),
   );
+  const hasOwnPrice = safePrice(product.currentPrice) !== null;
   const cheapestCompetitor = validCompetitors
     .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
     .sort((a, b) => a.parsedPrice - b.parsedPrice)[0];
@@ -623,28 +624,11 @@ export default function ProductDetailPage() {
         <div className="bg-gradient-to-br from-[#151518] to-[#101012] border border-[#2A2A2F] rounded-2xl p-5 sm:p-6 lg:col-span-2">
           <div className="flex items-start justify-between gap-3 mb-4">
             <h2 className="text-white font-semibold text-lg">Piyasa Pozisyonu</h2>
-            {(() => {
-              const hasOwnPrice = safePrice(product.currentPrice) !== null;
-              const hasValidCompetitors = validCompetitors.length > 0;
-
-              if (!hasValidCompetitors) {
-                return (
-                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
-                    Rakip verisi bekleniyor
-                  </span>
-                );
-              }
-
-              if (!hasOwnPrice) {
-                return (
-                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
-                    Kendi fiyatınız alınamadı
-                  </span>
-                );
-              }
-
-              return null;
-            })()}
+            {(validCompetitors.length === 0 || !hasOwnPrice) && (
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
+                {validCompetitors.length === 0 ? "Rakip verisi bekleniyor" : "Kendi fiyatınız alınamadı"}
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
@@ -671,7 +655,7 @@ export default function ProductDetailPage() {
           <p className="mt-3 text-xs text-gray-500">
             Konum, yalnızca geçerli fiyatı olan rakiplere göre hesaplanır.
           </p>
-          {safePrice(product.currentPrice) === null && validCompetitors.length > 0 && (
+          {!hasOwnPrice && validCompetitors.length > 0 && (
             <p className="mt-2 text-xs text-zinc-500">
               Kendi fiyatınız alınamadığı için fark hesaplanamıyor. &quot;Fiyatları Yenile&quot; ile
               tekrar deneyin.
