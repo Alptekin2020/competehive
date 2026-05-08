@@ -13,7 +13,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { MIN_MATCH_SCORE } from "@competehive/shared";
+import { MIN_MATCH_SCORE, getMarketplaceInfo } from "@competehive/shared";
 import RefreshButton from "@/components/RefreshButton";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
@@ -396,15 +396,14 @@ export default function ProductDetailPage() {
       (c.matchScore === null || c.matchScore === undefined || c.matchScore >= MIN_MATCH_SCORE),
   );
   const hasOwnPrice = safePrice(product.currentPrice) !== null;
-  const positionBadge: { text: string; tone: "amber" | "rose" } | null = (() => {
-    if (validCompetitors.length === 0) {
-      return { text: "Rakip verisi bekleniyor", tone: "amber" };
-    }
-    if (!hasOwnPrice) {
-      return { text: "Kendi fiyatınız alınamadı", tone: "amber" };
-    }
-    return null;
-  })();
+  const positionBadge: { text: string; tone: "amber" | "rose" } | null =
+    validCompetitors.length === 0
+      ? competitors.length === 0
+        ? { text: "Rakip verisi bekleniyor", tone: "amber" }
+        : { text: "Geçerli rakip yok", tone: "rose" }
+      : !hasOwnPrice
+        ? { text: "Kendi fiyatınız alınamadı", tone: "amber" }
+        : null;
   const cheapestCompetitor = validCompetitors
     .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
     .sort((a, b) => a.parsedPrice - b.parsedPrice)[0];
@@ -672,8 +671,9 @@ export default function ProductDetailPage() {
           </p>
           {!hasOwnPrice && validCompetitors.length > 0 && (
             <p className="mt-2 text-xs text-zinc-500">
-              Kendi fiyatınız alınamadığı için fark hesaplanamıyor. Trendyol scrape başarılı
-              olduğunda otomatik dolacak.
+              Kendi fiyatınız alınamadığı için fark hesaplanamıyor.{" "}
+              {getMarketplaceInfo(product.marketplace).name} taraması başarılı olduğunda otomatik
+              dolacak.
             </p>
           )}
         </div>
