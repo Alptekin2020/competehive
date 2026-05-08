@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { MIN_MATCH_SCORE } from "@competehive/shared";
 import { logger } from "./utils/logger";
 
 let openai: OpenAI | null = null;
@@ -37,6 +36,15 @@ export interface ProductInfo {
   price?: number;
   marketplace?: string;
 }
+
+// ============================================
+// Minimum Score Threshold
+// ============================================
+
+// Worker'ın Docker build context'i sadece apps/worker/ dizini olduğu için
+// @competehive/shared paketi buradan erişilemiyor. Bu sabit packages/shared/src/index.ts
+// içindeki MIN_MATCH_SCORE ile aynı tutulmalı.
+const MIN_MATCH_SCORE = 70;
 
 // ============================================
 // Fallback string matcher (when OpenAI unavailable)
@@ -96,7 +104,7 @@ KURALLAR:
 6. Fiyat farkı %300'den fazlaysa büyük olasılıkla farklı üründür
 7. PAKETLEME/AMBALAJ İSTİSNASI: Aday başlığında "koli", "ambalaj", "paketi", "boş kutu", "carton" gibi kelimeler varsa ve gerçek ürün değil ambalaj satılıyorsa skor=0 ve isMatch=false ver.
 8. KRİTİK MARKA TUTARLILIĞI: Eğer marka adı (Karaca, Apple, Samsung, Nike, Beko, Arzum, Sinbo vb.) HEM kaynak HEM aday başlığında AYNI şekilde geçiyorsa, brandMatch=true OLMAK ZORUNDA. "aynı marka değil" reasoning'i veremezsin marka adı iki başlıkta da varsa. Bu kuralı ihlal etmek tutarsız cevap üretmek demektir.
-9. SKOR-İSMATCH TUTARLILIĞI: Eğer score >= 70 ise isMatch=true OLMAK ZORUNDA. score < 70 ise isMatch=false OLMAK ZORUNDA. score ve isMatch çelişemez.
+9. SKOR-İSMATCH TUTARLILIĞI: Eğer score >= ${MIN_MATCH_SCORE} ise isMatch=true OLMAK ZORUNDA. score < ${MIN_MATCH_SCORE} ise isMatch=false OLMAK ZORUNDA. score ve isMatch çelişemez.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
@@ -113,8 +121,8 @@ SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
 SKOR REHBERİ:
 - 90-100: Kesinlikle aynı ürün (marka, model, tüm özellikler eşleşiyor)
-- 70-89: Büyük olasılıkla aynı ürün (küçük belirsizlikler var)
-- 40-69: Belirsiz (benzer ama emin değilim)
+- ${MIN_MATCH_SCORE}-89: Büyük olasılıkla aynı ürün (küçük belirsizlikler var)
+- 40-${MIN_MATCH_SCORE - 1}: Belirsiz (benzer ama emin değilim)
 - 0-39: Farklı ürün`;
 
     const response = await client.chat.completions.create({
