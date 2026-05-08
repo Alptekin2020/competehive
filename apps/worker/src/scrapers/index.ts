@@ -151,53 +151,6 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 }
 
 // ============================================
-// JSON Fetch with retry (for API endpoints)
-// ============================================
-
-async function fetchJsonWithRetry(
-  url: string,
-  config: ScraperConfig,
-  retries = 2,
-): Promise<unknown> {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), config.timeout || 15000);
-
-      const headers: Record<string, string> = {
-        "User-Agent": config.userAgent || getRandomUserAgent(),
-        Accept: "application/json, text/plain, */*",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        Referer: "https://www.trendyol.com/",
-        Origin: "https://www.trendyol.com",
-      };
-
-      const response = await fetch(url, {
-        headers,
-        signal: controller.signal,
-        redirect: "follow",
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      logger.warn(
-        `JSON fetch attempt ${attempt}/${retries} failed for ${url}: ${errorMessage(error)}`,
-      );
-      if (attempt === retries) throw error;
-      await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
-    }
-  }
-  throw new Error("All JSON fetch attempts failed");
-}
-
-// ============================================
 // Puppeteer-based scraping fallback
 // ============================================
 
@@ -375,6 +328,28 @@ function parseTrendyolHtml(html: string): ScrapedProduct | null {
 // TRENDYOL SCRAPER
 // ============================================
 
+type TrendyolFetchErrorShape = {
+  name?: string;
+  message?: string;
+  code?: string;
+  cause?: {
+    name?: string;
+    message?: string;
+    code?: string;
+    errno?: number;
+    syscall?: string;
+    address?: string;
+    hostname?: string;
+  };
+  stack?: string;
+};
+
+type TrendyolPuppeteerErrorShape = {
+  name?: string;
+  message?: string;
+  stack?: string;
+};
+
 export async function scrapeTrendyol(
   url: string,
   config: ScraperConfig = {},
@@ -384,15 +359,73 @@ export async function scrapeTrendyol(
 
   logger.info(`Scraping Trendyol: ${url}`);
 
+  let lastApiError: TrendyolFetchErrorShape | null = null;
+  let lastHtmlError: TrendyolFetchErrorShape | null = null;
+  let lastHtmlStatus: number | null = null;
+  let lastHtmlLen: number | null = null;
+  let lastPuppeteerError: TrendyolPuppeteerErrorShape | null = null;
+
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
   const contentId = extractTrendyolContentId(url);
   if (contentId) {
-    try {
-      const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}`;
-      logger.info(`Trying Trendyol API: contentId=${contentId}`);
-      const data = (await fetchJsonWithRetry(apiUrl, config)) as Record<string, unknown>;
+    const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}`;
+    logger.info(`Trying Trendyol API: contentId=${contentId}`);
+    const apiRetries = 2;
+    let apiData: Record<string, unknown> | null = null;
+    for (let attempt = 1; attempt <= apiRetries; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), config.timeout || 15000);
+      try {
+        const headers: Record<string, string> = {
+          "User-Agent": config.userAgent || getRandomUserAgent(),
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+          "Accept-Encoding": "gzip, deflate, br",
+          Referer: "https://www.trendyol.com/",
+          Origin: "https://www.trendyol.com",
+        };
+        const response = await fetch(apiUrl, {
+          headers,
+          signal: controller.signal,
+          redirect: "follow",
+        });
+        clearTimeout(timeout);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        apiData = (await response.json()) as Record<string, unknown>;
+        break;
+      } catch (err) {
+        clearTimeout(timeout);
+        const e = err as TrendyolFetchErrorShape;
+        const cause = e?.cause;
+        lastApiError = e;
+        logger.warn(
+          {
+            attempt,
+            url: apiUrl,
+            errorName: e?.name,
+            errorMessage: e?.message,
+            errorCode: e?.code,
+            causeName: cause?.name,
+            causeMessage: cause?.message,
+            causeCode: cause?.code,
+            causeErrno: cause?.errno,
+            causeSyscall: cause?.syscall,
+            causeAddress: cause?.address,
+            causeHostname: cause?.hostname,
+            stack: e?.stack?.split("\n").slice(0, 4).join(" | "),
+          },
+          "Trendyol JSON API fetch failed (detailed)",
+        );
+        if (attempt < apiRetries) {
+          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        }
+      }
+    }
 
-      const result = data?.result as Record<string, unknown> | undefined;
+    if (apiData) {
+      const result = apiData?.result as Record<string, unknown> | undefined;
       if (result) {
         const price = result.price as Record<string, unknown> | undefined;
         const sellingPrice = price?.sellingPrice as Record<string, unknown> | undefined;
@@ -435,14 +468,81 @@ export async function scrapeTrendyol(
       }
 
       logger.warn("Trendyol API returned data but no valid price, trying other methods");
-    } catch (error) {
-      logger.warn(`Trendyol API failed: ${errorMessage(error)}, trying fetch+HTML`);
     }
   }
 
   // Strategy 2: Direct HTML fetch
-  try {
-    const html = await fetchWithRetry(url, config);
+  const htmlRetries = 3;
+  let html = "";
+  for (let attempt = 1; attempt <= htmlRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeout || 15000);
+    try {
+      const headers: Record<string, string> = {
+        "User-Agent": config.userAgent || getRandomUserAgent(),
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      };
+      const response = await fetch(url, {
+        headers,
+        signal: controller.signal,
+        redirect: "follow",
+      });
+      clearTimeout(timeout);
+      const body = await response.text();
+      lastHtmlStatus = response.status;
+      lastHtmlLen = body.length;
+      const lower = body.toLowerCase();
+      logger.info(
+        {
+          url,
+          attempt,
+          status: response.status,
+          statusText: response.statusText,
+          contentLength: body.length,
+          contentTypeHeader: response.headers.get("content-type"),
+          cfRayHeader: response.headers.get("cf-ray"),
+          serverHeader: response.headers.get("server"),
+          htmlSnippet: body.slice(0, 400),
+          htmlContainsProduct: body.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__"),
+          htmlContainsBlockedKeywords:
+            lower.includes("captcha") ||
+            lower.includes("access denied") ||
+            lower.includes("forbidden") ||
+            lower.includes("just a moment"),
+        },
+        "Trendyol HTML fetch result",
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      html = body;
+      break;
+    } catch (err) {
+      clearTimeout(timeout);
+      const e = err as TrendyolFetchErrorShape;
+      lastHtmlError = e;
+      logger.warn(
+        {
+          url,
+          attempt,
+          errorName: e?.name,
+          errorMessage: e?.message,
+          causeCode: e?.cause?.code,
+          causeMessage: e?.cause?.message,
+        },
+        "Trendyol HTML fetch threw (detailed)",
+      );
+      if (attempt < htmlRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+      }
+    }
+  }
+
+  if (html) {
     const product = parseTrendyolHtml(html);
     if (product && product.price > 0) {
       logger.info(`Trendyol HTML scraped: ${product.name} - ${product.price} ${product.currency}`);
@@ -450,31 +550,98 @@ export async function scrapeTrendyol(
       return product;
     }
     logger.warn("Trendyol HTML fetch returned no product data, trying Puppeteer");
-  } catch (error) {
-    logger.warn(`Trendyol HTML fetch failed: ${errorMessage(error)}, trying Puppeteer`);
   }
 
   // Strategy 3: Puppeteer (handles JS-rendered pages and bot protection)
   try {
     logger.info("Attempting Trendyol scrape with Puppeteer");
-    const html = await scrapeWithPuppeteer(url, config);
-    const product = parseTrendyolHtml(html);
-    if (product && product.price > 0) {
-      logger.info(
-        `Trendyol Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
-      );
-      await setCachedScrapeResult(url, product);
-      return product;
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    let pageHtml = "";
+    try {
+      await page.setUserAgent(config.userAgent || getRandomUserAgent());
+      await page.setExtraHTTPHeaders({
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+      });
+
+      await page.setRequestInterception(true);
+      page.on("request", (req) => {
+        const resourceType = req.resourceType();
+        if (["image", "stylesheet", "font", "media"].includes(resourceType)) {
+          req.abort();
+        } else {
+          req.continue();
+        }
+      });
+
+      try {
+        await page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: config.timeout || 30000,
+        });
+        await new Promise((r) => setTimeout(r, 3000));
+        pageHtml = await page.content();
+        const titleTag = await page.title().catch(() => null);
+        logger.info(
+          {
+            url,
+            finalUrl: page.url(),
+            contentLength: pageHtml.length,
+            contentSnippet: pageHtml.slice(0, 400),
+            hasInitialState: pageHtml.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__"),
+            titleTag,
+          },
+          "Trendyol Puppeteer page loaded",
+        );
+      } catch (err) {
+        const e = err as TrendyolPuppeteerErrorShape;
+        const pageFinalUrl = await page.url();
+        lastPuppeteerError = e;
+        logger.warn(
+          {
+            url,
+            errorName: e?.name,
+            errorMessage: e?.message,
+            pageFinalUrl,
+            stack: e?.stack?.split("\n").slice(0, 5).join(" | "),
+          },
+          "Trendyol Puppeteer failed (detailed)",
+        );
+        throw err;
+      }
+    } finally {
+      await page.close();
     }
-  } catch (error) {
-    logger.warn(`Trendyol Puppeteer scrape failed: ${errorMessage(error)}`);
+
+    if (pageHtml) {
+      const product = parseTrendyolHtml(pageHtml);
+      if (product && product.price > 0) {
+        logger.info(
+          `Trendyol Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
+        );
+        await setCachedScrapeResult(url, product);
+        return product;
+      }
+    }
+  } catch (err) {
+    const e = err as TrendyolPuppeteerErrorShape;
+    if (!lastPuppeteerError) lastPuppeteerError = e;
+    logger.warn(`Trendyol Puppeteer scrape failed: ${errorMessage(err)}`);
   }
 
+  const failureSummary = {
+    apiError: lastApiError?.cause?.code || lastApiError?.message || "unknown",
+    htmlError:
+      lastHtmlError?.message || `status=${lastHtmlStatus ?? "n/a"}, len=${lastHtmlLen ?? "n/a"}`,
+    puppeteerError: lastPuppeteerError?.message || "unknown",
+  };
+  logger.error({ url, failureSummary }, "Trendyol all methods failed (summary)");
   throw new ScraperError(
-    "Trendyol urun bilgileri tum yontemlerle cekilemedi (API + HTML + Puppeteer)",
+    `Trendyol urun bilgileri tum yontemlerle cekilemedi (API: ${failureSummary.apiError}, HTML: ${failureSummary.htmlError}, Puppeteer: ${failureSummary.puppeteerError})`,
     {
       code: "SCRAPE_ALL_METHODS_FAILED",
       retryable: true,
+      softFail: false,
     },
   );
 }
