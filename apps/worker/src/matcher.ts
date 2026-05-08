@@ -98,9 +98,10 @@ KURALLAR:
 3. Aynı markanın farklı modelleri AYNI DEĞİLDİR (ör: iPhone 15 ≠ iPhone 15 Pro)
 4. Set/paket ürünler tekli ürünle AYNI DEĞİLDİR
 5. Yenilenmiş/refurbished ürünler orijinaliyle farklı kabul edilebilir (skor düşük)
-6. Fiyat farkı %200'den fazlaysa büyük olasılıkla farklı üründür — skor 30'un altında olmalı
-7. Ambalaj, koli, kutu, aksesuar, kılıf gibi ürünler orijinal ürünle ASLA eşleşmez — skor 0 olmalı
-8. Farklı kategorideki ürünler (ör: giyim vs. ambalaj, elektronik vs. aksesuar) ASLA eşleşmez — skor 0 olmalı
+6. Fiyat farkı %300'den fazlaysa büyük olasılıkla farklı üründür
+7. PAKETLEME/AMBALAJ İSTİSNASI: Aday başlığında "koli", "ambalaj", "paketi", "boş kutu", "carton" gibi kelimeler varsa ve gerçek ürün değil ambalaj satılıyorsa skor=0 ve isMatch=false ver.
+8. KRİTİK MARKA TUTARLILIĞI: Eğer marka adı (Karaca, Apple, Samsung, Nike, Beko, Arzum, Sinbo vb.) HEM kaynak HEM aday başlığında AYNI şekilde geçiyorsa, brandMatch=true OLMAK ZORUNDA. "aynı marka değil" reasoning'i veremezsin marka adı iki başlıkta da varsa. Bu kuralı ihlal etmek tutarsız cevap üretmek demektir.
+9. SKOR-İSMATCH TUTARLILIĞI: Eğer score >= 70 ise isMatch=true OLMAK ZORUNDA. score < 70 ise isMatch=false OLMAK ZORUNDA. score ve isMatch çelişemez.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
@@ -119,8 +120,7 @@ SKOR REHBERİ:
 - 90-100: Kesinlikle aynı ürün (marka, model, tüm özellikler eşleşiyor)
 - 70-89: Büyük olasılıkla aynı ürün (küçük belirsizlikler var)
 - 40-69: Belirsiz (benzer ama emin değilim)
-- 10-39: Farklı ürün ama aynı kategoride
-- 0-9: Tamamen alakasız ürün (farklı kategori, ambalaj, aksesuar vb.)`;
+- 0-39: Farklı ürün`;
 
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
@@ -137,10 +137,40 @@ SKOR REHBERİ:
     }
 
     const parsed = JSON.parse(content);
+    const score = Math.min(100, Math.max(0, parseInt(parsed.score) || 0));
+
+    // SCORE-BASED DECISION:
+    // AI'nin isMatch field'ını nihai karar olarak kullanmıyoruz çünkü tutarsız çıktılar
+    // (score=70 ama isMatch=false gibi) sayesinde aynı markalı ürünler kayboluyordu.
+    // Tek source-of-truth: score >= MIN_MATCH_SCORE → isMatch=true.
+    const finalIsMatch = score >= MIN_MATCH_SCORE;
+
+    // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)
+    if (parsed.isMatch === false && score >= MIN_MATCH_SCORE) {
+      logger.info(
+        {
+          source: sourceProduct.title.slice(0, 80),
+          candidate: candidate.title.slice(0, 80),
+          score,
+          aiIsMatch: parsed.isMatch,
+        },
+        "AI score override: AI isMatch=false ama score>=70, kabul edildi",
+      );
+    } else if (parsed.isMatch === true && score < MIN_MATCH_SCORE) {
+      logger.info(
+        {
+          source: sourceProduct.title.slice(0, 80),
+          candidate: candidate.title.slice(0, 80),
+          score,
+          aiIsMatch: parsed.isMatch,
+        },
+        "AI score override: AI isMatch=true ama score<70, reddedildi",
+      );
+    }
 
     const result: MatchResult = {
-      isMatch: parsed.isMatch === true && (parsed.score ?? 0) >= MIN_MATCH_SCORE,
-      score: Math.min(100, Math.max(0, parseInt(parsed.score) || 0)),
+      isMatch: finalIsMatch,
+      score,
       reason: String(parsed.reason || "Açıklama yok").slice(0, 200),
       attributes: {
         brandMatch: parsed.brandMatch === true,
@@ -150,20 +180,6 @@ SKOR REHBERİ:
         details: String(parsed.details || "").slice(0, 300),
       },
     };
-
-    // Apply threshold: even if AI says isMatch=true, reject if score < MIN_MATCH_SCORE
-    if (parsed.isMatch === true && result.score < MIN_MATCH_SCORE) {
-      result.isMatch = false;
-      result.reason = `Skor eşiğinin altında (${result.score}/${MIN_MATCH_SCORE}): ${result.reason}`;
-      logger.info(
-        {
-          source: sourceProduct.title,
-          candidate: candidate.title,
-          score: result.score,
-        },
-        "Match rejected: below threshold",
-      );
-    }
 
     logger.info(
       {

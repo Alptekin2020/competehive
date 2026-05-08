@@ -387,7 +387,11 @@ export default function ProductDetailPage() {
   const highestPrice = allPrices.length > 0 ? Math.max(...allPrices) : null;
   const avgPrice =
     allPrices.length > 0 ? allPrices.reduce((a, b) => a + b, 0) / allPrices.length : null;
-  const validCompetitors = competitors.filter((c) => safePrice(c.currentPrice) !== null);
+  const validCompetitors = competitors.filter(
+    (c) =>
+      safePrice(c.currentPrice) !== null &&
+      (c.matchScore === null || c.matchScore === undefined || c.matchScore >= 70),
+  );
   const cheapestCompetitor = validCompetitors
     .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
     .sort((a, b) => a.parsedPrice - b.parsedPrice)[0];
@@ -407,9 +411,11 @@ export default function ProductDetailPage() {
           .indexOf(ownPrice) + 1
       : null;
   const rankLabel =
-    ownRankAmongAll !== null && validCompetitors.length >= 2
-      ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
-      : "Yeterli rakip verisi yok";
+    validCompetitors.length === 0
+      ? "Rakip verisi bekleniyor"
+      : ownRankAmongAll !== null && validCompetitors.length >= 2
+        ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
+        : `${validCompetitors.length} rakibe göre`;
 
   const weakCompetitors = competitors.filter((c) => c.matchScore !== null && c.matchScore < 70);
   const staleCompetitors = competitors.filter((c) => {
@@ -612,23 +618,17 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      <div className="mb-4 sm:mb-6 bg-gradient-to-r from-amber-500/10 via-[#17171A] to-[#121214] border border-amber-500/20 rounded-2xl p-4 sm:p-5">
-        <p className="text-xs uppercase tracking-wide text-amber-300/90 mb-1">Karar Özeti</p>
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
-          <div>
-            <p className="text-white text-lg sm:text-xl font-semibold">{marketPositionLabel}</p>
-            <p className="text-sm text-gray-300 mt-1">
-              {absoluteDiffToCheapest !== null
-                ? `En düşük rakibe göre ${absoluteDiffToCheapest > 0 ? "+" : ""}${formatPrice(
-                    absoluteDiffToCheapest,
-                    product.currency,
-                  )} (${percentageDiffToCheapest?.toFixed(1) ?? "0.0"}%).`
-                : "Sağlıklı konum analizi için geçerli rakip fiyatı gerekli."}
+      {validCompetitors.length === 0 && (
+        <div className="mb-4 sm:mb-6 bg-[#111113] border border-[#1F1F23] rounded-lg p-4">
+          {competitors.length === 0 ? (
+            <p className="text-sm text-zinc-400">
+              Rakip verisi bekleniyor — ilk tarama tamamlanmadı
             </p>
-          </div>
-          <div className="text-xs text-gray-400">Sıralama: {rankLabel}</div>
+          ) : (
+            <p className="text-sm text-rose-400">Geçerli rakip yok — eşleşmeler düşük güvenli</p>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Karar Kartları */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
