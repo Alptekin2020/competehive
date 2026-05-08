@@ -389,11 +389,12 @@ export async function scrapeTrendyol(
           signal: controller.signal,
           redirect: "follow",
         });
-        clearTimeout(timeout);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         apiData = (await response.json()) as Record<string, unknown>;
+        clearTimeout(timeout);
+        lastApiError = null;
         break;
       } catch (err) {
         clearTimeout(timeout);
@@ -491,10 +492,10 @@ export async function scrapeTrendyol(
         signal: controller.signal,
         redirect: "follow",
       });
-      clearTimeout(timeout);
-      const body = await response.text();
       lastHtmlStatus = response.status;
+      const body = await response.text();
       lastHtmlLen = body.length;
+      clearTimeout(timeout);
       const lower = body.toLowerCase();
       logger.info(
         {
@@ -520,6 +521,7 @@ export async function scrapeTrendyol(
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       html = body;
+      lastHtmlError = null;
       break;
     } catch (err) {
       clearTimeout(timeout);
