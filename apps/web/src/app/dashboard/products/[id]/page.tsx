@@ -396,6 +396,15 @@ export default function ProductDetailPage() {
       (c.matchScore === null || c.matchScore === undefined || c.matchScore >= MIN_MATCH_SCORE),
   );
   const hasOwnPrice = safePrice(product.currentPrice) !== null;
+  const positionBadge: { text: string; tone: "amber" | "rose" } | null = (() => {
+    if (validCompetitors.length === 0) {
+      return { text: "Rakip verisi bekleniyor", tone: "amber" };
+    }
+    if (!hasOwnPrice) {
+      return { text: "Kendi fiyatınız alınamadı", tone: "amber" };
+    }
+    return null;
+  })();
   const cheapestCompetitor = validCompetitors
     .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
     .sort((a, b) => a.parsedPrice - b.parsedPrice)[0];
@@ -624,11 +633,15 @@ export default function ProductDetailPage() {
         <div className="bg-gradient-to-br from-[#151518] to-[#101012] border border-[#2A2A2F] rounded-2xl p-5 sm:p-6 lg:col-span-2">
           <div className="flex items-start justify-between gap-3 mb-4">
             <h2 className="text-white font-semibold text-lg">Piyasa Pozisyonu</h2>
-            {(validCompetitors.length === 0 || !hasOwnPrice) && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
-                {validCompetitors.length === 0
-                  ? "Rakip verisi bekleniyor"
-                  : "Kendi fiyatınız alınamadı"}
+            {positionBadge && (
+              <span
+                className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                  positionBadge.tone === "amber"
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                    : "border-rose-500/40 bg-rose-500/10 text-rose-400"
+                }`}
+              >
+                {positionBadge.text}
               </span>
             )}
           </div>
@@ -659,8 +672,8 @@ export default function ProductDetailPage() {
           </p>
           {!hasOwnPrice && validCompetitors.length > 0 && (
             <p className="mt-2 text-xs text-zinc-500">
-              Kendi fiyatınız alınamadığı için fark hesaplanamıyor. &quot;Fiyatları Yenile&quot; ile
-              tekrar deneyin.
+              Kendi fiyatınız alınamadığı için fark hesaplanamıyor. Trendyol scrape başarılı
+              olduğunda otomatik dolacak.
             </p>
           )}
         </div>
