@@ -626,7 +626,9 @@ export default function ProductDetailPage() {
             <h2 className="text-white font-semibold text-lg">Piyasa Pozisyonu</h2>
             {(validCompetitors.length === 0 || !hasOwnPrice) && (
               <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
-                {validCompetitors.length === 0 ? "Rakip verisi bekleniyor" : "Kendi fiyatınız alınamadı"}
+                {validCompetitors.length === 0
+                  ? "Rakip verisi bekleniyor"
+                  : "Kendi fiyatınız alınamadı"}
               </span>
             )}
           </div>
