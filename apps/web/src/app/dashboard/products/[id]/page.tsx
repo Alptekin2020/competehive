@@ -443,23 +443,6 @@ export default function ProductDetailPage() {
           ? "Kısmen güncel (72s içinde)"
           : "Veri eski olabilir";
 
-  const marketPositionLabel = (() => {
-    if (!ownPrice || validCompetitors.length === 0) return "Rakip verisi yetersiz";
-    if (absoluteDiffToCheapest === null) return "Rakip verisi yetersiz";
-    if (absoluteDiffToCheapest === 0) return "En düşük fiyat";
-    if (absoluteDiffToCheapest < 0) return "Piyasa altında";
-    return "Rakipten pahalı";
-  })();
-  const marketPositionClass = (() => {
-    if (marketPositionLabel === "En düşük fiyat")
-      return "text-emerald-300 bg-emerald-500/10 border-emerald-500/30";
-    if (marketPositionLabel === "Piyasa altında")
-      return "text-green-300 bg-green-500/10 border-green-500/30";
-    if (marketPositionLabel === "Rakipten pahalı")
-      return "text-rose-300 bg-rose-500/10 border-rose-500/30";
-    return "text-amber-300 bg-amber-500/10 border-amber-500/30";
-  })();
-
   const undercutSuggestion =
     cheapestCompetitorPrice && cheapestCompetitorPrice > 1 ? cheapestCompetitorPrice - 1 : null;
   const top3AvgSuggestion =
@@ -640,9 +623,28 @@ export default function ProductDetailPage() {
         <div className="bg-gradient-to-br from-[#151518] to-[#101012] border border-[#2A2A2F] rounded-2xl p-5 sm:p-6 lg:col-span-2">
           <div className="flex items-start justify-between gap-3 mb-4">
             <h2 className="text-white font-semibold text-lg">Piyasa Pozisyonu</h2>
-            <span className={`text-xs px-2.5 py-1 rounded-full border ${marketPositionClass}`}>
-              {marketPositionLabel}
-            </span>
+            {(() => {
+              const hasOwnPrice = safePrice(product.currentPrice) !== null;
+              const hasValidCompetitors = validCompetitors.length > 0;
+
+              if (!hasValidCompetitors) {
+                return (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
+                    Rakip verisi bekleniyor
+                  </span>
+                );
+              }
+
+              if (!hasOwnPrice) {
+                return (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
+                    Kendi fiyatınız alınamadı
+                  </span>
+                );
+              }
+
+              return null;
+            })()}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
@@ -669,6 +671,12 @@ export default function ProductDetailPage() {
           <p className="mt-3 text-xs text-gray-500">
             Konum, yalnızca geçerli fiyatı olan rakiplere göre hesaplanır.
           </p>
+          {safePrice(product.currentPrice) === null && validCompetitors.length > 0 && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Kendi fiyatınız alınamadığı için fark hesaplanamıyor. &quot;Fiyatları Yenile&quot; ile
+              tekrar deneyin.
+            </p>
+          )}
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5">
           <h3 className="text-white font-semibold mb-3">Veri Kalitesi / Güven</h3>
