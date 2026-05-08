@@ -13,6 +13,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import { MIN_MATCH_SCORE } from "@competehive/shared";
 import RefreshButton from "@/components/RefreshButton";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
@@ -160,7 +161,7 @@ function MatchScoreBadge({ score }: { score: number | null }) {
 
   if (score >= 90) {
     colorClass = "bg-green-500/10 text-green-400 border-green-500/30";
-  } else if (score >= 70) {
+  } else if (score >= MIN_MATCH_SCORE) {
     colorClass = "bg-amber-500/10 text-amber-400 border-amber-500/30";
   } else if (score >= 40) {
     colorClass = "bg-orange-500/10 text-orange-400 border-orange-500/30";
@@ -387,10 +388,12 @@ export default function ProductDetailPage() {
   const highestPrice = allPrices.length > 0 ? Math.max(...allPrices) : null;
   const avgPrice =
     allPrices.length > 0 ? allPrices.reduce((a, b) => a + b, 0) / allPrices.length : null;
+  // matchScore null/undefined → manuel eklenen rakipler (AI matcher'dan geçmiyorlar). Bunları
+  // geçerli sayıyoruz çünkü kullanıcı bilerek ekledi; AI skoru olanlar için MIN_MATCH_SCORE eşiği uygulanır.
   const validCompetitors = competitors.filter(
     (c) =>
       safePrice(c.currentPrice) !== null &&
-      (c.matchScore === null || c.matchScore === undefined || c.matchScore >= 70),
+      (c.matchScore === null || c.matchScore === undefined || c.matchScore >= MIN_MATCH_SCORE),
   );
   const cheapestCompetitor = validCompetitors
     .map((c) => ({ ...c, parsedPrice: Number(c.currentPrice) }))
@@ -417,7 +420,9 @@ export default function ProductDetailPage() {
         ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
         : `${validCompetitors.length} rakibe göre`;
 
-  const weakCompetitors = competitors.filter((c) => c.matchScore !== null && c.matchScore < 70);
+  const weakCompetitors = competitors.filter(
+    (c) => c.matchScore !== null && c.matchScore < MIN_MATCH_SCORE,
+  );
   const staleCompetitors = competitors.filter((c) => {
     if (!c.lastScrapedAt) return true;
     const ageHours = (now.getTime() - new Date(c.lastScrapedAt).getTime()) / (1000 * 60 * 60);
@@ -480,7 +485,7 @@ export default function ProductDetailPage() {
     .filter((competitor) => {
       if (competitorFilter === "priced") return safePrice(competitor.currentPrice) !== null;
       if (competitorFilter === "suspicious")
-        return competitor.matchScore !== null && competitor.matchScore < 70;
+        return competitor.matchScore !== null && competitor.matchScore < MIN_MATCH_SCORE;
       return true;
     })
     .sort((a, b) => {
