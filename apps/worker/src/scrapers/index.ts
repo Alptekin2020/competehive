@@ -549,7 +549,7 @@ export async function scrapeTrendyol(
 
     // Geçici tanılama logu — başarısız parse durumunda HTML formatını incelemek için.
     // TODO: Tanı bittikten sonra silinecek.
-    if (!product || (typeof product === "object" && (!product.name || !product.price))) {
+    if (!product || !product.name || !product.price) {
       // İlk 5000 karakteri logla — JSON-LD, __NEXT_DATA__, meta tag formatlarını arayabilelim
       const dumpSnippet = html.slice(0, 5000).replace(/\s+/g, " ").trim();
 
