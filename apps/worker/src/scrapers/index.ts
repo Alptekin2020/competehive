@@ -546,6 +546,30 @@ export async function scrapeTrendyol(
       await setCachedScrapeResult(url, product);
       return product;
     }
+
+    // Geçici tanılama logu — başarısız parse durumunda HTML formatını incelemek için.
+    // TODO: Tanı bittikten sonra silinecek.
+    if (!product || (typeof product === "object" && (!product.name || !product.price))) {
+      // İlk 5000 karakteri logla — JSON-LD, __NEXT_DATA__, meta tag formatlarını arayabilelim
+      const dumpSnippet = html.slice(0, 5000).replace(/\s+/g, " ").trim();
+
+      // Spesifik marker'ları arayıp varlık raporu çıkar
+      const hasJsonLd = html.includes("application/ld+json");
+      const hasNextData = html.includes("__NEXT_DATA__");
+      const hasInitialState = html.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
+      const hasOgPrice =
+        html.includes('property="product:price') || html.includes('property="og:price');
+      const hasItemprop = html.includes('itemprop="price"');
+      const hasInlineWindow = html.includes("window.__") || html.includes("window['__");
+
+      // 8000 char limit aşmamak için 3 ayrı log satırı
+      logger.warn(
+        `Trendyol PARSE-FAIL markers: jsonLd=${hasJsonLd} nextData=${hasNextData} initialState=${hasInitialState} ogPrice=${hasOgPrice} itemprop=${hasItemprop} inlineWindow=${hasInlineWindow}`,
+      );
+      logger.warn(`Trendyol PARSE-FAIL dump-1 (0-2500): ${dumpSnippet.slice(0, 2500)}`);
+      logger.warn(`Trendyol PARSE-FAIL dump-2 (2500-5000): ${dumpSnippet.slice(2500, 5000)}`);
+    }
+
     logger.warn("Trendyol HTML fetch returned no product data, trying Puppeteer");
   }
 
