@@ -363,7 +363,12 @@ export async function scrapeTrendyol(
   let lastHtmlError: TrendyolFetchErrorShape | null = null;
   let lastHtmlStatus: number | null = null;
   let lastHtmlLen: number | null = null;
+  let lastHtmlCfRay: string | null = null;
+  let lastHtmlIsBotChallenge: boolean = false;
   let lastPuppeteerError: TrendyolPuppeteerErrorShape | null = null;
+  let puppeteerFinalUrl: string | null = null;
+  let puppeteerContentLength: number | null = null;
+  let puppeteerHasInitialState: boolean = false;
 
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
   const contentId = extractTrendyolContentId(url);
@@ -401,23 +406,12 @@ export async function scrapeTrendyol(
         const e = err as TrendyolFetchErrorShape;
         const cause = e?.cause;
         lastApiError = e;
+        const errCode = e?.code || cause?.code || "unknown";
+        const errMsg = (e?.message || cause?.message || "no-message").slice(0, 150);
+        const errSyscall = cause?.syscall || "none";
+        const errHostname = cause?.hostname || "none";
         logger.warn(
-          {
-            attempt,
-            url: apiUrl,
-            errorName: e?.name,
-            errorMessage: e?.message,
-            errorCode: e?.code,
-            causeName: cause?.name,
-            causeMessage: cause?.message,
-            causeCode: cause?.code,
-            causeErrno: cause?.errno,
-            causeSyscall: cause?.syscall,
-            causeAddress: cause?.address,
-            causeHostname: cause?.hostname,
-            stack: e?.stack?.split("\n").slice(0, 4).join(" | "),
-          },
-          "Trendyol JSON API fetch failed (detailed)",
+          `Trendyol API fail attempt=${attempt}: code=${errCode} syscall=${errSyscall} hostname=${errHostname} msg="${errMsg}"`,
         );
         if (attempt < apiRetries) {
           await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
@@ -496,27 +490,35 @@ export async function scrapeTrendyol(
       const body = await response.text();
       lastHtmlLen = body.length;
       clearTimeout(timeout);
-      const lower = body.toLowerCase();
+
+      const htmlSnippetRaw = body.slice(0, 300).replace(/\s+/g, " ").trim();
+      const htmlLower = body.toLowerCase();
+      const isJustAMoment =
+        htmlLower.includes("just a moment") || htmlLower.includes("checking your browser");
+      const isCaptcha =
+        htmlLower.includes("captcha") ||
+        htmlLower.includes("hcaptcha") ||
+        htmlLower.includes("recaptcha");
+      const isAccessDenied =
+        htmlLower.includes("access denied") ||
+        htmlLower.includes("you are unable to access") ||
+        htmlLower.includes("attention required");
+      const hasInitialState = body.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
+      const cfRay = response.headers.get("cf-ray") || "none";
+      const cfMitigated = response.headers.get("cf-mitigated") || "none";
+      const server = response.headers.get("server") || "none";
+
+      lastHtmlCfRay = cfRay !== "none" ? cfRay : null;
+      lastHtmlIsBotChallenge = isJustAMoment || isCaptcha || isAccessDenied;
+
+      const urlTail = url.split("/").filter(Boolean).slice(-1)[0]?.slice(0, 50) || "unknown";
       logger.info(
-        {
-          url,
-          attempt,
-          status: response.status,
-          statusText: response.statusText,
-          contentLength: body.length,
-          contentTypeHeader: response.headers.get("content-type"),
-          cfRayHeader: response.headers.get("cf-ray"),
-          serverHeader: response.headers.get("server"),
-          htmlSnippet: body.slice(0, 400),
-          htmlContainsProduct: body.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__"),
-          htmlContainsBlockedKeywords:
-            lower.includes("captcha") ||
-            lower.includes("access denied") ||
-            lower.includes("forbidden") ||
-            lower.includes("just a moment"),
-        },
-        "Trendyol HTML fetch result",
+        `Trendyol HTML [${urlTail}] attempt=${attempt}: status=${response.status} len=${body.length} ` +
+          `cfRay=${cfRay} cfMitigated=${cfMitigated} server=${server} ` +
+          `hasInitialState=${hasInitialState} isJustAMoment=${isJustAMoment} isCaptcha=${isCaptcha} isAccessDenied=${isAccessDenied} ` +
+          `snippet="${htmlSnippetRaw.slice(0, 200)}"`,
       );
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -527,17 +529,10 @@ export async function scrapeTrendyol(
       clearTimeout(timeout);
       const e = err as TrendyolFetchErrorShape;
       lastHtmlError = e;
-      logger.warn(
-        {
-          url,
-          attempt,
-          errorName: e?.name,
-          errorMessage: e?.message,
-          causeCode: e?.cause?.code,
-          causeMessage: e?.cause?.message,
-        },
-        "Trendyol HTML fetch threw (detailed)",
-      );
+      const cause = e?.cause;
+      const errCode = e?.code || cause?.code || "unknown";
+      const errMsg = (e?.message || cause?.message || "no-message").slice(0, 150);
+      logger.warn(`Trendyol HTML fetch threw attempt=${attempt}: code=${errCode} msg="${errMsg}"`);
       if (attempt < htmlRetries) {
         await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
       }
@@ -583,31 +578,35 @@ export async function scrapeTrendyol(
         });
         await new Promise((r) => setTimeout(r, 3000));
         pageHtml = await page.content();
+        puppeteerFinalUrl = page.url();
+        puppeteerContentLength = pageHtml.length;
+        puppeteerHasInitialState = pageHtml.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
+
+        const pupSnippet = pageHtml.slice(0, 200).replace(/\s+/g, " ").trim();
+        const pupLower = pageHtml.toLowerCase();
+        const pupIsBotChallenge =
+          pupLower.includes("captcha") ||
+          pupLower.includes("just a moment") ||
+          pupLower.includes("attention required");
         const titleTag = await page.title().catch(() => null);
+        const urlTail = url.split("/").filter(Boolean).slice(-1)[0]?.slice(0, 50) || "unknown";
+
         logger.info(
-          {
-            url,
-            finalUrl: page.url(),
-            contentLength: pageHtml.length,
-            contentSnippet: pageHtml.slice(0, 400),
-            hasInitialState: pageHtml.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__"),
-            titleTag,
-          },
-          "Trendyol Puppeteer page loaded",
+          `Trendyol Puppeteer [${urlTail}]: finalUrl=${puppeteerFinalUrl?.slice(0, 100)} ` +
+            `len=${puppeteerContentLength} hasInitialState=${puppeteerHasInitialState} isBotChallenge=${pupIsBotChallenge} ` +
+            `title="${(titleTag || "").slice(0, 80)}" snippet="${pupSnippet}"`,
         );
       } catch (err) {
         const e = err as TrendyolPuppeteerErrorShape;
-        const pageFinalUrl = await page.url();
         lastPuppeteerError = e;
+        try {
+          puppeteerFinalUrl = page.url();
+        } catch {
+          puppeteerFinalUrl = null;
+        }
         logger.warn(
-          {
-            url,
-            errorName: e?.name,
-            errorMessage: e?.message,
-            pageFinalUrl,
-            stack: e?.stack?.split("\n").slice(0, 5).join(" | "),
-          },
-          "Trendyol Puppeteer failed (detailed)",
+          `Trendyol Puppeteer fail: name=${e?.name || "unknown"} msg="${(e?.message || "no-msg").slice(0, 200)}" ` +
+            `finalUrl=${puppeteerFinalUrl || "none"}`,
         );
         throw err;
       }
@@ -631,15 +630,26 @@ export async function scrapeTrendyol(
     logger.warn(`Trendyol Puppeteer scrape failed: ${errorMessage(err)}`);
   }
 
-  const failureSummary = {
-    apiError: lastApiError?.cause?.code || lastApiError?.message || "unknown",
-    htmlError:
-      lastHtmlError?.message || `status=${lastHtmlStatus ?? "n/a"}, len=${lastHtmlLen ?? "n/a"}`,
-    puppeteerError: lastPuppeteerError?.message || "unknown",
-  };
-  logger.error({ url, failureSummary }, "Trendyol all methods failed (summary)");
+  const apiErrSummary =
+    lastApiError?.cause?.code ||
+    lastApiError?.code ||
+    lastApiError?.message?.slice(0, 50) ||
+    "unknown";
+  const htmlErrSummary = lastHtmlStatus
+    ? `status=${lastHtmlStatus},len=${lastHtmlLen},cfRay=${lastHtmlCfRay || "none"},isBotChallenge=${lastHtmlIsBotChallenge}`
+    : lastHtmlError?.message?.slice(0, 80) || "unknown";
+  const puppeteerErrSummary = lastPuppeteerError
+    ? `${lastPuppeteerError?.name || "Error"}: ${(lastPuppeteerError?.message || "no-msg").slice(0, 100)}`
+    : puppeteerContentLength
+      ? `content-len=${puppeteerContentLength},hasInitialState=${puppeteerHasInitialState}`
+      : "never-ran";
+
+  logger.error(
+    `Trendyol all-fail summary: url=${url} | API: ${apiErrSummary} | HTML: ${htmlErrSummary} | Puppeteer: ${puppeteerErrSummary}`,
+  );
+
   throw new ScraperError(
-    `Trendyol urun bilgileri tum yontemlerle cekilemedi (API: ${failureSummary.apiError}, HTML: ${failureSummary.htmlError}, Puppeteer: ${failureSummary.puppeteerError})`,
+    `Trendyol urun bilgileri tum yontemlerle cekilemedi (API: ${apiErrSummary}, HTML: ${htmlErrSummary}, Puppeteer: ${puppeteerErrSummary})`,
     {
       code: "SCRAPE_ALL_METHODS_FAILED",
       retryable: true,
