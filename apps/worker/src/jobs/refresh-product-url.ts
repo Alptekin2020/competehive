@@ -5,6 +5,7 @@ import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { getScraper } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
+import { urlMatchKey } from "../utils/url-match";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -109,6 +110,9 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
   // Primary sibling — metadata + scraper seçimi için kullanılacak
   const primary = siblings[0];
 
+  // Source scrape başarısızsa Serper sonuçlarında kendi URL'imizi arayıp fiyatı kurtaracağız.
+  let sourcePriceResolved = false;
+
   try {
     // 3. Source URL'i BİR KEZ scrape et
     try {
@@ -116,6 +120,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       const sourceData = await scraper(productUrl);
 
       if (sourceData?.price && sourceData.price > 0) {
+        sourcePriceResolved = true;
         const updateData: {
           currentPrice: number;
           lastScrapedAt: Date;
@@ -263,6 +268,49 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
 
     const serperResults = await searchWithKeywords(queries);
     console.log(`📦 URL refresh: ${serperResults.length} unique Serper sonucu`);
+
+    // 6.5. Source scrape başarısızsa Serper sonuçlarında kendi URL'imizi ara
+    if (!sourcePriceResolved) {
+      const ownKey = urlMatchKey(productUrl);
+      for (const result of serperResults) {
+        if (urlMatchKey(result.link) !== ownKey) continue;
+        const serperOwnPrice = parsePrice(result.price);
+        if (!serperOwnPrice || serperOwnPrice <= 0) continue;
+
+        const ownRetailer = extractRetailer(productUrl);
+        const ownSellerName = ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm";
+
+        try {
+          await prisma.trackedProduct.updateMany({
+            where: { id: { in: siblingIds } },
+            data: {
+              currentPrice: serperOwnPrice,
+              lastScrapedAt: now,
+              status: "ACTIVE",
+            },
+          });
+
+          await prisma.priceHistory.createMany({
+            data: siblings.map((s) => ({
+              trackedProductId: s.id,
+              price: serperOwnPrice,
+              currency: s.currency,
+              inStock: true,
+              sellerName: ownSellerName,
+              scrapedAt: now,
+            })),
+          });
+
+          sourcePriceResolved = true;
+          console.log(
+            `✅ Kendi fiyat Serper'dan kurtarıldı (URL refresh): ${productUrl} — ${serperOwnPrice}`,
+          );
+        } catch (err) {
+          console.error(`Serper own-price kaydetme hatası (URL refresh):`, err);
+        }
+        break;
+      }
+    }
 
     // 7. Her bilinen competitor URL'i için Serper'da match varsa fiyatı güncelle
     let updatedCount = 0;

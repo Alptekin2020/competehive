@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -231,6 +231,37 @@ export default function ProductDetailPage() {
     fetchProduct();
   }, [id, fetchProduct]);
 
+  // Stats — currentPrice null'sa priceHistory'deki en güncel öz-fiyatı kullan.
+  // Erken return'lerden önce çağrılmalı; product yoksa null değer üretir.
+  const { ownPrice, ownPriceIsStale } = useMemo<{
+    ownPrice: number | null;
+    ownPriceIsStale: boolean;
+  }>(() => {
+    if (!product) return { ownPrice: null, ownPriceIsStale: false };
+
+    const directOwnPrice = safePrice(product.currentPrice);
+    if (directOwnPrice !== null) {
+      return { ownPrice: directOwnPrice, ownPriceIsStale: false };
+    }
+
+    const hints = ["Benim Ürünüm", "Kendi Mağazam", product.marketplace].map((h) =>
+      h.toLowerCase(),
+    );
+    const history = product.priceHistory || [];
+    const fallbackEntry = history.reduce<PriceHistoryEntry | null>((latest, current) => {
+      const seller = (current.sellerName || "").toLowerCase();
+      if (!seller || !hints.some((h) => seller.includes(h))) return latest;
+      if (safePrice(current.price) === null) return latest;
+      if (!latest) return current;
+      return new Date(current.scrapedAt).getTime() > new Date(latest.scrapedAt).getTime()
+        ? current
+        : latest;
+    }, null);
+
+    const fallbackPrice = fallbackEntry ? safePrice(fallbackEntry.price) : null;
+    return { ownPrice: fallbackPrice, ownPriceIsStale: fallbackPrice !== null };
+  }, [product]);
+
   const handleCompare = async () => {
     if (!product || isComparing) return;
 
@@ -378,8 +409,6 @@ export default function ProductDetailPage() {
   const chartData = prepareChartData(filteredHistory, ownSellerHints);
   const retailers = [...new Set(filteredHistory.map((h) => h.sellerName || "Bilinmeyen"))];
 
-  // Stats
-  const ownPrice = product.currentPrice ? Number(product.currentPrice) : null;
   const competitorPrices = competitors
     .map((c) => safePrice(c.currentPrice))
     .filter((p): p is number => p !== null);
@@ -395,7 +424,7 @@ export default function ProductDetailPage() {
       safePrice(c.currentPrice) !== null &&
       (c.matchScore === null || c.matchScore === undefined || c.matchScore >= MIN_MATCH_SCORE),
   );
-  const hasOwnPrice = safePrice(product.currentPrice) !== null;
+  const hasOwnPrice = ownPrice !== null;
   const positionBadge: { text: string; tone: "amber" | "rose" } | null =
     validCompetitors.length === 0
       ? competitors.length === 0
@@ -540,7 +569,12 @@ export default function ProductDetailPage() {
           <div className="flex items-center sm:flex-col sm:items-end gap-3 sm:gap-2 flex-shrink-0">
             {ownPrice && ownPrice > 0 && (
               <div className="text-left sm:text-right">
-                <p className="text-xs text-gray-500 mb-0.5 sm:mb-1">Benim Fiyatım</p>
+                <p className="text-xs text-gray-500 mb-0.5 sm:mb-1">
+                  Benim Fiyatım
+                  {ownPriceIsStale && (
+                    <span className="ml-1 text-[10px] text-amber-500/80">(son bilinen)</span>
+                  )}
+                </p>
                 <p className="text-xl sm:text-2xl font-bold text-amber-400">
                   {formatPrice(ownPrice, product.currency)}
                 </p>

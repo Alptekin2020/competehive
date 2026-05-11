@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
+import { urlMatchKey } from "../utils/url-match";
 import { getScraper } from "../scrapers";
 
 interface RefreshJobData {
@@ -118,6 +119,50 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
 
     // Serper'dan güncel fiyatları çek
     const results = await searchProduct(refreshQuery);
+
+    // Kaynak scrape başarısızsa Serper sonuçlarında kendi URL'imizi ara ve fiyatı oradan al.
+    // Trendyol/Hepsiburada gibi botla bloklayan siteler için kritik bir kurtarma yolu.
+    if (!refreshedOwnPrice) {
+      const ownKey = urlMatchKey(product.productUrl);
+      for (const result of results) {
+        if (urlMatchKey(result.link) !== ownKey) continue;
+        const serperOwnPrice = parsePrice(result.price);
+        if (!serperOwnPrice || serperOwnPrice <= 0) continue;
+
+        refreshedOwnPrice = serperOwnPrice;
+        const ownRetailer = extractRetailer(product.productUrl);
+        const ownSellerName = ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm";
+
+        try {
+          await prisma.trackedProduct.update({
+            where: { id: productId },
+            data: {
+              currentPrice: serperOwnPrice,
+              lastScrapedAt: now,
+              status: "ACTIVE",
+            },
+          });
+
+          await prisma.priceHistory.create({
+            data: {
+              trackedProductId: productId,
+              price: serperOwnPrice,
+              currency: product.currency,
+              inStock: true,
+              sellerName: ownSellerName,
+              scrapedAt: now,
+            },
+          });
+
+          console.log(
+            `✅ Kendi fiyat Serper'dan kurtarıldı: ${productId} — ${serperOwnPrice} ${product.currency}`,
+          );
+        } catch (err) {
+          console.error(`Serper own-price kaydetme hatası:`, err);
+        }
+        break;
+      }
+    }
 
     let updatedCount = 0;
 
