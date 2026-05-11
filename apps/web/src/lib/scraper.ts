@@ -343,12 +343,71 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
   }
 }
 
-// HEPSIBURADA — og: meta tagları kullan (JS gerektirmez)
+// Hepsiburada URL slug'ından okunabilir bir başlık üret.
+// Örn: ".../vichy-dercos-kuru-saclar-icin-kepek-karsiti-sampuan-200-ml-p-HBV00000WIDCQ"
+// → "Vichy Dercos Kuru Saclar Icin Kepek Karsiti Sampuan 200 ml"
+// Worker scrape başarılı olunca gerçek başlık ile değiştirilecek; yine de "Hepsiburada
+// ürünü" placeholder'ından çok daha bilgilendirici bir başlangıç.
+function hepsiburadaTitleFromUrl(url: string): string | null {
+  try {
+    const { pathname } = new URL(url);
+    const segments = pathname.split("/").filter(Boolean);
+    const slugSegment = segments.find((s) => s.includes("-p-")) || segments[segments.length - 1];
+    if (!slugSegment) return null;
+    const slug = slugSegment.split("-p-")[0];
+    if (!slug || slug.length < 3) return null;
+    const words = slug
+      .replace(/[-_]+/g, " ")
+      .split(" ")
+      .filter(Boolean)
+      .map((w) =>
+        /^\d+$/.test(w) || w.toLowerCase() === w.toUpperCase()
+          ? w
+          : w[0].toUpperCase() + w.slice(1),
+      );
+    const title = words.join(" ");
+    return title.length > 0 ? title : null;
+  } catch {
+    return null;
+  }
+}
+
+function isHepsiburadaAkamaiBlock(status: number, server: string | null, html: string): boolean {
+  if (status === 403 && server && server.toLowerCase().includes("akamai")) return true;
+  const lower = html.toLowerCase();
+  return lower.includes("hepsiburada | güvenlik") || lower.includes("hepsiburada | guvenlik");
+}
+
+// HEPSIBURADA — Akamai Bot Manager arkasında. Direkt fetch çoğu zaman 403 döner;
+// bu yüzden hızlı placeholder ile dön ve worker'ın Puppeteer ile zenginleştirmesini bekle.
 export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
+  const slugTitle = hepsiburadaTitleFromUrl(url);
+  const placeholder: ScrapedProduct = {
+    name: slugTitle || "Hepsiburada ürünü",
+    price: null,
+    currency: "TRY",
+    image: null,
+    seller: null,
+    inStock: true,
+  };
+
   try {
     const res = await fetchWithTimeout(url);
-    if (!res.ok) throw new Error(`Status: ${res.status}`);
+    const server = res.headers.get("server");
     const html = await res.text();
+
+    if (isHepsiburadaAkamaiBlock(res.status, server, html)) {
+      console.warn(
+        `Hepsiburada blocked by Akamai (status=${res.status}, server=${server || "none"}). Worker scrape will retry with Puppeteer.`,
+      );
+      return placeholder;
+    }
+
+    if (!res.ok) {
+      console.warn(`Hepsiburada non-OK status: ${res.status}. Falling back to placeholder.`);
+      return placeholder;
+    }
+
     const $ = cheerio.load(html);
 
     // 1. JSON-LD
@@ -357,8 +416,11 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
     // 2. Meta tags — Hepsiburada meta tag'larını iyi doldurur
     const ogTitle = $("meta[property='og:title']").attr("content") || "";
     const ogImage = $("meta[property='og:image']").attr("content") || null;
-    const ogPrice = $("meta[property='product:price:amount']").attr("content");
-    const metaPrice = ogPrice ? parseFloat(ogPrice) : null;
+    const ogPriceRaw =
+      $("meta[property='product:price:amount']").attr("content") ||
+      $("meta[property='og:price:amount']").attr("content") ||
+      $("meta[itemprop='price']").attr("content");
+    const metaPrice = ogPriceRaw ? parsePrice(ogPriceRaw) : null;
 
     // 3. Sayfadaki description'dan fiyat çekmeye çalış
     const descContent = $("meta[name='description']").attr("content") || "";
@@ -379,9 +441,12 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
         .replace(/\s*[-–]\s*Hepsiburada.*$/i, "")
         .trim();
 
+    const finalName = cleanTitle || slugTitle || "Hepsiburada ürünü";
+    const finalPrice = pickValidPrice(jsonLd.price, metaPrice, descPrice);
+
     return {
-      name: cleanTitle || "Hepsiburada ürünü",
-      price: jsonLd.price || metaPrice || descPrice,
+      name: finalName,
+      price: finalPrice,
       currency: "TRY",
       image: jsonLd.image || ogImage,
       seller: jsonLd.seller,
@@ -389,14 +454,7 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
     };
   } catch (e) {
     console.error("Hepsiburada scrape error:", e);
-    return {
-      name: "Hepsiburada ürünü",
-      price: null,
-      currency: "TRY",
-      image: null,
-      seller: null,
-      inStock: true,
-    };
+    return placeholder;
   }
 }
 
