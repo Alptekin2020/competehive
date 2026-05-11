@@ -1,14 +1,15 @@
 import { NextRequest } from "next/server";
-import { Marketplace } from "@prisma/client";
+import { Marketplace, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { searchAllResults, normalizeMarketplaceResult } from "@/lib/marketplace-search";
-import { getRetailerInfoFromDomain } from "@competehive/shared";
+import { getRetailerInfoFromDomain, MIN_MATCH_SCORE } from "@competehive/shared";
 import type { CompareCompetitorResult } from "@competehive/shared";
 import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
 import { compareSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { verifyProductMatch, withinPriceBand, type MatchAttributes } from "@/lib/matcher";
 
 export const maxDuration = 60;
 
@@ -84,9 +85,21 @@ export async function POST(req: NextRequest) {
     // Tüm web'de ara (marketplace filtresi yok)
     const allResults = await searchAllResults(keywords, product.marketplace);
     logger.info({ totalResults: allResults.length }, "Compare results found");
+
+    // Worker tarafıyla aynı kalite filtreleri uygulanıyor:
+    //   1) Fiyat bandı: kaynak fiyatın 0.3x–3x'i dışındakileri reddet.
+    //   2) AI matcher (OpenAI varsa): score >= MIN_MATCH_SCORE değilse reddet.
+    // Bu sayede "Rakipleri Tara" da kolikutugelsin / kitap / aksesuar gibi alakasız
+    // ürünlerle DB'yi kirletmiyor.
+    const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
+    const sourceTitle = product.productName;
+    const aiAvailable = !!process.env.OPENAI_API_KEY;
+
     const competitors: CompareCompetitorResult[] = [];
     const insertErrors: Array<Record<string, unknown>> = [];
     let skippedCount = 0;
+    let priceFilteredCount = 0;
+    let aiRejectedCount = 0;
     let errorCount = 0;
 
     for (const result of allResults) {
@@ -96,8 +109,16 @@ export async function POST(req: NextRequest) {
       }
 
       const normalizedResult = normalizeMarketplaceResult(result, "fallback-custom");
-      if (!normalizedResult) {
+      if (!normalizedResult || normalizedResult.price === null) {
         skippedCount += 1;
+        continue;
+      }
+
+      const candidatePrice = normalizedResult.price;
+
+      // 1) Fiyat bandı pre-filter
+      if (sourcePrice && sourcePrice > 0 && !withinPriceBand(sourcePrice, candidatePrice)) {
+        priceFilteredCount += 1;
         continue;
       }
 
@@ -106,6 +127,41 @@ export async function POST(req: NextRequest) {
       const compName = normalizedResult.storeName
         ? `${normalizedResult.storeName} — ${normalizedResult.productName}`.substring(0, 200)
         : normalizedResult.productName.substring(0, 200);
+
+      // 2) AI matcher — sadece OpenAI varsa. Yoksa fiyat bandını geçenleri kaydet.
+      let matchScore: number | null = null;
+      let matchReason: string | null = null;
+      let matchAttributes: MatchAttributes | null = null;
+
+      if (aiAvailable) {
+        try {
+          const matchResult = await verifyProductMatch(
+            {
+              title: sourceTitle,
+              price: sourcePrice ?? undefined,
+              marketplace: product.marketplace,
+            },
+            {
+              title: normalizedResult.productName,
+              url: normalizedResult.url,
+              price: candidatePrice,
+              marketplace: normalizedResult.marketplace,
+            },
+          );
+
+          matchScore = matchResult.score;
+          matchReason = matchResult.reason;
+          matchAttributes = matchResult.attributes;
+
+          if (!matchResult.isMatch) {
+            aiRejectedCount += 1;
+            continue;
+          }
+        } catch {
+          aiRejectedCount += 1;
+          continue;
+        }
+      }
 
       try {
         const comp = await prisma.competitor.upsert({
@@ -118,23 +174,37 @@ export async function POST(req: NextRequest) {
           update: {
             competitorName: compName,
             marketplace: mp as Marketplace,
-            currentPrice: normalizedResult.price,
+            currentPrice: candidatePrice,
             lastScrapedAt: new Date(),
+            ...(matchScore !== null
+              ? {
+                  matchScore,
+                  matchReason,
+                  matchAttributes: matchAttributes as unknown as Prisma.InputJsonValue,
+                }
+              : {}),
           },
           create: {
             trackedProductId: productId,
             competitorUrl: normalizedUrl,
             competitorName: compName,
             marketplace: mp as Marketplace,
-            currentPrice: normalizedResult.price,
+            currentPrice: candidatePrice,
             lastScrapedAt: new Date(),
+            ...(matchScore !== null
+              ? {
+                  matchScore,
+                  matchReason,
+                  matchAttributes: matchAttributes as unknown as Prisma.InputJsonValue,
+                }
+              : {}),
           },
         });
 
         await prisma.competitorPrice.create({
           data: {
             competitorId: comp.id,
-            price: normalizedResult.price!,
+            price: candidatePrice,
             currency: "TRY",
             inStock: true,
           },
@@ -150,7 +220,7 @@ export async function POST(req: NextRequest) {
         competitors.push({
           marketplace: mp,
           name: compName,
-          price: normalizedResult.price!,
+          price: candidatePrice,
           url: normalizedResult.url,
           link: normalizedResult.url,
           retailerDomain: retailer.retailerDomain,
@@ -168,6 +238,19 @@ export async function POST(req: NextRequest) {
         });
       }
     }
+
+    logger.info(
+      {
+        productId,
+        kept: competitors.length,
+        priceFiltered: priceFilteredCount,
+        aiRejected: aiRejectedCount,
+        skipped: skippedCount,
+        minMatchScore: MIN_MATCH_SCORE,
+        aiAvailable,
+      },
+      "Compare filtering stats",
+    );
 
     if (insertErrors.length) {
       logger.error(

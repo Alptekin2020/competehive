@@ -43,4 +43,8 @@ describe("detectMarketplaceFromUrl", () => {
       expect(MARKETPLACE_VALUES).toContain(mp);
     }
   });
+
+  it("should detect PTT AVM URLs as PTTAVM", () => {
+    expect(detectMarketplaceFromUrl("https://www.pttavm.com/urun/abc-123")).toBe("PTTAVM");
+  });
 });

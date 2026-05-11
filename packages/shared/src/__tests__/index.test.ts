@@ -65,6 +65,10 @@ describe("MARKETPLACES", () => {
       expect(MARKETPLACES[mp]).toBeDefined();
     }
   });
+
+  it("SUPPORTED_SCRAPER_MARKETPLACES should include PTTAVM", () => {
+    expect(SUPPORTED_SCRAPER_MARKETPLACES).toContain("PTTAVM");
+  });
 });
 
 describe("getMarketplaceInfo", () => {

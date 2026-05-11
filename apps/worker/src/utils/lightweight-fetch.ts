@@ -26,6 +26,7 @@ const FETCHABLE_DOMAINS = [
   "vatanbilgisayar.com",
   "decathlon.com.tr",
   "kitapyurdu.com",
+  "pttavm.com",
 ];
 
 // SPA siteleri (Cheerio ile okunamaz, Serper fiyatına güven)

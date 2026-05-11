@@ -946,8 +946,10 @@ function parseHepsiburadaHtml(html: string): ScrapedProduct | null {
   const ogImage = $("meta[property='og:image']").attr("content") || undefined;
   const ogPriceRaw =
     $("meta[property='product:price:amount']").attr("content") ||
+    $("meta[property='product:sale_price:amount']").attr("content") ||
     $("meta[property='og:price:amount']").attr("content") ||
     $("meta[itemprop='price']").attr("content") ||
+    $("meta[name='price']").attr("content") ||
     "";
   const ogPrice = ogPriceRaw ? parsePrice(ogPriceRaw) : 0;
   const ogCurrency =
@@ -967,12 +969,48 @@ function parseHepsiburadaHtml(html: string): ScrapedProduct | null {
     $("[data-test-id='price-current-price']").first().text().trim() ||
     $("[data-test-id='default-price']").first().text().trim() ||
     $("[data-test-id='price']").first().text().trim() ||
+    $("[data-test-id='offering-price']").first().text().trim() ||
+    $("[data-bind*='price'], [data-bind*='Price']").first().text().trim() ||
     $("span[itemprop='price']").first().attr("content") ||
     $("span[itemprop='price']").first().text().trim() ||
+    $("[itemprop='price']").first().attr("content") ||
     $(".product-price").first().text().trim() ||
     $(".price-value").first().text().trim() ||
+    $("[class*='price-current'], [class*='priceCurrent']").first().text().trim() ||
+    $("[class*='Price-module']").first().text().trim() ||
     "";
   const htmlPrice = parsePrice(htmlPriceText);
+
+  // Açıklama meta tag'ında ve title'da "100 TL" gibi fiyat geçebilir — son çare regex tarama
+  let descPrice = 0;
+  if (!htmlPrice) {
+    const descContent =
+      $("meta[name='description']").attr("content") ||
+      $("meta[property='og:description']").attr("content") ||
+      "";
+    const priceMatch = descContent.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺|TRY)/i);
+    if (priceMatch) {
+      const parsed = parsePrice(priceMatch[1]);
+      if (parsed > 0) descPrice = parsed;
+    }
+  }
+
+  // Hidden script tag'lardan inline ürün state'i çekme (Hepsiburada bazen NextData'yı id'siz koyar)
+  let inlineScriptPrice = 0;
+  if (!htmlPrice && !descPrice) {
+    $("script").each((_, el) => {
+      if (inlineScriptPrice > 0) return;
+      const text = $(el).html() || "";
+      if (!text || text.length > 200000) return;
+      const idx = text.search(/"(?:offeredPrice|salePrice|finalPrice|sellingPrice)"\s*:\s*\d/);
+      if (idx < 0) return;
+      const m = text.slice(idx, idx + 200).match(/:\s*(\d+(?:\.\d+)?)/);
+      if (m) {
+        const parsed = parseFloat(m[1]);
+        if (Number.isFinite(parsed) && parsed > 0) inlineScriptPrice = parsed;
+      }
+    });
+  }
 
   const htmlImage =
     $("img[data-test-id='product-image']").first().attr("src") ||
@@ -989,9 +1027,14 @@ function parseHepsiburadaHtml(html: string): ScrapedProduct | null {
   const rawTitle = jsonLd.name || nextData.name || htmlName || ogTitle || "";
   const cleanName = cleanHepsiburadaTitle(rawTitle);
 
-  const priceValue = [jsonLd.price, nextData.price, htmlPrice, ogPrice].find(
-    (v): v is number => typeof v === "number" && v > 0,
-  );
+  const priceValue = [
+    jsonLd.price,
+    nextData.price,
+    htmlPrice,
+    ogPrice,
+    inlineScriptPrice,
+    descPrice,
+  ].find((v): v is number => typeof v === "number" && v > 0);
 
   const lower = html.toLowerCase();
   const outOfStock =
@@ -1459,6 +1502,140 @@ export async function scrapeMediaMarkt(
 }
 
 // ============================================
+// PTT AVM SCRAPER
+// ============================================
+//
+// PTT AVM pttavm.com — standart ASP.NET tabanlı sayfa. JSON-LD ve OG meta tag'ları
+// genelde dolu. Bazı kategorilerde fiyat sadece "data-price" attribute'unda yer alıyor,
+// bu yüzden klasik scrapeGeneric'in yanı sıra ek selektörler deniyoruz.
+
+function parsePTTAVMHtml(html: string): ScrapedProduct | null {
+  const $ = cheerio.load(html);
+
+  const holder: { data: Partial<ScrapedProduct> } = { data: {} };
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (holder.data.price && holder.data.price > 0 && holder.data.name) return;
+    const raw = $(el).html();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      const candidates: Record<string, unknown>[] = [];
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === "object") candidates.push(item);
+        }
+      } else if (parsed && typeof parsed === "object") {
+        candidates.push(parsed);
+        const graph = (parsed as Record<string, unknown>)["@graph"];
+        if (Array.isArray(graph)) {
+          for (const item of graph) {
+            if (item && typeof item === "object") candidates.push(item as Record<string, unknown>);
+          }
+        }
+      }
+
+      for (const node of candidates) {
+        if (node["@type"] !== "Product") continue;
+        const offers = node.offers as
+          | Record<string, unknown>
+          | Record<string, unknown>[]
+          | undefined;
+        const offer = (Array.isArray(offers) ? offers[0] : offers) as
+          | Record<string, unknown>
+          | undefined;
+        const offerPrice = offer ? parsePrice(String(offer.price ?? "")) : 0;
+        if (!holder.data.name && typeof node.name === "string") holder.data.name = node.name;
+        if ((!holder.data.price || holder.data.price === 0) && offerPrice > 0) {
+          holder.data.price = offerPrice;
+        }
+        if (!holder.data.currency && typeof offer?.priceCurrency === "string") {
+          holder.data.currency = offer.priceCurrency as string;
+        }
+        if (holder.data.inStock === undefined && typeof offer?.availability === "string") {
+          holder.data.inStock = offer.availability.toLowerCase().includes("instock");
+        }
+        if (!holder.data.imageUrl) {
+          const image = node.image;
+          if (typeof image === "string") holder.data.imageUrl = image;
+          else if (Array.isArray(image) && typeof image[0] === "string")
+            holder.data.imageUrl = image[0];
+        }
+        const seller = offer?.seller as Record<string, unknown> | undefined;
+        if (!holder.data.sellerName && typeof seller?.name === "string") {
+          holder.data.sellerName = seller.name as string;
+        }
+      }
+    } catch {
+      // skip invalid JSON-LD
+    }
+  });
+
+  // Meta tag fallback'leri
+  const ogTitle = $("meta[property='og:title']").attr("content") || "";
+  const ogImage = $("meta[property='og:image']").attr("content") || undefined;
+  const ogPriceRaw =
+    $("meta[property='product:price:amount']").attr("content") ||
+    $("meta[property='og:price:amount']").attr("content") ||
+    $("meta[itemprop='price']").attr("content") ||
+    "";
+  const ogPrice = ogPriceRaw ? parsePrice(ogPriceRaw) : 0;
+
+  const htmlName =
+    $("h1.product-name").first().text().trim() ||
+    $("h1.product-title").first().text().trim() ||
+    $("[class*='ProductName']").first().text().trim() ||
+    $("h1").first().text().trim();
+
+  const htmlPriceText =
+    $("[itemprop='price']").first().attr("content") ||
+    $(".product-price-new").first().text().trim() ||
+    $(".price-current, .currentPrice, .productPrice").first().text().trim() ||
+    $("[class*='Price__current'], [class*='product-price']").first().text().trim() ||
+    "";
+  const htmlPrice = parsePrice(htmlPriceText);
+
+  // PTT AVM bazen fiyatı sadece data-price attribute'unda tutar
+  const dataPriceAttr =
+    $("[data-price]").first().attr("data-price") ||
+    $("[data-product-price]").first().attr("data-product-price") ||
+    "";
+  const dataPrice = dataPriceAttr ? parsePrice(dataPriceAttr) : 0;
+
+  const finalName =
+    holder.data.name ||
+    htmlName ||
+    ogTitle.replace(/\s*[-–|]\s*PTT.*$/i, "").trim() ||
+    "PTT AVM ürünü";
+  const finalPrice = [holder.data.price, htmlPrice, dataPrice, ogPrice].find(
+    (v): v is number => typeof v === "number" && v > 0,
+  );
+
+  if (!finalName && !finalPrice) return null;
+
+  const lower = html.toLowerCase();
+  const outOfStock =
+    lower.includes("stokta yok") || lower.includes("tükendi") || lower.includes("out-of-stock");
+
+  return {
+    name: finalName,
+    price: finalPrice ?? 0,
+    currency: holder.data.currency || "TRY",
+    inStock: holder.data.inStock ?? !outOfStock,
+    sellerName: holder.data.sellerName,
+    imageUrl: holder.data.imageUrl || ogImage,
+  };
+}
+
+export async function scrapePTTAVM(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  logger.info(`Scraping PTT AVM: ${url}`);
+  return scrapeWithFallbackCached(url, config, parsePTTAVMHtml, "PTT AVM");
+}
+
+// ============================================
 // GENERIC SCRAPER (JSON-LD + Meta Tags)
 // ============================================
 
@@ -1571,6 +1748,8 @@ export function getScraper(marketplace: string) {
       return scrapeGeneric;
     case "MEDIAMARKT":
       return scrapeMediaMarkt;
+    case "PTTAVM":
+      return scrapePTTAVM;
     default:
       // Fallback to generic for unknown marketplaces
       logger.warn(`No specific scraper for ${marketplace}, using generic`);
