@@ -88,18 +88,23 @@ export async function POST(req: NextRequest) {
 
     // Worker tarafıyla aynı kalite filtreleri uygulanıyor:
     //   1) Fiyat bandı: kaynak fiyatın 0.3x–3x'i dışındakileri reddet.
-    //   2) AI matcher (OpenAI varsa): score >= MIN_MATCH_SCORE değilse reddet.
+    //   2) AI matcher (worker matcher.ts ile aynı prompt + threshold):
+    //      - outcome="match"      → matchScore + matchReason + matchAttributes ile kaydet
+    //      - outcome="reject"     → adayı skip et (alakasız ürün)
+    //      - outcome="unreliable" → AI teknik olarak çalışmadı; fiyat bandını zaten
+    //                               geçtiği için adayı AI alanları boş şekilde kaydet
+    //                               (kullanıcıyı OpenAI outage'ında cezalandırma)
     // Bu sayede "Rakipleri Tara" da kolikutugelsin / kitap / aksesuar gibi alakasız
-    // ürünlerle DB'yi kirletmiyor.
+    // ürünlerle DB'yi kirletmiyor, ama OpenAI down olduğunda da çalışmaya devam ediyor.
     const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
     const sourceTitle = product.productName;
-    const aiAvailable = !!process.env.OPENAI_API_KEY;
 
     const competitors: CompareCompetitorResult[] = [];
     const insertErrors: Array<Record<string, unknown>> = [];
     let skippedCount = 0;
     let priceFilteredCount = 0;
     let aiRejectedCount = 0;
+    let aiUnreliableCount = 0;
     let errorCount = 0;
 
     for (const result of allResults) {
@@ -128,39 +133,39 @@ export async function POST(req: NextRequest) {
         ? `${normalizedResult.storeName} — ${normalizedResult.productName}`.substring(0, 200)
         : normalizedResult.productName.substring(0, 200);
 
-      // 2) AI matcher — sadece OpenAI varsa. Yoksa fiyat bandını geçenleri kaydet.
+      // 2) AI matcher. OpenAI yapılandırılmamışsa matcher kendi içinde string-similarity
+      //    fallback'i kullanıyor (worker davranışıyla aynı).
       let matchScore: number | null = null;
       let matchReason: string | null = null;
       let matchAttributes: MatchAttributes | null = null;
 
-      if (aiAvailable) {
-        try {
-          const matchResult = await verifyProductMatch(
-            {
-              title: sourceTitle,
-              price: sourcePrice ?? undefined,
-              marketplace: product.marketplace,
-            },
-            {
-              title: normalizedResult.productName,
-              url: normalizedResult.url,
-              price: candidatePrice,
-              marketplace: normalizedResult.marketplace,
-            },
-          );
+      const matchResult = await verifyProductMatch(
+        {
+          title: sourceTitle,
+          price: sourcePrice ?? undefined,
+          marketplace: product.marketplace,
+        },
+        {
+          title: normalizedResult.productName,
+          url: normalizedResult.url,
+          price: candidatePrice,
+          marketplace: normalizedResult.marketplace,
+        },
+      );
 
-          matchScore = matchResult.score;
-          matchReason = matchResult.reason;
-          matchAttributes = matchResult.attributes;
+      if (matchResult.outcome === "reject") {
+        aiRejectedCount += 1;
+        continue;
+      }
 
-          if (!matchResult.isMatch) {
-            aiRejectedCount += 1;
-            continue;
-          }
-        } catch {
-          aiRejectedCount += 1;
-          continue;
-        }
+      if (matchResult.outcome === "unreliable") {
+        // Teknik hata — adayı tut ama AI alanlarını yazma.
+        aiUnreliableCount += 1;
+      } else {
+        // outcome === "match"
+        matchScore = matchResult.score;
+        matchReason = matchResult.reason;
+        matchAttributes = matchResult.attributes;
       }
 
       try {
@@ -245,9 +250,10 @@ export async function POST(req: NextRequest) {
         kept: competitors.length,
         priceFiltered: priceFilteredCount,
         aiRejected: aiRejectedCount,
+        aiUnreliable: aiUnreliableCount,
         skipped: skippedCount,
         minMatchScore: MIN_MATCH_SCORE,
-        aiAvailable,
+        aiAvailable: !!process.env.OPENAI_API_KEY,
       },
       "Compare filtering stats",
     );

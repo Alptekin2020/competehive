@@ -20,7 +20,15 @@ export interface MatchAttributes {
   details: string;
 }
 
+// "match"      — AI/fallback explicitly accepted the candidate (score >= threshold)
+// "reject"     — AI/fallback explicitly rejected (score < threshold)
+// "unreliable" — could not determine (API error, empty/invalid JSON). Caller may
+//                choose to keep the candidate without an AI score since price-band
+//                already filtered, instead of penalising it for our outage.
+export type MatchOutcome = "match" | "reject" | "unreliable";
+
 export interface MatchResult {
+  outcome: MatchOutcome;
   isMatch: boolean;
   score: number;
   reason: string;
@@ -34,9 +42,8 @@ export interface ProductInfo {
   marketplace?: string;
 }
 
-// apps/worker/src/matcher.ts ile birebir aynı prompt — iki tarafın da aynı kararı
-// vermesini sağlıyor. Worker tarafı tek source-of-truth, web tarafı senkron compare
-// için aynı mantığı kullanır.
+// Worker `apps/worker/src/matcher.ts` ile birebir aynı prompt — iki tarafın da
+// aynı kararı vermesi için. Worker güncellendiğinde burası da güncellenmeli.
 function buildPrompt(source: ProductInfo, candidate: ProductInfo): string {
   return `Sen bir e-ticaret ürün eşleştirme uzmanısın. İki ürünün AYNI ÜRÜN olup olmadığını belirle.
 
@@ -58,13 +65,14 @@ KURALLAR:
 5. Yenilenmiş/refurbished ürünler orijinaliyle farklı kabul edilebilir (skor düşük)
 6. Fiyat farkı %300'den fazlaysa büyük olasılıkla farklı üründür
 7. PAKETLEME/AMBALAJ İSTİSNASI: Aday başlığında "koli", "kutu", "kutusu", "ambalaj", "ambalajı", "paket", "paketleme", "carton", "kargo poşeti", "stretch film", "bant", "etiket", "kraft" gibi paketleme/ambalaj/lojistik malzemesi sözcükleri varsa VE kaynak ürün ayakkabı, terlik, telefon, ev aleti gibi son tüketici ürünüyse: score=0 ve isMatch=false ver. "kolikutugelsin", "bojopack", "packmore", "kolicim", "kolicixx" gibi mağaza/marka adlarında "koli", "pack", "paket" geçenler ambalaj satıcısıdır — skor=0.
-8. KRİTİK MARKA TUTARLILIĞI: Eğer marka adı HEM kaynak HEM aday başlığında AYNI şekilde geçiyorsa brandMatch=true OLMAK ZORUNDA. ANCAK kategori/tip eşleşmesi de zorunludur (Kural 11).
-9. SKOR-İSMATCH TUTARLILIĞI: Eğer score >= ${MIN_MATCH_SCORE} ise isMatch=true. score < ${MIN_MATCH_SCORE} ise isMatch=false.
-10. KİTAP/MEDYA İSTİSNASI: Kaynak ürün kitap değilse ama aday başlığı "kitap", "roman", "öykü", "dergi", "nadirkitap", "idefix", "bkmkitap" içeriyorsa score=0.
-11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa categoryMatch=false ve score < 40 OLMAK ZORUNDA.
+8. KRİTİK MARKA TUTARLILIĞI: Eğer marka adı (Karaca, Apple, Samsung, Nike, Beko, Arzum, Sinbo vb.) HEM kaynak HEM aday başlığında AYNI şekilde geçiyorsa, brandMatch=true OLMAK ZORUNDA. "aynı marka değil" reasoning'i veremezsin marka adı iki başlıkta da varsa. Bu kuralı ihlal etmek tutarsız cevap üretmek demektir. ANCAK marka adının başlıkta geçmesi yalnız başına eşleşme demek değildir — kategori/tip eşleşmesi de zorunludur (Kural 11).
+9. SKOR-İSMATCH TUTARLILIĞI: Eğer score >= ${MIN_MATCH_SCORE} ise isMatch=true OLMAK ZORUNDA. score < ${MIN_MATCH_SCORE} ise isMatch=false OLMAK ZORUNDA. score ve isMatch çelişemez.
+10. KİTAP/MEDYA İSTİSNASI: Kaynak ürün kitap değilse ama aday başlığı "kitap", "roman", "öykü", "dergi", "nadirkitap", "idefix", "bkmkitap" içeriyorsa: score=0 ve isMatch=false.
+11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, terlik, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa (örn: "terlik" vs "kutu/ambalaj"; "telefon" vs "kılıf"; "kahve" vs "kahve makinesi"), categoryMatch=false ve score < 40 olmak ZORUNDA. Aynı marka olması yeterli değildir.
 12. FİYAT BÜYÜKLÜK SAĞDUYU: Kaynak fiyatı ${source.price ?? "verilmedi"} ₺ ve aday fiyatı çok daha düşükse (örn: ¹/₁₀'undan az) yüksek olasılıkla farklı ürün/aksesuar/ambalajdır — score < 40 ver.
 
-SADECE aşağıdaki JSON formatında yanıt ver:
+SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
+
 {
   "isMatch": true/false,
   "score": 0-100,
@@ -74,21 +82,49 @@ SADECE aşağıdaki JSON formatında yanıt ver:
   "specMatch": true/false,
   "categoryMatch": true/false,
   "details": "Karşılaştırma detayı (max 150 karakter)"
-}`;
 }
 
-function fallbackResult(isMatch: boolean, reason: string): MatchResult {
+SKOR REHBERİ:
+- 90-100: Kesinlikle aynı ürün (marka, model, tüm özellikler eşleşiyor)
+- ${MIN_MATCH_SCORE}-89: Büyük olasılıkla aynı ürün (küçük belirsizlikler var)
+- 40-${MIN_MATCH_SCORE - 1}: Belirsiz (benzer ama emin değilim)
+- 0-39: Farklı ürün`;
+}
+
+function emptyAttributes(details: string): MatchAttributes {
   return {
+    brandMatch: false,
+    modelMatch: false,
+    specMatch: false,
+    categoryMatch: false,
+    details,
+  };
+}
+
+function unreliableResult(reason: string): MatchResult {
+  return {
+    outcome: "unreliable",
+    isMatch: false,
+    score: 0,
+    reason,
+    attributes: emptyAttributes(reason),
+  };
+}
+
+// String benzerlik fallback'i — apps/worker/src/matcher.ts içindeki `fallbackMatch`
+// ile aynı algoritma. OPENAI_API_KEY yapılandırılmamışsa kullanıyoruz ki worker
+// ile compare endpoint aynı kararı versin.
+function fallbackMatchByText(sourceTitle: string, candidateTitle: string): MatchResult {
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const src = normalize(sourceTitle);
+  const cnd = normalize(candidateTitle);
+  const isMatch = src.length > 5 && cnd.includes(src.slice(0, Math.floor(src.length * 0.6)));
+  return {
+    outcome: isMatch ? "match" : "reject",
     isMatch,
     score: isMatch ? 50 : 0,
-    reason,
-    attributes: {
-      brandMatch: false,
-      modelMatch: false,
-      specMatch: false,
-      categoryMatch: false,
-      details: reason,
-    },
+    reason: isMatch ? "Metin benzerliği (AI kullanılamadı)" : "Metin eşleşmedi (AI kullanılamadı)",
+    attributes: emptyAttributes("OpenAI API kullanılamadığı için fallback kullanıldı"),
   };
 }
 
@@ -97,7 +133,7 @@ export async function verifyProductMatch(
   candidate: ProductInfo,
 ): Promise<MatchResult> {
   const client = getOpenAIClient();
-  if (!client) return fallbackResult(false, "OpenAI API yapılandırılmamış");
+  if (!client) return fallbackMatchByText(source.title, candidate.title);
 
   try {
     const response = await client.chat.completions.create({
@@ -108,27 +144,40 @@ export async function verifyProductMatch(
       response_format: { type: "json_object" },
     });
     const content = response.choices[0]?.message?.content?.trim();
-    if (!content) return fallbackResult(false, "AI yanıt vermedi");
+    if (!content) return unreliableResult("AI yanıt vermedi");
 
-    const parsed = JSON.parse(content);
-    const score = Math.min(100, Math.max(0, parseInt(parsed.score) || 0));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return unreliableResult("AI geçersiz JSON döndürdü");
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return unreliableResult("AI geçersiz yanıt verdi");
+    }
+
+    const obj = parsed as Record<string, unknown>;
+    const score = Math.min(100, Math.max(0, parseInt(String(obj.score ?? "")) || 0));
     const finalIsMatch = score >= MIN_MATCH_SCORE;
 
     return {
+      outcome: finalIsMatch ? "match" : "reject",
       isMatch: finalIsMatch,
       score,
-      reason: String(parsed.reason || "Açıklama yok").slice(0, 200),
+      reason: String(obj.reason ?? "Açıklama yok").slice(0, 200),
       attributes: {
-        brandMatch: parsed.brandMatch === true,
-        modelMatch: parsed.modelMatch === true,
-        specMatch: parsed.specMatch === true,
-        categoryMatch: parsed.categoryMatch === true,
-        details: String(parsed.details || "").slice(0, 300),
+        brandMatch: obj.brandMatch === true,
+        modelMatch: obj.modelMatch === true,
+        specMatch: obj.specMatch === true,
+        categoryMatch: obj.categoryMatch === true,
+        details: String(obj.details ?? "").slice(0, 300),
       },
     };
   } catch (err) {
     logger.error({ err, source: source.title, candidate: candidate.title }, "matcher fail");
-    return fallbackResult(false, "AI hatası");
+    // Teknik hata — caller bunu "unreliable" olarak ele alabilir ve mevcut
+    // (fiyat bandını geçmiş) aday ürünü AI skoru olmadan saklayabilir.
+    return unreliableResult("AI hatası");
   }
 }
 
