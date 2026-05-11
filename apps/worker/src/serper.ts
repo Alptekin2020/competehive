@@ -23,6 +23,7 @@ export function extractRetailer(link: string): Retailer {
   if (link.includes("teknosa.com")) return { name: "Teknosa", color: "#005CA9" };
   if (link.includes("vatanbilgisayar.com")) return { name: "Vatan", color: "#E30613" };
   if (link.includes("decathlon.com.tr")) return { name: "Decathlon", color: "#0082C3" };
+  if (link.includes("pttavm.com")) return { name: "PTT AVM", color: "#FFD600" };
   return { name: "Diğer", color: "#6B7280" };
 }
 

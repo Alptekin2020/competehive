@@ -25,6 +25,7 @@ function retailerToMarketplace(retailerName: string): Marketplace {
     Teknosa: "TEKNOSA",
     Vatan: "VATAN",
     Decathlon: "DECATHLON",
+    "PTT AVM": "PTTAVM",
   };
   return map[retailerName] ?? "CUSTOM";
 }

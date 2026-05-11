@@ -240,6 +240,7 @@ export const SUPPORTED_SCRAPER_MARKETPLACES = [
   "VATAN",
   "DECATHLON",
   "MEDIAMARKT",
+  "PTTAVM",
 ] as const;
 
 export type SupportedScraperMarketplace = (typeof SUPPORTED_SCRAPER_MARKETPLACES)[number];

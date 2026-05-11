@@ -418,17 +418,31 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
     const ogImage = $("meta[property='og:image']").attr("content") || null;
     const ogPriceRaw =
       $("meta[property='product:price:amount']").attr("content") ||
+      $("meta[property='product:sale_price:amount']").attr("content") ||
       $("meta[property='og:price:amount']").attr("content") ||
-      $("meta[itemprop='price']").attr("content");
+      $("meta[itemprop='price']").attr("content") ||
+      $("meta[name='price']").attr("content");
     const metaPrice = ogPriceRaw ? parsePrice(ogPriceRaw) : null;
 
     // 3. Sayfadaki description'dan fiyat çekmeye çalış
-    const descContent = $("meta[name='description']").attr("content") || "";
+    const descContent =
+      $("meta[name='description']").attr("content") ||
+      $("meta[property='og:description']").attr("content") ||
+      "";
     let descPrice: number | null = null;
-    const priceMatch = descContent.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL/);
+    const priceMatch = descContent.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺|TRY)/i);
     if (priceMatch) {
       descPrice = parsePrice(priceMatch[1]);
     }
+
+    // 4. data-test-id ve modern selektör fallback'leri (Hepsiburada UI güncellemeleri)
+    const selectorPrice =
+      parsePrice($("[data-test-id='price-current-price']").first().text().trim()) ||
+      parsePrice($("[data-test-id='default-price']").first().text().trim()) ||
+      parsePrice($("[data-test-id='offering-price']").first().text().trim()) ||
+      parsePrice($("[itemprop='price']").first().attr("content") || "") ||
+      parsePrice($("[class*='price-current'], [class*='priceCurrent']").first().text().trim()) ||
+      null;
 
     // Title temizle — " - Hepsiburada" kısmını kaldır
     let cleanTitle = (jsonLd.name || ogTitle)
@@ -442,7 +456,7 @@ export async function scrapeHepsiburada(url: string): Promise<ScrapedProduct> {
         .trim();
 
     const finalName = cleanTitle || slugTitle || "Hepsiburada ürünü";
-    const finalPrice = pickValidPrice(jsonLd.price, metaPrice, descPrice);
+    const finalPrice = pickValidPrice(jsonLd.price, selectorPrice, metaPrice, descPrice);
 
     return {
       name: finalName,
@@ -525,6 +539,73 @@ export async function scrapeN11(url: string): Promise<ScrapedProduct> {
   }
 }
 
+// PTT AVM — JSON-LD + OG meta + data-price attribute
+export async function scrapePTTAVM(url: string): Promise<ScrapedProduct> {
+  const placeholder: ScrapedProduct = {
+    name: "PTT AVM ürünü",
+    price: null,
+    currency: "TRY",
+    image: null,
+    seller: null,
+    inStock: true,
+  };
+
+  try {
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) {
+      console.warn(`PTT AVM non-OK status: ${res.status}`);
+      return placeholder;
+    }
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const jsonLd = extractFromJsonLd($);
+    const meta = extractFromMeta($);
+
+    const ogPriceRaw =
+      $("meta[property='product:price:amount']").attr("content") ||
+      $("meta[property='og:price:amount']").attr("content") ||
+      $("meta[itemprop='price']").attr("content");
+    const metaPrice = ogPriceRaw ? parsePrice(ogPriceRaw) : null;
+
+    const htmlPrice =
+      parsePrice($("[itemprop='price']").first().attr("content") || "") ||
+      parsePrice($(".product-price-new").first().text().trim()) ||
+      parsePrice($(".price-current, .currentPrice, .productPrice").first().text().trim()) ||
+      parsePrice($("[class*='Price__current'], [class*='product-price']").first().text().trim()) ||
+      null;
+
+    const dataPriceAttr =
+      $("[data-price]").first().attr("data-price") ||
+      $("[data-product-price]").first().attr("data-product-price") ||
+      "";
+    const dataPrice = dataPriceAttr ? parsePrice(dataPriceAttr) : null;
+
+    const htmlName =
+      $("h1.product-name").first().text().trim() ||
+      $("h1.product-title").first().text().trim() ||
+      $("[class*='ProductName']").first().text().trim() ||
+      $("h1").first().text().trim();
+
+    const cleanName = (jsonLd.name || htmlName || meta.name || "")
+      .replace(/\s*[-–|]\s*PTT.*$/i, "")
+      .trim();
+
+    return {
+      name: cleanName || "PTT AVM ürünü",
+      price: pickValidPrice(jsonLd.price, htmlPrice, dataPrice, metaPrice),
+      currency: "TRY",
+      image: jsonLd.image || meta.image,
+      seller: jsonLd.seller,
+      inStock:
+        !html.toLowerCase().includes("stokta yok") && !html.toLowerCase().includes("tükendi"),
+    };
+  } catch (e) {
+    console.error("PTT AVM scrape error:", e);
+    return placeholder;
+  }
+}
+
 // Genel scraper (diğer tüm siteler için)
 export async function scrapeGeneric(url: string, label: string): Promise<ScrapedProduct> {
   try {
@@ -569,6 +650,8 @@ export async function scrapeProduct(url: string, marketplace: string): Promise<S
       return scrapeN11(url);
     case "MEDIAMARKT":
       return scrapeMediaMarkt(url);
+    case "PTTAVM":
+      return scrapePTTAVM(url);
     default:
       return scrapeGeneric(url, marketplace);
   }
