@@ -746,72 +746,502 @@ async function scrapeWithFallback(
 // ============================================
 // HEPSIBURADA SCRAPER
 // ============================================
+//
+// Hepsiburada Akamai Bot Manager arkasındadır — direkt HTTP fetch çoğu zaman
+// 403 ile dönüyor (server: AkamaiGHost). Bu yüzden:
+//   1) HTTP'de Akamai bloku hızlı tespit edip retry'lara zaman harcamadan
+//      Puppeteer'a düşüyoruz.
+//   2) Parser birden çok stratejiyi sırayla deniyor: JSON-LD (@graph dahil),
+//      __NEXT_DATA__ (Hepsiburada Next.js), OG meta, modern CSS selektörleri.
+//   3) Tanılama logları Trendyol scraper'ı ile aynı detay seviyesinde.
+
+type HepsiburadaFetchErrorShape = {
+  name?: string;
+  message?: string;
+  code?: string;
+  cause?: {
+    name?: string;
+    message?: string;
+    code?: string;
+    errno?: number;
+    syscall?: string;
+    address?: string;
+    hostname?: string;
+  };
+  stack?: string;
+};
+
+type HepsiburadaPuppeteerErrorShape = {
+  name?: string;
+  message?: string;
+  stack?: string;
+};
+
+function isAkamaiBlockHtml(html: string, status: number, server: string | null): boolean {
+  if (status === 403 && server && server.toLowerCase().includes("akamai")) return true;
+  const lower = html.toLowerCase();
+  return (
+    lower.includes("hepsiburada | güvenlik") ||
+    lower.includes("hepsiburada | guvenlik") ||
+    (lower.includes("akamai") && lower.includes("iframe"))
+  );
+}
+
+function pickHepsiburadaImage(image: unknown): string | undefined {
+  if (!image) return undefined;
+  if (typeof image === "string") return image;
+  if (Array.isArray(image)) {
+    for (const item of image) {
+      const resolved = pickHepsiburadaImage(item);
+      if (resolved) return resolved;
+    }
+    return undefined;
+  }
+  if (typeof image === "object") {
+    const obj = image as Record<string, unknown>;
+    if (typeof obj.contentUrl === "string") return obj.contentUrl;
+    if (typeof obj.url === "string") return obj.url;
+  }
+  return undefined;
+}
+
+function extractFromHepsiburadaJsonLd($: cheerio.CheerioAPI): Partial<ScrapedProduct> {
+  const collected: Partial<ScrapedProduct> = {};
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (collected.price && collected.price > 0 && collected.name) return;
+    const raw = $(el).html();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      const candidates: Record<string, unknown>[] = [];
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === "object") candidates.push(item);
+        }
+      } else if (parsed && typeof parsed === "object") {
+        candidates.push(parsed);
+        const graph = (parsed as Record<string, unknown>)["@graph"];
+        if (Array.isArray(graph)) {
+          for (const item of graph) {
+            if (item && typeof item === "object") candidates.push(item as Record<string, unknown>);
+          }
+        }
+      }
+
+      for (const node of candidates) {
+        if (node["@type"] !== "Product") continue;
+        const offers = node.offers as
+          | Record<string, unknown>
+          | Record<string, unknown>[]
+          | undefined;
+        const offer = (Array.isArray(offers) ? offers[0] : offers) as
+          | Record<string, unknown>
+          | undefined;
+        const offerPrice = offer ? parsePrice(String(offer.price ?? "")) : 0;
+        if (!collected.name && typeof node.name === "string") collected.name = node.name;
+        if ((!collected.price || collected.price === 0) && offerPrice > 0) {
+          collected.price = offerPrice;
+        }
+        if (!collected.currency && typeof offer?.priceCurrency === "string") {
+          collected.currency = offer.priceCurrency as string;
+        }
+        if (collected.inStock === undefined && typeof offer?.availability === "string") {
+          collected.inStock = offer.availability.toLowerCase().includes("instock");
+        }
+        if (!collected.imageUrl) {
+          const img = pickHepsiburadaImage(node.image);
+          if (img) collected.imageUrl = img;
+        }
+        const seller = offer?.seller as Record<string, unknown> | undefined;
+        if (!collected.sellerName && typeof seller?.name === "string") {
+          collected.sellerName = seller.name as string;
+        }
+        const aggregateRating = node.aggregateRating as Record<string, unknown> | undefined;
+        if (!collected.rating && aggregateRating?.ratingValue) {
+          const rating = parseFloat(String(aggregateRating.ratingValue));
+          if (Number.isFinite(rating)) collected.rating = rating;
+        }
+        if (!collected.reviewCount && aggregateRating?.reviewCount) {
+          const reviewCount = parseInt(String(aggregateRating.reviewCount));
+          if (Number.isFinite(reviewCount)) collected.reviewCount = reviewCount;
+        }
+      }
+    } catch {
+      // malformed JSON-LD block — skip silently
+    }
+  });
+
+  return collected;
+}
+
+function extractFromHepsiburadaNextData($: cheerio.CheerioAPI): Partial<ScrapedProduct> {
+  const raw = $("script#__NEXT_DATA__").html();
+  if (!raw) return {};
+  try {
+    const data = JSON.parse(raw);
+    const props = data?.props?.pageProps;
+    const product =
+      props?.product ?? props?.productData ?? props?.initialState?.product ?? props?.data?.product;
+    if (!product || typeof product !== "object") return {};
+
+    const result: Partial<ScrapedProduct> = {};
+    if (typeof product.name === "string") result.name = product.name;
+    else if (typeof product.title === "string") result.name = product.title;
+
+    const priceCandidates = [
+      product.price?.value,
+      product.price?.discountedPrice,
+      product.price?.amount,
+      product.price?.sellingPrice,
+      product.discountedPrice?.value,
+      product.discountedPrice,
+      product.sellingPrice?.value,
+      product.sellingPrice,
+      product.finalPrice,
+    ];
+    for (const candidate of priceCandidates) {
+      if (candidate == null) continue;
+      const numeric = typeof candidate === "number" ? candidate : parsePrice(String(candidate));
+      if (numeric > 0) {
+        result.price = numeric;
+        break;
+      }
+    }
+
+    const image = pickHepsiburadaImage(product.image ?? product.images ?? product.imageUrl);
+    if (image) result.imageUrl = image;
+
+    const merchant = product.merchant ?? product.seller;
+    if (merchant && typeof merchant === "object") {
+      const merchantName = (merchant as Record<string, unknown>).name;
+      if (typeof merchantName === "string") result.sellerName = merchantName;
+    }
+
+    if (typeof product.inStock === "boolean") result.inStock = product.inStock;
+    else if (typeof product.isInStock === "boolean") result.inStock = product.isInStock;
+    else if (typeof product.stock === "number") result.inStock = product.stock > 0;
+
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function cleanHepsiburadaTitle(title: string): string {
+  return title
+    .replace(/\s*[-–|]\s*Hepsiburada.*$/i, "")
+    .replace(/\s*[-–|]\s*Fiyatı.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 function parseHepsiburadaHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
-  const holder: { data: ScrapedProduct | null } = { data: null };
+  const jsonLd = extractFromHepsiburadaJsonLd($);
+  const nextData = extractFromHepsiburadaNextData($);
 
-  // JSON-LD
-  $('script[type="application/ld+json"]').each((_, el) => {
-    if (holder.data && holder.data.price > 0) return;
-    const jsonLd = $(el).html();
-    if (!jsonLd) return;
-    try {
-      const ld = JSON.parse(jsonLd);
-      if (ld["@type"] === "Product") {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
-        holder.data = {
-          name: ld.name || "",
-          price: parseFloat(offer?.price || "0"),
-          currency: offer?.priceCurrency || "TRY",
-          inStock: offer?.availability?.includes("InStock") ?? true,
-          imageUrl: ld.image?.[0] || ld.image || undefined,
-          sellerName: offer?.seller?.name || undefined,
-          rating: ld.aggregateRating?.ratingValue
-            ? parseFloat(ld.aggregateRating.ratingValue)
-            : undefined,
-          reviewCount: ld.aggregateRating?.reviewCount
-            ? parseInt(ld.aggregateRating.reviewCount)
-            : undefined,
-        };
-      }
-    } catch {
-      // continue
-    }
-  });
+  const ogTitle = $("meta[property='og:title']").attr("content") || "";
+  const ogImage = $("meta[property='og:image']").attr("content") || undefined;
+  const ogPriceRaw =
+    $("meta[property='product:price:amount']").attr("content") ||
+    $("meta[property='og:price:amount']").attr("content") ||
+    $("meta[itemprop='price']").attr("content") ||
+    "";
+  const ogPrice = ogPriceRaw ? parsePrice(ogPriceRaw) : 0;
+  const ogCurrency =
+    $("meta[property='product:price:currency']").attr("content") ||
+    $("meta[property='og:price:currency']").attr("content") ||
+    undefined;
 
-  let productData = holder.data;
+  const htmlName =
+    $("h1#product-name").first().text().trim() ||
+    $("h1.product-name").first().text().trim() ||
+    $("h1[data-test-id='title']").first().text().trim() ||
+    $("[data-test-id='product-name']").first().text().trim() ||
+    $("h1[itemprop='name']").first().text().trim() ||
+    $("h1").first().text().trim();
 
-  // HTML fallback
-  if (!productData || productData.price === 0) {
-    const name = $("h1#product-name").text().trim() || $("h1.product-name").text().trim();
-    const priceText =
-      $("[data-test-id='price-current-price']").text().trim() || $(".product-price").text().trim();
-    const price = parseFloat(priceText.replace(/[^\d,]/g, "").replace(",", ".")) || 0;
+  const htmlPriceText =
+    $("[data-test-id='price-current-price']").first().text().trim() ||
+    $("[data-test-id='default-price']").first().text().trim() ||
+    $("[data-test-id='price']").first().text().trim() ||
+    $("span[itemprop='price']").first().attr("content") ||
+    $("span[itemprop='price']").first().text().trim() ||
+    $(".product-price").first().text().trim() ||
+    $(".price-value").first().text().trim() ||
+    "";
+  const htmlPrice = parsePrice(htmlPriceText);
 
-    productData = {
-      name: productData?.name || name,
-      price: price || productData?.price || 0,
-      currency: "TRY",
-      inStock: !$(".out-of-stock").length,
-      sellerName: productData?.sellerName || $(".merchant-name").text().trim(),
-      imageUrl: productData?.imageUrl || $("img.product-image").attr("src"),
-    };
-  }
+  const htmlImage =
+    $("img[data-test-id='product-image']").first().attr("src") ||
+    $("img[itemprop='image']").first().attr("src") ||
+    $("img.product-image").first().attr("src") ||
+    $(".product-image img").first().attr("src");
 
-  if (productData && (productData.name || productData.price > 0)) {
-    return productData;
-  }
-  return null;
+  const htmlSeller =
+    $("[data-test-id='merchant-name']").first().text().trim() ||
+    $("[data-test-id='seller-name']").first().text().trim() ||
+    $(".merchant-name").first().text().trim() ||
+    "";
+
+  const rawTitle = jsonLd.name || nextData.name || htmlName || ogTitle || "";
+  const cleanName = cleanHepsiburadaTitle(rawTitle);
+
+  const priceValue = [jsonLd.price, nextData.price, htmlPrice, ogPrice].find(
+    (v): v is number => typeof v === "number" && v > 0,
+  );
+
+  const lower = html.toLowerCase();
+  const outOfStock =
+    lower.includes("tükendi") ||
+    lower.includes("tukendi") ||
+    lower.includes("stokta yok") ||
+    lower.includes("out-of-stock") ||
+    lower.includes('"instock":false');
+  const inStockResolved = jsonLd.inStock ?? nextData.inStock ?? (outOfStock ? false : true);
+
+  if (!cleanName && !priceValue) return null;
+
+  return {
+    name: cleanName || "Hepsiburada ürünü",
+    price: priceValue ?? 0,
+    currency: jsonLd.currency || ogCurrency || "TRY",
+    inStock: inStockResolved,
+    sellerName: jsonLd.sellerName || nextData.sellerName || htmlSeller || undefined,
+    imageUrl: jsonLd.imageUrl || nextData.imageUrl || htmlImage || ogImage || undefined,
+    rating: jsonLd.rating,
+    reviewCount: jsonLd.reviewCount,
+  };
 }
 
 export async function scrapeHepsiburada(
   url: string,
   config: ScraperConfig = {},
 ): Promise<ScrapedProduct> {
+  const cached = await getCachedScrapeResult<ScrapedProduct>(url);
+  if (cached) return cached;
+
   logger.info(`Scraping Hepsiburada: ${url}`);
-  return scrapeWithFallbackCached(url, config, parseHepsiburadaHtml, "Hepsiburada");
+
+  let lastHtmlError: HepsiburadaFetchErrorShape | null = null;
+  let lastHtmlStatus: number | null = null;
+  let lastHtmlLen: number | null = null;
+  let lastHtmlServer: string | null = null;
+  let lastHtmlIsAkamaiBlock = false;
+  let lastPuppeteerError: HepsiburadaPuppeteerErrorShape | null = null;
+  let puppeteerFinalUrl: string | null = null;
+  let puppeteerContentLength: number | null = null;
+  let puppeteerHasJsonLd = false;
+  let puppeteerHasNextData = false;
+
+  // Strategy 1: Direct HTML fetch (hızlı çıkış: Akamai blokunu görürsek retry yapma)
+  const htmlRetries = 2;
+  let html = "";
+  for (let attempt = 1; attempt <= htmlRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeout || 15000);
+    try {
+      const headers: Record<string, string> = {
+        "User-Agent": config.userAgent || getRandomUserAgent(),
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+      };
+      const response = await fetch(url, {
+        headers,
+        signal: controller.signal,
+        redirect: "follow",
+      });
+      lastHtmlStatus = response.status;
+      const body = await response.text();
+      lastHtmlLen = body.length;
+      lastHtmlServer = response.headers.get("server");
+      clearTimeout(timeout);
+
+      const akamaiBlocked = isAkamaiBlockHtml(body, response.status, lastHtmlServer);
+      lastHtmlIsAkamaiBlock = akamaiBlocked;
+
+      const urlTail = url.split("/").filter(Boolean).slice(-1)[0]?.slice(0, 60) || "unknown";
+      logger.info(
+        `Hepsiburada HTML [${urlTail}] attempt=${attempt}: status=${response.status} len=${body.length} ` +
+          `server=${lastHtmlServer || "none"} akamaiBlock=${akamaiBlocked}`,
+      );
+
+      if (akamaiBlocked) {
+        // Akamai blokunda retry yapmak boşa — direkt Puppeteer'a düş
+        lastHtmlError = { message: `Akamai bot block (${response.status})` };
+        break;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      html = body;
+      lastHtmlError = null;
+      break;
+    } catch (err) {
+      clearTimeout(timeout);
+      const e = err as HepsiburadaFetchErrorShape;
+      lastHtmlError = e;
+      const cause = e?.cause;
+      const errCode = e?.code || cause?.code || "unknown";
+      const errMsg = (e?.message || cause?.message || "no-message").slice(0, 150);
+      logger.warn(
+        `Hepsiburada HTML fetch threw attempt=${attempt}: code=${errCode} msg="${errMsg}"`,
+      );
+      if (attempt < htmlRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+      }
+    }
+  }
+
+  if (html) {
+    const product = parseHepsiburadaHtml(html);
+    if (product && product.price > 0) {
+      logger.info(
+        `Hepsiburada HTML scraped: ${product.name} - ${product.price} ${product.currency}`,
+      );
+      await setCachedScrapeResult(url, product);
+      return product;
+    }
+
+    if (!product || !product.name || product.price === 0) {
+      const dumpSnippet = html.slice(0, 5000).replace(/\s+/g, " ").trim();
+      const hasJsonLd = html.includes("application/ld+json");
+      const hasNextData = html.includes("__NEXT_DATA__");
+      const hasOgPrice =
+        html.includes('property="product:price') || html.includes('property="og:price');
+      const hasItemprop = html.includes('itemprop="price"');
+      logger.warn(
+        `Hepsiburada PARSE-FAIL markers: jsonLd=${hasJsonLd} nextData=${hasNextData} ogPrice=${hasOgPrice} itemprop=${hasItemprop}`,
+      );
+      logger.warn(`Hepsiburada PARSE-FAIL dump-1 (0-2500): ${dumpSnippet.slice(0, 2500)}`);
+      logger.warn(`Hepsiburada PARSE-FAIL dump-2 (2500-5000): ${dumpSnippet.slice(2500, 5000)}`);
+    }
+
+    logger.warn("Hepsiburada HTML returned no product data, trying Puppeteer");
+  }
+
+  // Strategy 2: Puppeteer (Akamai bot challenge'ını JS rendering ile geçer)
+  try {
+    logger.info("Attempting Hepsiburada scrape with Puppeteer");
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    let pageHtml = "";
+    try {
+      await page.setUserAgent(config.userAgent || getRandomUserAgent());
+      await page.setExtraHTTPHeaders({
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+      });
+
+      await page.setRequestInterception(true);
+      page.on("request", (req) => {
+        const resourceType = req.resourceType();
+        if (["image", "stylesheet", "font", "media"].includes(resourceType)) {
+          req.abort();
+        } else {
+          req.continue();
+        }
+      });
+
+      try {
+        await page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: config.timeout || 30000,
+        });
+        // Akamai challenge çözüldüğünde gerçek ürün sayfası SSR'lı __NEXT_DATA__ veya
+        // JSON-LD ile gelir. Bunlardan biri görünene kadar bekle; her ikisi de yoksa
+        // muhtemelen Akamai bloku devam ediyor demektir, content() ile yine de logla.
+        await page
+          .waitForSelector(
+            'script#__NEXT_DATA__, script[type="application/ld+json"], h1[data-test-id="product-name"], [data-test-id="price-current-price"]',
+            { timeout: 10000 },
+          )
+          .catch(() => {
+            logger.warn(
+              "Hepsiburada Puppeteer: SSR/JSON-LD markers within 10s görülmedi, mevcut HTML ile devam ediliyor",
+            );
+          });
+        pageHtml = await page.content();
+        puppeteerFinalUrl = page.url();
+        puppeteerContentLength = pageHtml.length;
+        puppeteerHasJsonLd = pageHtml.includes("application/ld+json");
+        puppeteerHasNextData = pageHtml.includes("__NEXT_DATA__");
+
+        const titleTag = await page.title().catch(() => null);
+        const urlTail = url.split("/").filter(Boolean).slice(-1)[0]?.slice(0, 60) || "unknown";
+        logger.info(
+          `Hepsiburada Puppeteer [${urlTail}]: finalUrl=${puppeteerFinalUrl?.slice(0, 100)} ` +
+            `len=${puppeteerContentLength} hasJsonLd=${puppeteerHasJsonLd} hasNextData=${puppeteerHasNextData} ` +
+            `title="${(titleTag || "").slice(0, 80)}"`,
+        );
+      } catch (err) {
+        const e = err as HepsiburadaPuppeteerErrorShape;
+        lastPuppeteerError = e;
+        try {
+          puppeteerFinalUrl = page.url();
+        } catch {
+          puppeteerFinalUrl = null;
+        }
+        logger.warn(
+          `Hepsiburada Puppeteer fail: name=${e?.name || "unknown"} msg="${(e?.message || "no-msg").slice(0, 200)}" ` +
+            `finalUrl=${puppeteerFinalUrl || "none"}`,
+        );
+        throw err;
+      }
+    } finally {
+      await page.close();
+    }
+
+    if (pageHtml) {
+      const product = parseHepsiburadaHtml(pageHtml);
+      if (product && product.price > 0) {
+        logger.info(
+          `Hepsiburada Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
+        );
+        await setCachedScrapeResult(url, product);
+        return product;
+      }
+      logger.warn(
+        `Hepsiburada Puppeteer parse-fail: name="${product?.name || "none"}" price=${product?.price ?? "null"}`,
+      );
+    }
+  } catch (err) {
+    const e = err as HepsiburadaPuppeteerErrorShape;
+    if (!lastPuppeteerError) lastPuppeteerError = e;
+    logger.warn(`Hepsiburada Puppeteer scrape failed: ${errorMessage(err)}`);
+  }
+
+  const htmlErrSummary = lastHtmlStatus
+    ? `status=${lastHtmlStatus},len=${lastHtmlLen},server=${lastHtmlServer || "none"},akamaiBlock=${lastHtmlIsAkamaiBlock}`
+    : lastHtmlError?.message?.slice(0, 80) || "unknown";
+  const puppeteerErrSummary = lastPuppeteerError
+    ? `${lastPuppeteerError?.name || "Error"}: ${(lastPuppeteerError?.message || "no-msg").slice(0, 100)}`
+    : puppeteerContentLength
+      ? `content-len=${puppeteerContentLength},hasJsonLd=${puppeteerHasJsonLd},hasNextData=${puppeteerHasNextData}`
+      : "never-ran";
+
+  logger.error(
+    `Hepsiburada all-fail summary: url=${url} | HTML: ${htmlErrSummary} | Puppeteer: ${puppeteerErrSummary}`,
+  );
+
+  throw new ScraperError(
+    `Hepsiburada urun bilgileri cekilemedi (HTML: ${htmlErrSummary}, Puppeteer: ${puppeteerErrSummary})`,
+    {
+      code: "SCRAPE_ALL_METHODS_FAILED",
+      retryable: true,
+      softFail: false,
+    },
+  );
 }
 
 // ============================================
