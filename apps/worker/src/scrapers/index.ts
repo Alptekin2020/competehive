@@ -1158,8 +1158,19 @@ export async function scrapeHepsiburada(
           waitUntil: "domcontentloaded",
           timeout: config.timeout || 30000,
         });
-        // Hepsiburada Akamai challenge ve client-side render için biraz bekle
-        await new Promise((r) => setTimeout(r, 4000));
+        // Akamai challenge çözüldüğünde gerçek ürün sayfası SSR'lı __NEXT_DATA__ veya
+        // JSON-LD ile gelir. Bunlardan biri görünene kadar bekle; her ikisi de yoksa
+        // muhtemelen Akamai bloku devam ediyor demektir, content() ile yine de logla.
+        await page
+          .waitForSelector(
+            'script#__NEXT_DATA__, script[type="application/ld+json"], h1[data-test-id="product-name"], [data-test-id="price-current-price"]',
+            { timeout: 10000 },
+          )
+          .catch(() => {
+            logger.warn(
+              "Hepsiburada Puppeteer: SSR/JSON-LD markers within 10s görülmedi, mevcut HTML ile devam ediliyor",
+            );
+          });
         pageHtml = await page.content();
         puppeteerFinalUrl = page.url();
         puppeteerContentLength = pageHtml.length;
