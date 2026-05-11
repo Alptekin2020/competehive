@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -231,6 +231,37 @@ export default function ProductDetailPage() {
     fetchProduct();
   }, [id, fetchProduct]);
 
+  // Stats — currentPrice null'sa priceHistory'deki en güncel öz-fiyatı kullan.
+  // Erken return'lerden önce çağrılmalı; product yoksa null değer üretir.
+  const { ownPrice, ownPriceIsStale } = useMemo<{
+    ownPrice: number | null;
+    ownPriceIsStale: boolean;
+  }>(() => {
+    if (!product) return { ownPrice: null, ownPriceIsStale: false };
+
+    const directOwnPrice = safePrice(product.currentPrice);
+    if (directOwnPrice !== null) {
+      return { ownPrice: directOwnPrice, ownPriceIsStale: false };
+    }
+
+    const hints = ["Benim Ürünüm", "Kendi Mağazam", product.marketplace].map((h) =>
+      h.toLowerCase(),
+    );
+    const history = product.priceHistory || [];
+    const fallbackEntry = history.reduce<PriceHistoryEntry | null>((latest, current) => {
+      const seller = (current.sellerName || "").toLowerCase();
+      if (!seller || !hints.some((h) => seller.includes(h))) return latest;
+      if (safePrice(current.price) === null) return latest;
+      if (!latest) return current;
+      return new Date(current.scrapedAt).getTime() > new Date(latest.scrapedAt).getTime()
+        ? current
+        : latest;
+    }, null);
+
+    const fallbackPrice = fallbackEntry ? safePrice(fallbackEntry.price) : null;
+    return { ownPrice: fallbackPrice, ownPriceIsStale: fallbackPrice !== null };
+  }, [product]);
+
   const handleCompare = async () => {
     if (!product || isComparing) return;
 
@@ -378,24 +409,6 @@ export default function ProductDetailPage() {
   const chartData = prepareChartData(filteredHistory, ownSellerHints);
   const retailers = [...new Set(filteredHistory.map((h) => h.sellerName || "Bilinmeyen"))];
 
-  // Stats — currentPrice null'sa priceHistory'deki en güncel öz-fiyatı kullan
-  const directOwnPrice = safePrice(product.currentPrice);
-  const ownHints = ownSellerHints.map((hint) => hint.toLowerCase());
-  const fallbackOwnPriceEntry =
-    directOwnPrice === null
-      ? ([...priceHistory]
-          .filter((entry) => {
-            const seller = (entry.sellerName || "").toLowerCase();
-            if (!seller) return false;
-            if (!ownHints.some((hint) => seller.includes(hint))) return false;
-            return safePrice(entry.price) !== null;
-          })
-          .sort((a, b) => new Date(b.scrapedAt).getTime() - new Date(a.scrapedAt).getTime())[0] ??
-        null)
-      : null;
-  const fallbackOwnPrice = fallbackOwnPriceEntry ? safePrice(fallbackOwnPriceEntry.price) : null;
-  const ownPrice = directOwnPrice ?? fallbackOwnPrice;
-  const ownPriceIsStale = directOwnPrice === null && fallbackOwnPrice !== null;
   const competitorPrices = competitors
     .map((c) => safePrice(c.currentPrice))
     .filter((p): p is number => p !== null);

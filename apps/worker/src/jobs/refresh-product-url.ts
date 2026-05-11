@@ -5,19 +5,10 @@ import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { getScraper } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
+import { urlMatchKey } from "../utils/url-match";
 
 interface RefreshUrlJobData {
   productUrl: string;
-}
-
-// host + pathname based URL key so tracking params and casing don't break matching.
-function urlMatchKey(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.host.toLowerCase().replace(/^www\./, "")}${parsed.pathname.replace(/\/$/, "").toLowerCase()}`;
-  } catch {
-    return url.replace(/\/$/, "").toLowerCase();
-  }
 }
 
 /**
@@ -295,6 +286,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
             data: {
               currentPrice: serperOwnPrice,
               lastScrapedAt: now,
+              status: "ACTIVE",
             },
           });
 

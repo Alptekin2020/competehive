@@ -3,21 +3,12 @@ import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
+import { urlMatchKey } from "../utils/url-match";
 import { getScraper } from "../scrapers";
 
 interface RefreshJobData {
   productId: string;
   isDeduped?: boolean;
-}
-
-// host + pathname based URL key so tracking params and casing don't break matching.
-function urlMatchKey(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.host.toLowerCase().replace(/^www\./, "")}${parsed.pathname.replace(/\/$/, "").toLowerCase()}`;
-  } catch {
-    return url.replace(/\/$/, "").toLowerCase();
-  }
 }
 
 export async function processRefreshJob(job: Job<RefreshJobData>) {
@@ -148,6 +139,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             data: {
               currentPrice: serperOwnPrice,
               lastScrapedAt: now,
+              status: "ACTIVE",
             },
           });
 
