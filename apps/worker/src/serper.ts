@@ -14,56 +14,126 @@ export interface Retailer {
   color: string;
 }
 
+// ============================================
+// Retailer Domain Map
+// ============================================
+// Worker'ın Docker build context'i sadece apps/worker/ olduğu için
+// @competehive/shared paketini import edemiyoruz. Bu liste packages/shared/src/index.ts
+// içindeki MARKETPLACES ile aynı tutulmalı. (Audit P1-4)
+const RETAILER_DOMAINS: Array<{ domain: string; name: string; color: string }> = [
+  { domain: "trendyol.com", name: "Trendyol", color: "#F27A1A" },
+  { domain: "hepsiburada.com", name: "Hepsiburada", color: "#FF6000" },
+  { domain: "amazon.com.tr", name: "Amazon TR", color: "#FF9900" },
+  { domain: "n11.com", name: "N11", color: "#6F3FAB" },
+  { domain: "mediamarkt.com.tr", name: "MediaMarkt", color: "#DF0000" },
+  { domain: "teknosa.com", name: "Teknosa", color: "#005CA9" },
+  { domain: "vatanbilgisayar.com", name: "Vatan", color: "#E30613" },
+  { domain: "decathlon.com.tr", name: "Decathlon", color: "#0082C3" },
+  { domain: "pttavm.com", name: "PTT AVM", color: "#FFD600" },
+  { domain: "ciceksepeti.com", name: "Çiçeksepeti", color: "#E91E63" },
+  { domain: "akakce.com", name: "Akakçe", color: "#00BCD4" },
+  { domain: "cimri.com", name: "Cimri", color: "#4CAF50" },
+  { domain: "epey.com", name: "Epey", color: "#2196F3" },
+  { domain: "boyner.com.tr", name: "Boyner", color: "#1A1A1A" },
+  { domain: "watsons.com.tr", name: "Watsons", color: "#00A19A" },
+  { domain: "kitapyurdu.com", name: "Kitapyurdu", color: "#FF5722" },
+  { domain: "sephora.com.tr", name: "Sephora", color: "#000000" },
+  { domain: "koctas.com.tr", name: "Koçtaş", color: "#FF6F00" },
+  { domain: "itopya.com", name: "İtopya", color: "#00C853" },
+  // Gratis domain'i yanlış set'lenmiş olabilir — shared'de "grfratis" var.
+  // Hem doğru hem yanlış varyantı kapsa.
+  { domain: "gratis.com", name: "Gratis", color: "#FF4081" },
+  { domain: "grfratis.com", name: "Gratis", color: "#FF4081" },
+];
+
 export function extractRetailer(link: string): Retailer {
-  if (link.includes("trendyol.com")) return { name: "Trendyol", color: "#F27A1A" };
-  if (link.includes("hepsiburada.com")) return { name: "Hepsiburada", color: "#FF6000" };
-  if (link.includes("amazon.com.tr")) return { name: "Amazon TR", color: "#FF9900" };
-  if (link.includes("n11.com")) return { name: "N11", color: "#6F3FAB" };
-  if (link.includes("mediamarkt.com.tr")) return { name: "MediaMarkt", color: "#CC071E" };
-  if (link.includes("teknosa.com")) return { name: "Teknosa", color: "#005CA9" };
-  if (link.includes("vatanbilgisayar.com")) return { name: "Vatan", color: "#E30613" };
-  if (link.includes("decathlon.com.tr")) return { name: "Decathlon", color: "#0082C3" };
-  if (link.includes("pttavm.com")) return { name: "PTT AVM", color: "#FFD600" };
+  const lower = link.toLowerCase();
+  for (const r of RETAILER_DOMAINS) {
+    if (lower.includes(r.domain)) {
+      return { name: r.name, color: r.color };
+    }
+  }
   return { name: "Diğer", color: "#6B7280" };
 }
 
+// Marketplace adı → scraper'lı destek var mı (puppeteer fallback'i için kullanılabilir mi)
+const SCRAPER_BACKED_RETAILERS = new Set([
+  "Trendyol",
+  "Hepsiburada",
+  "Amazon TR",
+  "N11",
+  "Teknosa",
+  "Vatan",
+  "Decathlon",
+  "MediaMarkt",
+  "PTT AVM",
+]);
+
+export function isScraperBackedRetailer(retailerName: string): boolean {
+  return SCRAPER_BACKED_RETAILERS.has(retailerName);
+}
+
+// ============================================
+// Price Parsing (Audit P2-5)
+// ============================================
+// Serper sometimes returns prices with prefixes ("İndirimde: ₺99,99"),
+// ranges ("₺1.290 - ₺1.890"), or marketing text ("8 ay 99 TL'den başlayan").
+// We extract the FIRST plausible numeric block and parse it as Turkish-format
+// when possible, falling back to en-US format.
 export function parsePrice(priceStr: string): number | null {
-  if (!priceStr) return null;
-  const cleaned = priceStr.replace(/[^\d.,]/g, "").trim();
-  if (!cleaned) return null;
+  if (!priceStr || typeof priceStr !== "string") return null;
+
+  // Turkish-aware numeric pattern. Tries thousands+decimal first, then bare numbers.
+  // Examples it matches: "1.299,00", "1,299.00", "1.299", "99,99", "1290".
+  const numMatch = priceStr.match(/\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/);
+  if (!numMatch) return null;
+  const cleaned = numMatch[0];
 
   const hasComma = cleaned.includes(",");
   const hasDot = cleaned.includes(".");
+
+  let num: number;
 
   if (hasComma && hasDot) {
     const lastComma = cleaned.lastIndexOf(",");
     const lastDot = cleaned.lastIndexOf(".");
     if (lastComma > lastDot) {
-      const num = parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
-      return isNaN(num) ? null : num;
+      // Turkish: . thousands, , decimal
+      num = parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
     } else {
-      const num = parseFloat(cleaned.replace(/,/g, ""));
-      return isNaN(num) ? null : num;
+      // en-US: , thousands, . decimal
+      num = parseFloat(cleaned.replace(/,/g, ""));
     }
-  } else if (hasComma && !hasDot) {
-    const num = parseFloat(cleaned.replace(",", "."));
-    return isNaN(num) ? null : num;
-  } else if (hasDot && !hasComma) {
+  } else if (hasComma) {
+    const parts = cleaned.split(",");
+    const lastPart = parts[parts.length - 1];
+    if (parts.length === 2 && lastPart.length <= 2) {
+      // "99,99" — Turkish decimal
+      num = parseFloat(cleaned.replace(",", "."));
+    } else {
+      // "1,290" or "1,290,000" — en-US thousands
+      num = parseFloat(cleaned.replace(/,/g, ""));
+    }
+  } else if (hasDot) {
     const parts = cleaned.split(".");
     const lastPart = parts[parts.length - 1];
     if (parts.length === 2 && lastPart.length <= 2) {
-      const num = parseFloat(cleaned);
-      return isNaN(num) ? null : num;
+      // "99.99" — decimal
+      num = parseFloat(cleaned);
     } else {
-      const num = parseFloat(cleaned.replace(/\./g, ""));
-      return isNaN(num) ? null : num;
+      // "1.290" or "1.290.000" — Turkish thousands
+      num = parseFloat(cleaned.replace(/\./g, ""));
     }
   } else {
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? null : num;
+    num = parseFloat(cleaned);
   }
+
+  return isNaN(num) ? null : num;
 }
 
+// ============================================
+// Serper Shopping API
+// ============================================
 export async function searchProduct(query: string): Promise<SerperShoppingResult[]> {
   // Check cache first
   const cached = await getCachedSerperResults(query);
