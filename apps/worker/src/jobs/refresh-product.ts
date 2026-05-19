@@ -1,25 +1,59 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
-import { searchProduct, extractRetailer, parsePrice } from "../serper";
+import { searchProduct, extractRetailer, isScraperBackedRetailer, parsePrice } from "../serper";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
+import { recoverPriceLightweight } from "../utils/recover-price";
 import { urlMatchKey } from "../utils/url-match";
 import { getScraper } from "../scrapers";
+import { verifyProductMatch, MatchResult } from "../matcher";
+import { Marketplace } from "@prisma/client";
 
 interface RefreshJobData {
   productId: string;
   isDeduped?: boolean;
 }
 
+const PRICE_BAND_MIN_RATIO = 0.3;
+const PRICE_BAND_MAX_RATIO = 3.0;
+
+function retailerToMarketplace(retailerName: string): Marketplace {
+  const map: Record<string, Marketplace> = {
+    Trendyol: "TRENDYOL",
+    Hepsiburada: "HEPSIBURADA",
+    "Amazon TR": "AMAZON_TR",
+    N11: "N11",
+    MediaMarkt: "MEDIAMARKT",
+    Teknosa: "TEKNOSA",
+    Vatan: "VATAN",
+    Decathlon: "DECATHLON",
+    "PTT AVM": "PTTAVM",
+    Çiçeksepeti: "CICEKSEPETI",
+    Akakçe: "AKAKCE",
+    Cimri: "CIMRI",
+    Epey: "EPEY",
+    Boyner: "BOYNER",
+    Watsons: "WATSONS",
+    Kitapyurdu: "KITAPYURDU",
+    Sephora: "SEPHORA",
+    Koçtaş: "KOCTAS",
+    İtopya: "ITOPYA",
+    Gratis: "GRATIS",
+  };
+  return map[retailerName] ?? "CUSTOM";
+}
+
+function isInPriceBand(price: number, sourcePrice: number | null): boolean {
+  if (!sourcePrice || sourcePrice <= 0) return true;
+  return price >= sourcePrice * PRICE_BAND_MIN_RATIO && price <= sourcePrice * PRICE_BAND_MAX_RATIO;
+}
+
 export async function processRefreshJob(job: Job<RefreshJobData>) {
   const { productId } = job.data;
 
-  // Prisma ORM ile ürün ve mevcut competitors çek
   const product = await prisma.trackedProduct.findUnique({
     where: { id: productId },
-    include: {
-      competitors: true,
-    },
+    include: { competitors: true },
   });
 
   if (!product) {
@@ -28,15 +62,15 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
   }
 
   console.log(`🔄 Fiyat yenileniyor: ${product.productName} (${productId})`);
-
-  // Mark as processing
   await updateTrackedProductRefresh(productId, { refreshStatus: "processing" });
 
   try {
     const now = new Date();
     let refreshedOwnPrice: number | null = null;
 
-    // Tracked product source URL'sini tekrar scrape et (kendi fiyatını gerçekten yenile)
+    // ============================================
+    // Kendi ürün scrape
+    // ============================================
     try {
       const scraper = getScraper(product.marketplace);
       const sourceData = await scraper(product.productUrl);
@@ -101,7 +135,9 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       );
     }
 
-    // Optimize edilmiş sorgu kullan (metadata varsa)
+    // ============================================
+    // Serper araması — competitor güncelleme + Audit P0-2: yeni keşif
+    // ============================================
     let refreshQuery = product.productName;
     const refreshMetadata = product.metadata as Record<string, unknown> | null;
     if (refreshMetadata) {
@@ -117,11 +153,9 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       }
     }
 
-    // Serper'dan güncel fiyatları çek
     const results = await searchProduct(refreshQuery);
 
-    // Kaynak scrape başarısızsa Serper sonuçlarında kendi URL'imizi ara ve fiyatı oradan al.
-    // Trendyol/Hepsiburada gibi botla bloklayan siteler için kritik bir kurtarma yolu.
+    // Kaynak fiyat Serper'dan kurtarma (mevcut davranış — Akamai bloğunda kullanılıyor)
     if (!refreshedOwnPrice) {
       const ownKey = urlMatchKey(product.productUrl);
       for (const result of results) {
@@ -165,81 +199,191 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     }
 
     let updatedCount = 0;
+    let newlyDiscoveredCount = 0;
+    let priceRecoveredCount = 0;
 
-    // Mevcut competitor'ların URL'lerini map'e al
     const competitorByUrl = new Map<
       string,
       { competitorUrl: string; id: string; competitorName: string | null }
-    >(
-      product.competitors.map(
-        (c: { competitorUrl: string; id: string; competitorName: string | null }) => [
-          c.competitorUrl,
-          c,
-        ],
-      ),
-    );
+    >(product.competitors.map((c) => [c.competitorUrl, c]));
+
+    const sourcePrice =
+      refreshedOwnPrice ?? (product.currentPrice ? Number(product.currentPrice) : null);
 
     for (const result of results) {
-      // Sadece zaten bilinen competitor'ları güncelle
+      if (urlMatchKey(result.link) === urlMatchKey(product.productUrl)) continue;
+
+      const retailer = extractRetailer(result.link);
+      const isScraperBacked = isScraperBackedRetailer(retailer.name);
       const existingCompetitor = competitorByUrl.get(result.link);
-      if (!existingCompetitor) continue;
 
-      const serperPrice = parsePrice(result.price);
-      if (!serperPrice || serperPrice <= 0) continue;
+      let serperPrice = parsePrice(result.price);
 
-      // Lightweight fetch ile fiyat doğrulama (server-rendered siteler için)
-      let verifiedPrice = serperPrice;
-      if (existingCompetitor) {
-        try {
-          const verification = await verifyCompetitorPrice(
-            existingCompetitor.competitorUrl,
-            serperPrice,
-          );
-          if (verification.price && verification.price > 0) {
-            verifiedPrice = verification.price;
-            if (
-              verification.source !== "serper-cache" &&
-              Math.abs(verifiedPrice - serperPrice) > 1
-            ) {
-              console.log(
-                `🔄 Fiyat düzeltildi: ${existingCompetitor.competitorUrl.slice(0, 50)} — Serper: ₺${serperPrice} → Gerçek: ₺${verifiedPrice}`,
-              );
+      // Audit P0-1 (refresh path): Fiyat boş gelirse Hepsiburada/Trendyol fallback
+      let priceRecovered = false;
+      if ((!serperPrice || serperPrice <= 0) && isScraperBacked) {
+        // Yeni rakip için title-AI gate; existing için zaten kabul edilmiş
+        if (!existingCompetitor) {
+          try {
+            const preMatch = await verifyProductMatch(
+              {
+                title: product.productName,
+                price: sourcePrice ?? undefined,
+                marketplace: product.marketplace,
+              },
+              {
+                title: result.title,
+                url: result.link,
+                marketplace: retailer.name,
+              },
+            );
+            if (!preMatch.isMatch) {
+              continue;
             }
+          } catch {
+            continue;
           }
-        } catch {
-          // Doğrulama başarısız — Serper fiyatını kullan
+        }
+
+        try {
+          const recovered = await recoverPriceLightweight(result.link);
+          if (recovered.price && recovered.price > 0) {
+            serperPrice = recovered.price;
+            priceRecovered = true;
+            priceRecoveredCount++;
+            console.log(
+              `🛟 Refresh fiyat kurtarıldı (${recovered.source}, ${retailer.name}): ${serperPrice} ₺`,
+            );
+          } else {
+            // Recovery başarısız — drop
+            continue;
+          }
+        } catch (err) {
+          console.error(`Refresh recovery hatası (${result.link}):`, err);
+          continue;
         }
       }
 
-      const retailer = extractRetailer(result.link);
+      if (!serperPrice || serperPrice <= 0) continue;
+
+      // Existing competitor → güncelle (eski davranış korundu, recovery'yi de kapsar)
+      if (existingCompetitor) {
+        let verifiedPrice = serperPrice;
+        if (!priceRecovered) {
+          try {
+            const verification = await verifyCompetitorPrice(
+              existingCompetitor.competitorUrl,
+              serperPrice,
+            );
+            if (verification.price && verification.price > 0) {
+              verifiedPrice = verification.price;
+              if (
+                verification.source !== "serper-cache" &&
+                Math.abs(verifiedPrice - serperPrice) > 1
+              ) {
+                console.log(
+                  `🔄 Fiyat düzeltildi: ${existingCompetitor.competitorUrl.slice(0, 50)} — Serper: ₺${serperPrice} → Gerçek: ₺${verifiedPrice}`,
+                );
+              }
+            }
+          } catch {
+            // Doğrulama başarısız — Serper fiyatını kullan
+          }
+        }
+
+        try {
+          await prisma.competitor.update({
+            where: { id: existingCompetitor.id },
+            data: {
+              currentPrice: verifiedPrice,
+              competitorName: result.title || existingCompetitor.competitorName,
+              lastScrapedAt: now,
+            },
+          });
+          await prisma.competitorPrice.create({
+            data: {
+              competitorId: existingCompetitor.id,
+              price: verifiedPrice,
+              currency: "TRY",
+              inStock: true,
+              scrapedAt: now,
+            },
+          });
+          await prisma.priceHistory.create({
+            data: {
+              trackedProductId: productId,
+              price: verifiedPrice,
+              currency: "TRY",
+              inStock: true,
+              sellerName: retailer.name,
+              scrapedAt: now,
+            },
+          });
+          updatedCount++;
+        } catch (err) {
+          console.error(`Refresh güncelleme hatası (${result.link}):`, err);
+        }
+        continue;
+      }
+
+      // ============================================
+      // Audit P0-2: Yeni keşfedilen competitor refresh sırasında da eklensin
+      // ============================================
+      if (!isInPriceBand(serperPrice, sourcePrice)) continue;
+
+      let matchResult: MatchResult | null = null;
+      if (!priceRecovered) {
+        // priceRecovered=true ise AI title-only gate zaten geçti
+        try {
+          matchResult = await verifyProductMatch(
+            {
+              title: product.productName,
+              price: sourcePrice ?? undefined,
+              marketplace: product.marketplace,
+            },
+            {
+              title: result.title,
+              url: result.link,
+              price: serperPrice,
+              marketplace: retailer.name,
+            },
+          );
+        } catch {
+          continue;
+        }
+        if (!matchResult.isMatch) continue;
+      }
+
+      const marketplace = retailerToMarketplace(retailer.name);
 
       try {
-        // Competitor fiyatını güncelle
-        await prisma.competitor.update({
-          where: { id: existingCompetitor.id },
+        const newCompetitor = await prisma.competitor.create({
           data: {
-            currentPrice: verifiedPrice,
-            competitorName: result.title || existingCompetitor.competitorName,
+            trackedProductId: productId,
+            competitorUrl: result.link,
+            competitorName: result.title,
+            marketplace,
+            currentPrice: serperPrice,
             lastScrapedAt: now,
+            matchScore: matchResult?.score,
+            matchReason: matchResult?.reason,
+            matchAttributes: matchResult?.attributes,
           },
         });
 
-        // CompetitorPrice tablosuna snapshot ekle
         await prisma.competitorPrice.create({
           data: {
-            competitorId: existingCompetitor.id,
-            price: verifiedPrice,
+            competitorId: newCompetitor.id,
+            price: serperPrice,
             currency: "TRY",
             inStock: true,
             scrapedAt: now,
           },
         });
-
-        // PriceHistory tablosuna snapshot ekle (detail sayfası için)
         await prisma.priceHistory.create({
           data: {
             trackedProductId: productId,
-            price: verifiedPrice,
+            price: serperPrice,
             currency: "TRY",
             inStock: true,
             sellerName: retailer.name,
@@ -247,13 +391,12 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
           },
         });
 
-        updatedCount++;
+        newlyDiscoveredCount++;
       } catch (err) {
-        console.error(`Refresh güncelleme hatası (${result.link}):`, err);
+        console.error(`Refresh new-competitor hatası (${result.link}):`, err);
       }
     }
 
-    // Source scrape başarısızsa fallback olarak mevcut kendi fiyatını history'ye kaydet
     if (!refreshedOwnPrice && product.currentPrice && Number(product.currentPrice) > 0) {
       const ownRetailer = extractRetailer(product.productUrl);
       try {
@@ -272,7 +415,6 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       }
     }
 
-    // --- Sonuç Yayma: Aynı URL'deki diğer kullanıcıların ürünlerini de güncelle ---
     if (job.data.isDeduped) {
       const siblingProducts = await prisma.trackedProduct.findMany({
         where: {
@@ -284,7 +426,6 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       });
 
       if (siblingProducts.length > 0) {
-        // Kaynak ürünün güncel fiyatını ve son tarama zamanını al
         const updatedSource = await prisma.trackedProduct.findUnique({
           where: { id: product.id },
           select: {
@@ -313,17 +454,21 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       }
     }
 
-    // Mark as completed
     await updateTrackedProductRefresh(productId, {
       refreshStatus: "completed",
       refreshCompletedAt: new Date(),
       refreshError: null,
     });
 
-    console.log(`✅ Refresh tamamlandı: ${productId} — ${updatedCount} competitor güncellendi`);
-    return { updated: updatedCount };
+    console.log(
+      `✅ Refresh tamamlandı: ${productId} — ${updatedCount} güncellendi, ${newlyDiscoveredCount} yeni keşfedildi, ${priceRecoveredCount} kurtarıldı`,
+    );
+    return {
+      updated: updatedCount,
+      newlyDiscovered: newlyDiscoveredCount,
+      priceRecovered: priceRecoveredCount,
+    };
   } catch (error) {
-    // Mark as failed
     try {
       await updateTrackedProductRefresh(productId, {
         refreshStatus: "failed",
@@ -333,6 +478,6 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     } catch (statusUpdateError) {
       console.error("Failed to update refresh status:", statusUpdateError);
     }
-    throw error; // re-throw so BullMQ marks the job as failed
+    throw error;
   }
 }
