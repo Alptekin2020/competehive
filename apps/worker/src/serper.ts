@@ -83,11 +83,31 @@ export function isScraperBackedRetailer(retailerName: string): boolean {
 export function parsePrice(priceStr: string): number | null {
   if (!priceStr || typeof priceStr !== "string") return null;
 
-  // Turkish-aware numeric pattern. Tries thousands+decimal first, then bare numbers.
-  // Examples it matches: "1.299,00", "1,299.00", "1.299", "99,99", "1290".
-  const numMatch = priceStr.match(/\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/);
-  if (!numMatch) return null;
-  const cleaned = numMatch[0];
+  // Turkish-aware numeric extraction (Audit P2-5 + Gemini review).
+  // Priority 1: numeric block adjacent to currency marker (₺/TL/TRY).
+  //   "8 ay 99 TL" → 99, "8 ay 1.290 TL" → 1290, "₺99,99" → 99.99
+  // Priority 2: numeric block with thousand separators.
+  // Priority 3: any 2+ digit number OR decimal — single-digit "8" rejected.
+  let cleaned: string | null = null;
+
+  const currencyRe =
+    /(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{2,}(?:[.,]\d{1,2})?)\s*(?:TL|TRY|₺)|(?:TL|TRY|₺)\s*(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d{2,}(?:[.,]\d{1,2})?)/i;
+  const curMatch = priceStr.match(currencyRe);
+  if (curMatch) {
+    cleaned = curMatch[1] || curMatch[2] || null;
+  }
+
+  if (!cleaned) {
+    const thouMatch = priceStr.match(/\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?/);
+    if (thouMatch) cleaned = thouMatch[0];
+  }
+
+  if (!cleaned) {
+    const anyMatch = priceStr.match(/\d{2,}(?:[.,]\d{1,2})?|\d+[.,]\d{1,2}/);
+    if (anyMatch) cleaned = anyMatch[0];
+  }
+
+  if (!cleaned) return null;
 
   const hasComma = cleaned.includes(",");
   const hasDot = cleaned.includes(".");
