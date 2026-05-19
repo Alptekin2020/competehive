@@ -1,10 +1,11 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
-import { searchProduct, extractRetailer, parsePrice } from "../serper";
+import { searchProduct, extractRetailer, isScraperBackedRetailer, parsePrice } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
+import { recoverPriceLightweight } from "../utils/recover-price";
 
 interface OnboardJobData {
   productId: string;
@@ -26,6 +27,17 @@ function retailerToMarketplace(retailerName: string): Marketplace {
     Vatan: "VATAN",
     Decathlon: "DECATHLON",
     "PTT AVM": "PTTAVM",
+    Çiçeksepeti: "CICEKSEPETI",
+    Akakçe: "AKAKCE",
+    Cimri: "CIMRI",
+    Epey: "EPEY",
+    Boyner: "BOYNER",
+    Watsons: "WATSONS",
+    Kitapyurdu: "KITAPYURDU",
+    Sephora: "SEPHORA",
+    Koçtaş: "KOCTAS",
+    İtopya: "ITOPYA",
+    Gratis: "GRATIS",
   };
   return map[retailerName] ?? "CUSTOM";
 }
@@ -45,8 +57,6 @@ function extractSearchKeywords(metadata: unknown): string[] {
 
 /**
  * Birden fazla keyword ile Serper araması yap, URL bazında dedup uygula.
- * Primary keyword'den yeterince sonuç gelirse fallback keyword'leri çağırma —
- * Serper maliyeti tasarrufu için early exit var.
  */
 async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingResult[]> {
   const seenUrls = new Set<string>();
@@ -67,7 +77,6 @@ async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingRes
     console.error(`Primary search hatası ("${primary}"):`, err);
   }
 
-  // Primary'den 5'ten az sonuç geldiyse fallback keyword'leri dene (max 2 ek call)
   if (allResults.length < 5 && keywords.length > 1) {
     for (let i = 1; i < Math.min(keywords.length, 3); i++) {
       const fallback = keywords[i];
@@ -93,11 +102,9 @@ async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingRes
 }
 
 // Price pre-filter sabitleri — matcher.ts'in "%300 fiyat farkı" kuralı ile uyumlu
-const PRICE_BAND_MIN_RATIO = 0.3; // kaynak fiyatın %30'undan az → reddet
-const PRICE_BAND_MAX_RATIO = 3.0; // kaynak fiyatın %300'ünden fazla → reddet
+const PRICE_BAND_MIN_RATIO = 0.3;
+const PRICE_BAND_MAX_RATIO = 3.0;
 
-// Raw title fallback — searchKeywords yoksa ham title 7+ kelime ise Serper sinyali
-// gürültülü oluyor. AI keyword'leri zaten kısa olduğu için onlara dokunmuyoruz.
 const RAW_TITLE_MAX_WORDS = 6;
 function truncateRawTitleForSearch(title: string): string {
   const words = title.trim().split(/\s+/);
@@ -105,18 +112,21 @@ function truncateRawTitleForSearch(title: string): string {
   return words.slice(0, RAW_TITLE_MAX_WORDS).join(" ");
 }
 
+function isInPriceBand(price: number, sourcePrice: number | null): boolean {
+  if (!sourcePrice || sourcePrice <= 0) return true;
+  return price >= sourcePrice * PRICE_BAND_MIN_RATIO && price <= sourcePrice * PRICE_BAND_MAX_RATIO;
+}
+
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
   const { productId, title, url } = job.data;
   console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
 
-  // Mark as processing
   try {
     await updateTrackedProductRefresh(productId, { refreshStatus: "processing" });
   } catch {
     // Product may not exist yet, continue
   }
 
-  // Ürünün var olduğunu doğrula
   const product = await prisma.trackedProduct.findUnique({
     where: { id: productId },
   });
@@ -127,7 +137,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   }
 
   try {
-    // 1. Metadata'dan AI tarafından üretilmiş searchKeywords'u çıkar
     const searchKeywords = extractSearchKeywords(product.metadata);
     const queries = searchKeywords.length > 0 ? searchKeywords : [truncateRawTitleForSearch(title)];
     console.log(
@@ -136,7 +145,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       }: ${JSON.stringify(queries)}`,
     );
 
-    // 2. Serper ile çoklu keyword araması yap (dedup ile)
     const results = await searchWithKeywords(queries);
 
     if (!results || results.length === 0) {
@@ -153,68 +161,110 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let savedCount = 0;
     let priceFilteredCount = 0;
     let aiRejectedCount = 0;
+    let priceRecoveredCount = 0;
+    let priceUnrecoverableCount = 0;
 
-    // Kaynak fiyat — pre-filter için kullanılacak
     const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
 
     for (const result of results) {
-      // Kendi URL'imizi atla
       if (result.link === url) continue;
 
-      const price = parsePrice(result.price);
-      if (!price || price <= 0) continue;
+      const retailer = extractRetailer(result.link);
+      const isScraperBacked = isScraperBackedRetailer(retailer.name);
 
-      // 3. PRICE PRE-FILTER — bandı dışındakileri AI'a bile gönderme
-      if (sourcePrice && sourcePrice > 0) {
-        const minAllowed = sourcePrice * PRICE_BAND_MIN_RATIO;
-        const maxAllowed = sourcePrice * PRICE_BAND_MAX_RATIO;
-        if (price < minAllowed || price > maxAllowed) {
-          priceFilteredCount++;
+      let price = parsePrice(result.price);
+
+      // ============================================
+      // Audit P0-1: Fiyat boş geldiğinde recovery dene
+      // ============================================
+      // Eski davranış: fiyat null → sessizce drop. Hepsiburada en sık kurbandı çünkü
+      // Akamai Google'a price feed vermiyor. Yeni davranış: scraper destekli retailer'larda
+      // önce AI title match'i (ucuz), sonra fiyat kurtarma (HTTP only — Puppeteer DEĞİL).
+      let priceRecovered = false;
+      const needsRecovery = (!price || price <= 0) && isScraperBacked;
+      if (needsRecovery) {
+        // AI matcher'ı price olmadan da çalıştırabiliriz; price filtresi recovery sonrası
+        // uygulanır. AI title-only match gate'i: skor >= MIN_MATCH_SCORE.
+        let preMatch: MatchResult;
+        try {
+          preMatch = await verifyProductMatch(
+            { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+            { title: result.title, url: result.link, marketplace: retailer.name },
+          );
+        } catch {
+          continue;
+        }
+
+        if (!preMatch.isMatch) {
+          aiRejectedCount++;
           console.log(
-            `⏭️  Fiyat bandı dışı (${price.toFixed(2)} ₺, kaynak ${sourcePrice.toFixed(
-              2,
-            )} ₺): ${result.title.slice(0, 60)}`,
+            `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
+          );
+          continue;
+        }
+
+        // Title eşleşti → lightweight HTTP fallback ile fiyat çek
+        try {
+          const recovered = await recoverPriceLightweight(result.link);
+          if (recovered.price && recovered.price > 0) {
+            price = recovered.price;
+            priceRecovered = true;
+            priceRecoveredCount++;
+            console.log(
+              `🛟 Fiyat kurtarıldı (${recovered.source}, ${retailer.name}): ${price} ₺ — ${result.title.slice(0, 50)}`,
+            );
+          } else {
+            priceUnrecoverableCount++;
+            console.log(
+              `⚠️ Fiyat kurtarılamadı (${recovered.source}, ${retailer.name}): ${result.title.slice(0, 50)} — drop`,
+            );
+            continue;
+          }
+        } catch (err) {
+          priceUnrecoverableCount++;
+          console.error(`Recovery hatası (${result.link}):`, err);
+          continue;
+        }
+      }
+
+      if (!price || price <= 0) {
+        // Hâlâ fiyat yok → drop. Burayı sayaca eklemiyoruz; eskiden tüm flow buydu.
+        continue;
+      }
+
+      // Price band filter
+      if (!isInPriceBand(price, sourcePrice)) {
+        priceFilteredCount++;
+        console.log(
+          `⏭️  Fiyat bandı dışı (${price.toFixed(2)} ₺, kaynak ${sourcePrice?.toFixed(2)} ₺): ${result.title.slice(0, 60)}`,
+        );
+        continue;
+      }
+
+      // AI matcher — recovery yaptıysak yeniden çalıştırma (zaten title-only match yapıldı).
+      // Recovery YAPMADIYSAK normal AI match akışı.
+      let matchResult: MatchResult | null = null;
+      if (!priceRecovered) {
+        try {
+          matchResult = await verifyProductMatch(
+            { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+            { title: result.title, url: result.link, price, marketplace: retailer.name },
+          );
+        } catch {
+          continue;
+        }
+
+        if (!matchResult.isMatch) {
+          aiRejectedCount++;
+          console.log(
+            `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
           );
           continue;
         }
       }
 
-      const retailer = extractRetailer(result.link);
-
-      // 4. AI ile eşleştirme doğrula
-      let matchResult: MatchResult;
-      try {
-        matchResult = await verifyProductMatch(
-          {
-            title,
-            price: sourcePrice ?? undefined,
-            marketplace: product.marketplace,
-          },
-          {
-            title: result.title,
-            url: result.link,
-            price,
-            marketplace: retailer.name,
-          },
-        );
-      } catch {
-        // AI hatası → bu sonucu atla, diğerlerine devam et
-        continue;
-      }
-
-      if (!matchResult.isMatch) {
-        aiRejectedCount++;
-        console.log(
-          `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${
-            matchResult.reason
-          }`,
-        );
-        continue;
-      }
-
       const marketplace = retailerToMarketplace(retailer.name);
 
-      // 5. Competitor kaydını upsert et
       try {
         const competitor = await prisma.competitor.upsert({
           where: {
@@ -228,9 +278,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             currentPrice: price,
             marketplace,
             lastScrapedAt: now,
-            matchScore: matchResult.score,
-            matchReason: matchResult.reason,
-            matchAttributes: matchResult.attributes,
+            matchScore: matchResult?.score,
+            matchReason: matchResult?.reason,
+            matchAttributes: matchResult?.attributes,
           },
           create: {
             trackedProductId: productId,
@@ -239,13 +289,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             marketplace,
             currentPrice: price,
             lastScrapedAt: now,
-            matchScore: matchResult.score,
-            matchReason: matchResult.reason,
-            matchAttributes: matchResult.attributes,
+            matchScore: matchResult?.score,
+            matchReason: matchResult?.reason,
+            matchAttributes: matchResult?.attributes,
           },
         });
 
-        // CompetitorPrice snapshot
         await prisma.competitorPrice.create({
           data: {
             competitorId: competitor.id,
@@ -256,7 +305,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           },
         });
 
-        // PriceHistory snapshot (detail sayfası grafiği için)
         await prisma.priceHistory.create({
           data: {
             trackedProductId: productId,
@@ -271,11 +319,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         savedCount++;
       } catch (err) {
         console.error(`Competitor kaydetme hatası (${result.link}):`, err);
-        // Tek bir competitor hatasında job'ı öldürme — devam et
       }
     }
 
-    // Kullanıcının kendi ürün fiyatını da PriceHistory'ye kaydet
     if (sourcePrice && sourcePrice > 0) {
       try {
         const ownRetailer = extractRetailer(product.productUrl);
@@ -294,7 +340,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       }
     }
 
-    // Mark as completed
     await updateTrackedProductRefresh(productId, {
       refreshStatus: "completed",
       refreshCompletedAt: new Date(),
@@ -302,9 +347,17 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     });
 
     console.log(
-      `✅ ${productId}: ${savedCount} competitor kaydedildi (price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount})`,
+      `✅ ${productId}: ${savedCount} competitor kaydedildi ` +
+        `(price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount}, ` +
+        `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount})`,
     );
-    return { found: savedCount };
+    return {
+      found: savedCount,
+      priceFiltered: priceFilteredCount,
+      aiRejected: aiRejectedCount,
+      priceRecovered: priceRecoveredCount,
+      priceUnrecoverable: priceUnrecoverableCount,
+    };
   } catch (error) {
     try {
       await updateTrackedProductRefresh(productId, {
@@ -315,6 +368,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     } catch (statusUpdateError) {
       console.error("Failed to update refresh status:", statusUpdateError);
     }
-    throw error; // re-throw — BullMQ job failed olarak işaretlesin
+    throw error;
   }
 }
