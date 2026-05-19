@@ -42,10 +42,7 @@ function parsePriceFromJsonLd(html: string): number | null {
         const offerList = Array.isArray(offers) ? offers : [offers];
         for (const offer of offerList) {
           const priceField =
-            offer?.price ??
-            offer?.priceSpecification?.price ??
-            offer?.lowPrice ??
-            offer?.highPrice;
+            offer?.price ?? offer?.priceSpecification?.price ?? offer?.lowPrice ?? offer?.highPrice;
           if (priceField === undefined || priceField === null) continue;
           const parsed = parsePrice(String(priceField));
           if (parsed && parsed > 0) return parsed;
@@ -86,21 +83,11 @@ function parsePriceFromNextData(html: string): number | null {
       if (!node || typeof node !== "object") continue;
       if (visited.has(node as object)) continue;
       visited.add(node as object);
-      for (const [key, value] of Object.entries(
-        node as Record<string, unknown>,
-      )) {
-        if (
-          typeof value === "number" &&
-          (/price/i.test(key) || /amount/i.test(key)) &&
-          value > 0
-        ) {
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (typeof value === "number" && (/price/i.test(key) || /amount/i.test(key)) && value > 0) {
           return value;
         }
-        if (
-          typeof value === "string" &&
-          /price/i.test(key) &&
-          value.length < 32
-        ) {
+        if (typeof value === "string" && /price/i.test(key) && value.length < 32) {
           const parsed = parsePrice(value);
           if (parsed && parsed > 0) return parsed;
         }
@@ -145,9 +132,7 @@ function isAkamaiBlock(html: string, status: number): boolean {
   return false;
 }
 
-export async function recoverPriceLightweight(
-  url: string,
-): Promise<PriceRecoveryResult> {
+export async function recoverPriceLightweight(url: string): Promise<PriceRecoveryResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -156,8 +141,7 @@ export async function recoverPriceLightweight(
       signal: controller.signal,
       headers: {
         "User-Agent": USER_AGENT,
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
       },
     });
