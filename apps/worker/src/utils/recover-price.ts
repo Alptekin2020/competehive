@@ -5,396 +5,181 @@
 // HTTP failure so callers can decide whether to escalate to Puppeteer.
 //
 // Intentionally does NOT use Puppeteer here: competitor discovery returns ~20
-// candidates per product, and spinning up Puppeteer for each would saturate the
-// Railway worker.
+// candidates per product, and spinning up a browser per candidate would saturate
+// the worker. We pay the Puppeteer cost only in the existing scrape flow.
 
 import * as cheerio from "cheerio";
-import { logger } from "./logger";
 import { parsePrice } from "../serper";
 
-const RECOVERY_TIMEOUT_MS = 6000;
-const RECOVERY_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
-export interface PriceRecoveryResult {
+export type PriceRecoveryResult = {
   price: number | null;
   source:
-    | "json-ld"
-    | "meta-og"
-    | "next-data"
-    | "data-test-id"
-    | "akamai-blocked"
+    | "jsonld"
+    | "nextdata"
+    | "og-meta"
+    | "data-testid"
+    | "none"
     | "http-error"
-    | "no-match"
-    | "timeout";
-}
+    | "akamai-block";
+};
 
-function parsePriceFromJsonLd($: cheerio.CheerioAPI): number | null {
+const FETCH_TIMEOUT_MS = 7000;
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+function parsePriceFromJsonLd(html: string): number | null {
+  const $ = cheerio.load(html);
   const scripts = $('script[type="application/ld+json"]');
   for (let i = 0; i < scripts.length; i++) {
-    const text = $(scripts[i]).html();
-    if (!text) continue;
+    const raw = $(scripts[i]).text();
+    if (!raw) continue;
     try {
-      const data = JSON.parse(text);
-      const candidates: unknown[] = Array.isArray(data) ? data : [data];
-      const graph = (data as Record<string, unknown>)["@graph"];
-      if (Array.isArray(graph)) candidates.push(...graph);
-
+      const data = JSON.parse(raw);
+      const candidates = Array.isArray(data) ? data : [data];
       for (const node of candidates) {
-        if (!node || typeof node !== "object") continue;
-        const n = node as Record<string, unknown>;
-        if (n["@type"] !== "Product") continue;
-        const offers = n.offers;
-        const offer = (Array.isArray(offers) ? offers[0] : offers) as
-          | Record<string, unknown>
-          | undefined;
-        if (!offer) continue;
-        const raw = offer.price ?? offer.lowPrice ?? offer.highPrice;
-        if (raw == null) continue;
-        const num = typeof raw === "number" ? raw : parsePrice(String(raw));
-        if (num && num > 0) return num;
+        const offers = node?.offers;
+        if (!offers) continue;
+        const offerList = Array.isArray(offers) ? offers : [offers];
+        for (const offer of offerList) {
+          const priceField =
+            offer?.price ??
+            offer?.priceSpecification?.price ??
+            offer?.lowPrice ??
+            offer?.highPrice;
+          if (priceField === undefined || priceField === null) continue;
+          const parsed = parsePrice(String(priceField));
+          if (parsed && parsed > 0) return parsed;
+        }
       }
     } catch {
-      // malformed JSON-LD - skip
+      // Malformed JSON-LD payload. Try the next one.
     }
   }
   return null;
 }
 
-function parsePriceFromMeta($: cheerio.CheerioAPI): number | null {
-  const candidates = [
-    $('meta[property="product:price:amount"]').attr("content"),
-    $('meta[property="product:sale_price:amount"]').attr("content"),
-    $('meta[property="og:price:amount"]').attr("content"),
-    $('meta[itemprop="price"]').attr("content"),
-    $('meta[name="price"]').attr("content"),
-  ];
-  for (const c of candidates) {
-    if (!c) continue;
-    const num = parsePrice(c);
-    if (num && num > 0) return num;
+function parsePriceFromMeta(html: string): number | null {
+  const $ = cheerio.load(html);
+  const ogPrice = $('meta[property="product:price:amount"]').attr("content");
+  if (ogPrice) {
+    const parsed = parsePrice(ogPrice);
+    if (parsed && parsed > 0) return parsed;
+  }
+  const itempropPrice = $('meta[itemprop="price"]').attr("content");
+  if (itempropPrice) {
+    const parsed = parsePrice(itempropPrice);
+    if (parsed && parsed > 0) return parsed;
   }
   return null;
 }
 
-function parsePriceFromNextData($: cheerio.CheerioAPI): number | null {
-  const raw = $("script#__NEXT_DATA__").html();
+function parsePriceFromNextData(html: string): number | null {
+  const $ = cheerio.load(html);
+  const raw = $("#__NEXT_DATA__").text();
   if (!raw) return null;
   try {
     const data = JSON.parse(raw);
-    const text = JSON.stringify(data);
-    const keys = [
-      "discountedPrice",
-      "sellingPrice",
-      "finalPrice",
-      "offeredPrice",
-      "salePrice",
-      "currentPrice",
-    ];
-    for (const key of keys) {
-      const re = new RegExp(`"${key}"\\s*:\\s*(\\d+(?:\\.\\d+)?)`);
-      const m = text.match(re);
-      if (m) {
-        const num = parseFloat(m[1]);
-        if (num > 0) return num;
+    const visited = new WeakSet<object>();
+    const stack: unknown[] = [data];
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || typeof node !== "object") continue;
+      if (visited.has(node as object)) continue;
+      visited.add(node as object);
+      for (const [key, value] of Object.entries(
+        node as Record<string, unknown>,
+      )) {
+        if (
+          typeof value === "number" &&
+          (/price/i.test(key) || /amount/i.test(key)) &&
+          value > 0
+        ) {
+          return value;
+        }
+        if (
+          typeof value === "string" &&
+          /price/i.test(key) &&
+          value.length < 32
+        ) {
+          const parsed = parsePrice(value);
+          if (parsed && parsed > 0) return parsed;
+        }
+        if (value && typeof value === "object") {
+          stack.push(value);
+        }
       }
     }
   } catch {
-    /* malformed */
+    // Malformed __NEXT_DATA__ payload.
   }
   return null;
 }
 
-function parsePriceFromDataTestId($: cheerio.CheerioAPI): number | null {
+function parsePriceFromDataTestId(html: string): number | null {
+  const $ = cheerio.load(html);
   const selectors = [
     '[data-test-id="price-current-price"]',
     '[data-test-id="default-price"]',
     '[data-test-id="price"]',
-    '[data-test-id="offering-price"]',
-    '[data-testid="price-current-price"]',
-    '[data-testid="default-price"]',
-    "[class*='prc-dsc']",
-    "[class*='priceContainer']",
+    ".product-price .price",
+    ".prc-dsc",
+    ".product-price",
+    ".price",
   ];
-  for (const sel of selectors) {
-    const text = $(sel).first().text().trim();
+  for (const selector of selectors) {
+    const text = $(selector).first().text().trim();
     if (!text) continue;
-    const num = parsePrice(text);
-    if (num && num > 0) return num;
+    const parsed = parsePrice(text);
+    if (parsed && parsed > 0) return parsed;
   }
   return null;
 }
 
-function isAkamaiBlock(html: string, status: number, server: string | null): boolean {
-  if (status === 403 && server && server.toLowerCase().includes("akamai")) return true;
+function isAkamaiBlock(html: string, status: number): boolean {
+  if (status === 403 || status === 429) return true;
+  if (!html) return false;
   const lower = html.toLowerCase();
-  return (
-    lower.includes("hepsiburada | guvenlik") ||
-    (lower.includes("akamai") && lower.includes("iframe"))
-  );
+  if (lower.includes("access denied")) return true;
+  if (lower.includes("akamai")) return true;
+  if (lower.includes("reference #")) return true;
+  return false;
 }
 
-export async function recoverPriceLightweight(competitorUrl: string): Promise<PriceRecoveryResult> {
+export async function recoverPriceLightweight(
+  url: string,
+): Promise<PriceRecoveryResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RECOVERY_TIMEOUT_MS);
-
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(competitorUrl, {
-      headers: {
-        "User-Agent": RECOVERY_USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "no-cache",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-      },
-      signal: controller.signal,
+    const res = await fetch(url, {
       redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+      },
     });
-    clearTimeout(timer);
-
-    const server = res.headers.get("server");
     const html = await res.text();
-
-    if (isAkamaiBlock(html, res.status, server)) {
-      logger.info(
-        { url: competitorUrl.slice(0, 80), status: res.status, server },
-        "recoverPrice: Akamai block - caller should consider scraper fallback",
-      );
-      return { price: null, source: "akamai-blocked" };
+    if (isAkamaiBlock(html, res.status)) {
+      return { price: null, source: "akamai-block" };
     }
-
     if (!res.ok) {
       return { price: null, source: "http-error" };
     }
-
-    const $ = cheerio.load(html);
-
-    const jsonLd = parsePriceFromJsonLd($);
-    if (jsonLd) return { price: jsonLd, source: "json-ld" };
-
-    const nextData = parsePriceFromNextData($);
-    if (nextData) return { price: nextData, source: "next-data" };
-
-    const meta = parsePriceFromMeta($);
-    if (meta) return { price: meta, source: "meta-og" };
-
-    const dom = parsePriceFromDataTestId($);
-    if (dom) return { price: dom, source: "data-test-id" };
-
-    return { price: null, source: "no-match" };
-  } catch (err) {
-    clearTimeout(timer);
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.toLowerCase().includes("abort")) {
-      return { price: null, source: "timeout" };
-    }
-    return { price: null, source: "http-error" };
-  }
-}
-// Audit P0-1: Serper Hepsiburada/Trendyol için sık sık price alanını boş döndürür
-// (Akamai Google'a price feed vermiyor). Bu helper, fiyat boş geldiğinde:
-//   1) Lightweight HTTP + cheerio ile JSON-LD/meta tag/__NEXT_DATA__/data-test-id selectors deniyor.
-//   2) Akamai ile karşılaşırsa veya HTTP başarısız olursa null döner — caller scrapeHepsiburada
-//      gibi pahalı Puppeteer path'ine fallback edip etmeyeceğine kendisi karar verir.
-//
-// Bu dosya BİLEREK Puppeteer kullanmıyor: rakip keşif akışında ürün başına ~20 sonuç
-// dönüyor, hepsi için Puppeteer açmak Railway worker'ı boğar.
-
-import * as cheerio from "cheerio";
-import { logger } from "./logger";
-import { parsePrice } from "../serper";
-
-const RECOVERY_TIMEOUT_MS = 6000;
-const RECOVERY_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
-export interface PriceRecoveryResult {
-  price: number | null;
-  source:
-    | "json-ld"
-    | "meta-og"
-    | "next-data"
-    | "data-test-id"
-    | "akamai-blocked"
-    | "http-error"
-    | "no-match"
-    | "timeout";
-}
-
-function parsePriceFromJsonLd($: cheerio.CheerioAPI): number | null {
-  const scripts = $('script[type="application/ld+json"]');
-  for (let i = 0; i < scripts.length; i++) {
-    const text = $(scripts[i]).html();
-    if (!text) continue;
-    try {
-      const data = JSON.parse(text);
-      const candidates: unknown[] = Array.isArray(data) ? data : [data];
-      const graph = (data as Record<string, unknown>)["@graph"];
-      if (Array.isArray(graph)) candidates.push(...graph);
-
-      for (const node of candidates) {
-        if (!node || typeof node !== "object") continue;
-        const n = node as Record<string, unknown>;
-        if (n["@type"] !== "Product") continue;
-        const offers = n.offers;
-        const offer = (Array.isArray(offers) ? offers[0] : offers) as
-          | Record<string, unknown>
-          | undefined;
-        if (!offer) continue;
-        const raw = offer.price ?? offer.lowPrice ?? offer.highPrice;
-        if (raw == null) continue;
-        const num = typeof raw === "number" ? raw : parsePrice(String(raw));
-        if (num && num > 0) return num;
-      }
-    } catch {
-      // malformed JSON-LD — skip
-    }
-  }
-  return null;
-}
-
-function parsePriceFromMeta($: cheerio.CheerioAPI): number | null {
-  const candidates = [
-    $('meta[property="product:price:amount"]').attr("content"),
-    $('meta[property="product:sale_price:amount"]').attr("content"),
-    $('meta[property="og:price:amount"]').attr("content"),
-    $('meta[itemprop="price"]').attr("content"),
-    $('meta[name="price"]').attr("content"),
-  ];
-  for (const c of candidates) {
-    if (!c) continue;
-    const num = parsePrice(c);
-    if (num && num > 0) return num;
-  }
-  return null;
-}
-
-function parsePriceFromNextData($: cheerio.CheerioAPI): number | null {
-  const raw = $("script#__NEXT_DATA__").html();
-  if (!raw) return null;
-  try {
-    const data = JSON.parse(raw);
-    const text = JSON.stringify(data);
-    // Common keys across Trendyol/Hepsiburada
-    const keys = [
-      "discountedPrice",
-      "sellingPrice",
-      "finalPrice",
-      "offeredPrice",
-      "salePrice",
-      "currentPrice",
-    ];
-    for (const key of keys) {
-      const re = new RegExp(`"${key}"\\s*:\\s*(\\d+(?:\\.\\d+)?)`);
-      const m = text.match(re);
-      if (m) {
-        const num = parseFloat(m[1]);
-        if (num > 0) return num;
-      }
-    }
+    const fromJsonLd = parsePriceFromJsonLd(html);
+    if (fromJsonLd) return { price: fromJsonLd, source: "jsonld" };
+    const fromNextData = parsePriceFromNextData(html);
+    if (fromNextData) return { price: fromNextData, source: "nextdata" };
+    const fromMeta = parsePriceFromMeta(html);
+    if (fromMeta) return { price: fromMeta, source: "og-meta" };
+    const fromDataTestId = parsePriceFromDataTestId(html);
+    if (fromDataTestId) return { price: fromDataTestId, source: "data-testid" };
+    return { price: null, source: "none" };
   } catch {
-    /* malformed */
-  }
-  return null;
-}
-
-function parsePriceFromDataTestId($: cheerio.CheerioAPI): number | null {
-  const selectors = [
-    '[data-test-id="price-current-price"]',
-    '[data-test-id="default-price"]',
-    '[data-test-id="price"]',
-    '[data-test-id="offering-price"]',
-    '[data-testid="price-current-price"]',
-    '[data-testid="default-price"]',
-    "[class*='prc-dsc']", // Trendyol price class
-    "[class*='priceContainer']",
-  ];
-  for (const sel of selectors) {
-    const text = $(sel).first().text().trim();
-    if (!text) continue;
-    const num = parsePrice(text);
-    if (num && num > 0) return num;
-  }
-  return null;
-}
-
-function isAkamaiBlock(html: string, status: number, server: string | null): boolean {
-  if (status === 403 && server && server.toLowerCase().includes("akamai")) return true;
-  const lower = html.toLowerCase();
-  return (
-    lower.includes("hepsiburada | güvenlik") ||
-    lower.includes("hepsiburada | guvenlik") ||
-    (lower.includes("akamai") && lower.includes("iframe"))
-  );
-}
-
-/**
- * Lightweight HTTP-only price recovery. Returns null on Akamai block, HTTP failure,
- * or when no price marker is found. Caller decides whether to escalate to Puppeteer.
- */
-export async function recoverPriceLightweight(competitorUrl: string): Promise<PriceRecoveryResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RECOVERY_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(competitorUrl, {
-      headers: {
-        "User-Agent": RECOVERY_USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "no-cache",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-      },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    clearTimeout(timer);
-
-    const server = res.headers.get("server");
-    const html = await res.text();
-
-    if (isAkamaiBlock(html, res.status, server)) {
-      logger.info(
-        { url: competitorUrl.slice(0, 80), status: res.status, server },
-        "recoverPrice: Akamai block — caller should consider scraper fallback",
-      );
-      return { price: null, source: "akamai-blocked" };
-    }
-
-    if (!res.ok) {
-      return { price: null, source: "http-error" };
-    }
-
-    const $ = cheerio.load(html);
-
-    const jsonLd = parsePriceFromJsonLd($);
-    if (jsonLd) return { price: jsonLd, source: "json-ld" };
-
-    const nextData = parsePriceFromNextData($);
-    if (nextData) return { price: nextData, source: "next-data" };
-
-    const meta = parsePriceFromMeta($);
-    if (meta) return { price: meta, source: "meta-og" };
-
-    const dom = parsePriceFromDataTestId($);
-    if (dom) return { price: dom, source: "data-test-id" };
-
-    return { price: null, source: "no-match" };
-  } catch (err) {
-    clearTimeout(timer);
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.toLowerCase().includes("abort")) {
-      return { price: null, source: "timeout" };
-    }
     return { price: null, source: "http-error" };
+  } finally {
+    clearTimeout(timeout);
   }
 }
-
