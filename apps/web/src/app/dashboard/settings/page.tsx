@@ -27,6 +27,7 @@ interface PlanData {
 export default function SettingsPage() {
   const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
   const [tgLoading, setTgLoading] = useState(false);
+  const [tgDeepLink, setTgDeepLink] = useState<string | null>(null);
 
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSaving, setWebhookSaving] = useState(false);
@@ -90,6 +91,7 @@ export default function SettingsPage() {
       const newStatus = await fetchTgStatus();
       if (newStatus === "connected") {
         setSuccess("Telegram bağlantısı tamamlandı.");
+        setTgDeepLink(null);
         setTimeout(() => setSuccess(""), 4000);
         if (pollRef.current) {
           clearInterval(pollRef.current);
@@ -116,7 +118,10 @@ export default function SettingsPage() {
       if (!res.ok || json.error) {
         throw new Error(json.error || "Bağlantı linki oluşturulamadı");
       }
-      // Telegram'a yönlendir
+      // Linki state'e koy — popup blocker engellerse kullanıcı manuel açabilir
+      setTgDeepLink(data.deepLink);
+      // window.open sync olmadığı için bazı tarayıcılarda pop-up blocker tetiklenebilir;
+      // engellenirse aşağıdaki görünür buton fallback olarak çalışır.
       window.open(data.deepLink, "_blank", "noopener,noreferrer");
       await fetchTgStatus();
     } catch (err: unknown) {
@@ -157,6 +162,7 @@ export default function SettingsPage() {
         throw new Error(json.error || "Bağlantı kaldırılamadı");
       }
       await fetchTgStatus();
+      setTgDeepLink(null);
       setSuccess("Telegram bağlantısı kaldırıldı.");
       setTimeout(() => setSuccess(""), 4000);
     } catch (err: unknown) {
@@ -304,17 +310,27 @@ export default function SettingsPage() {
                     </p>
                     <p className="text-xs text-dark-500">
                       Telegram penceresinde &quot;Start&quot; butonuna basınca bağlantı otomatik
-                      tamamlanır. Pencereyi kapattıysan tekrar bağlanmak için aşağıdaki butona
-                      basabilirsin.
+                      tamamlanır. Pencereyi kapattıysan ya da pop-up engellendiyse aşağıdaki
+                      bağlantıya tıkla.
                     </p>
                   </div>
+                  {tgDeepLink && (
+                    <a
+                      href={tgDeepLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block w-full text-center px-4 py-2.5 text-sm font-semibold bg-hive-500 hover:bg-hive-600 text-dark-1000 rounded-xl transition"
+                    >
+                      Telegram&apos;da aç →
+                    </a>
+                  )}
                   <div className="flex gap-2">
                     <button
                       onClick={handleConnect}
                       disabled={tgLoading}
                       className="flex-1 px-4 py-2 text-xs font-medium bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 rounded-lg transition"
                     >
-                      Telegram&apos;ı tekrar aç
+                      Yeni link oluştur
                     </button>
                     <button
                       onClick={handleDisconnectTg}
@@ -416,7 +432,9 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-dark-500">Üyelik başlangıcı</span>
-                <span className="text-white">{planData.memberSince}</span>
+                <span className="text-white">
+                  {new Date(planData.memberSince).toLocaleDateString("tr-TR")}
+                </span>
               </div>
             </div>
           </div>

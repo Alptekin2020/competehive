@@ -86,6 +86,20 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: true });
         }
 
+        // Tek chat_id → tek user: aynı Telegram hesabı başka bir CompeteHive hesabına bağlıysa reddet
+        const alreadyLinked = await prisma.user.findFirst({
+          where: { telegramChatId: chatId, NOT: { id: user.id } },
+          select: { id: true },
+        });
+        if (alreadyLinked) {
+          await sendMessage(
+            botToken,
+            chatId,
+            "❌ Bu Telegram hesabı zaten başka bir CompeteHive kullanıcısına bağlı. Önce diğer hesaptaki bağlantıyı kaldır.",
+          );
+          return NextResponse.json({ ok: true });
+        }
+
         await prisma.user.update({
           where: { id: user.id },
           data: {
