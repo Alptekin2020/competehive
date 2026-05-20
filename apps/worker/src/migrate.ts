@@ -241,7 +241,7 @@ export async function runMigrations() {
 
     await client.query(`
       ALTER TABLE "users"
-      ADD COLUMN IF NOT EXISTS "telegram_connected_at" TIMESTAMP DEFAULT NULL
+      ADD COLUMN IF NOT EXISTS "telegram_connected_at" TIMESTAMPTZ DEFAULT NULL
     `);
 
     await client.query(`

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
+import { getPlanById } from "@/lib/plans";
 
 interface TelegramStatus {
   botUsername: string | null;
@@ -454,33 +456,132 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Plan Section */}
-        {planData && (
-          <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Hesap & Plan</h2>
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-dark-500">Plan</span>
-                <span className="text-white font-medium">{planData.plan}</span>
+        {/* Plan & Usage */}
+        <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">Abonelik</h2>
+            <Link
+              href="/dashboard/pricing"
+              className="text-sm text-hive-500 hover:text-hive-400 font-medium transition"
+            >
+              Planları Gör →
+            </Link>
+          </div>
+
+          {planData ? (
+            <div>
+              {/* Current plan badge */}
+              <div className="flex items-center gap-3 p-4 bg-dark-950 rounded-xl mb-4">
+                <div className="w-10 h-10 bg-hive-500/10 rounded-xl flex items-center justify-center">
+                  <span className="text-hive-500 text-lg font-bold">
+                    {getPlanById(planData.plan)?.name.charAt(0) || "F"}
+                  </span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-white font-medium">
+                    {getPlanById(planData.plan)?.name || planData.plan} Plan
+                  </p>
+                  <p className="text-dark-500 text-xs">
+                    {new Date(planData.memberSince).toLocaleDateString("tr-TR")} tarihinden beri üye
+                  </p>
+                </div>
+                {planData.plan !== "ENTERPRISE" && (
+                  <Link
+                    href="/dashboard/pricing"
+                    className="bg-hive-500 hover:bg-hive-400 text-dark-1000 px-4 py-2 rounded-xl text-sm font-semibold transition"
+                  >
+                    Yükselt
+                  </Link>
+                )}
+                {planData.hasWhopMembership && (
+                  <a
+                    href="https://whop.com/orders"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-gray-400 hover:text-white transition"
+                  >
+                    Aboneliği Yönet (Whop) →
+                  </a>
+                )}
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-dark-500">Ürün limiti</span>
-                <span className="text-white">
-                  {planData.usage.products} / {planData.maxProducts}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-dark-500">Aktif uyarı kuralı</span>
-                <span className="text-white">{planData.usage.alertRules}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-dark-500">Üyelik başlangıcı</span>
-                <span className="text-white">{planData.memberSince}</span>
+
+              {/* Usage bars */}
+              <div className="space-y-4">
+                <UsageBar
+                  label="Ürün Takibi"
+                  current={planData.usage.products}
+                  max={planData.maxProducts}
+                />
+
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">Kullanılan Marketplace</span>
+                  <span className="text-white text-sm font-medium">
+                    {planData.usage.marketplaces}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">Aktif Uyarı Kuralı</span>
+                  <span className="text-white text-sm font-medium">
+                    {planData.usage.alertRules}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-dark-400 text-sm">Tespit Edilen Rakip</span>
+                  <span className="text-white text-sm font-medium">
+                    {planData.usage.competitors}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="animate-pulse space-y-3">
+              <div className="h-16 bg-dark-800 rounded-xl" />
+              <div className="h-4 bg-dark-800 rounded w-2/3" />
+              <div className="h-4 bg-dark-800 rounded w-1/2" />
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function UsageBar({ label, current, max }: { label: string; current: number; max: number }) {
+  const percentage = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
+  const isNearLimit = percentage >= 80;
+  const isAtLimit = percentage >= 100;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-dark-400 text-sm">{label}</span>
+        <span
+          className={`text-sm font-medium ${isAtLimit ? "text-red-400" : isNearLimit ? "text-amber-400" : "text-white"}`}
+        >
+          {current} / {max >= 99999 ? "∞" : max}
+        </span>
+      </div>
+      <div className="h-2 bg-dark-800 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${
+            isAtLimit ? "bg-red-500" : isNearLimit ? "bg-amber-500" : "bg-green-500"
+          }`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      {isNearLimit && !isAtLimit && (
+        <p className="text-amber-400 text-xs mt-1">Limitinize yaklaşıyorsunuz</p>
+      )}
+      {isAtLimit && (
+        <p className="text-red-400 text-xs mt-1">
+          Limitinize ulaştınız.{" "}
+          <Link href="/dashboard/pricing" className="underline hover:text-red-300">
+            Planı yükseltin
+          </Link>
+        </p>
+      )}
     </div>
   );
 }

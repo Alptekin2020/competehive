@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false }, { status: 401 });
     }
 
-    const user = await prisma.user.findFirst({
+    const user = await prisma.user.findUnique({
       where: { telegramWebhookSecret: secret },
       select: {
         id: true,

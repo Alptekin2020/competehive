@@ -2,8 +2,8 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
-import { encryptToken, generateWebhookSecret } from "@/lib/telegram-crypto";
-import { getMe, setWebhook, TelegramApiError } from "@/lib/telegram-api";
+import { decryptToken, encryptToken, generateWebhookSecret } from "@/lib/telegram-crypto";
+import { getMe, setWebhook, deleteWebhook, TelegramApiError } from "@/lib/telegram-api";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,17 +34,47 @@ export async function POST(req: NextRequest) {
       return badRequest("Bu token bir bot'a ait değil.");
     }
 
-    // 2. Webhook secret üret
+    // 2. Bu bot zaten başka bir kullanıcıya ait mi?
+    const existingOwner = await prisma.user.findFirst({
+      where: {
+        telegramBotUsername: botInfo.username,
+        NOT: { clerkId: user.clerkId },
+      },
+      select: { id: true },
+    });
+
+    if (existingOwner) {
+      return badRequest(
+        "Bu bot zaten başka bir CompeteHive hesabına bağlı. BotFather'da yeni bir bot oluşturup onun tokenını kullan.",
+      );
+    }
+
+    // 3. Mevcut user'ın eski botu varsa onun webhook'unu temizle
+    const currentRecord = await prisma.user.findUnique({
+      where: { clerkId: user.clerkId },
+      select: { telegramBotToken: true, telegramBotUsername: true },
+    });
+
+    if (currentRecord?.telegramBotToken && currentRecord.telegramBotUsername !== botInfo.username) {
+      try {
+        const oldToken = decryptToken(currentRecord.telegramBotToken);
+        await deleteWebhook(oldToken);
+      } catch (err) {
+        console.error("Failed to deleteWebhook for previous bot (continuing):", err);
+      }
+    }
+
+    // 4. Webhook secret üret
     const webhookSecret = generateWebhookSecret();
 
-    // 3. App URL
+    // 5. App URL
     const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
     if (!appUrl) {
       return serverError(new Error("NEXT_PUBLIC_APP_URL not set"), "POST /api/telegram/bot-token");
     }
     const webhookUrl = `${appUrl}/api/telegram/webhook`;
 
-    // 4. setWebhook
+    // 6. setWebhook
     try {
       await setWebhook(botToken, webhookUrl, webhookSecret);
     } catch (err) {
@@ -54,7 +84,7 @@ export async function POST(req: NextRequest) {
       throw err;
     }
 
-    // 5. Token şifrele + DB
+    // 7. Token şifrele + DB
     const encryptedToken = encryptToken(botToken);
 
     await prisma.user.update({
