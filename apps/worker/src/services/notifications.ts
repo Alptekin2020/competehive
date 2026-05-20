@@ -1,6 +1,8 @@
 import { Resend } from "resend";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
+import { decryptToken } from "../utils/telegram-crypto";
+import { sendMessage as tgSendMessage, TelegramApiError } from "../utils/telegram-api";
 import type { AlertRuleWithUser, AlertUser } from "../shared";
 
 const prisma = new PrismaClient();
@@ -23,35 +25,139 @@ function getResend(): Resend | null {
 }
 
 // ============================================
-// Telegram Bot
+// Telegram Bot (per-user)
 // ============================================
 
-async function sendTelegramAlert(user: AlertUser, data: AlertData): Promise<void> {
-  if (!process.env.TELEGRAM_BOT_TOKEN || !user.telegramChatId) return;
+async function sendTelegramAlert(
+  user: AlertUser,
+  ruleType: string,
+  data: AlertData,
+): Promise<void> {
+  if (!user.telegramBotToken || !user.telegramChatId || user.telegramStatus !== "connected") {
+    return;
+  }
 
   try {
-    const TelegramBot = (await import("node-telegram-bot-api")).default;
-    const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
-
-    const direction = data.priceChange < 0 ? "📉 DÜŞTÜ" : "📈 ARTTI";
-    const changeAbs = Math.abs(data.priceChange).toFixed(2);
-    const changePct = Math.abs(data.priceChangePct).toFixed(1);
-
-    const message = [
-      `${direction} — ${data.productName}`,
-      ``,
-      `💰 Eski fiyat: ${data.previousPrice.toFixed(2)} ₺`,
-      `💰 Yeni fiyat: ${data.currentPrice.toFixed(2)} ₺`,
-      `📊 Değişim: ${data.priceChange < 0 ? "-" : "+"}${changeAbs} ₺ (${changePct}%)`,
-      `🏪 ${data.marketplace}`,
-      ``,
-      `🔗 ${data.productUrl}`,
-    ].join("\n");
-
-    await bot.sendMessage(user.telegramChatId, message);
+    const token = decryptToken(user.telegramBotToken);
+    const text = formatTelegramMessage(ruleType, data);
+    await tgSendMessage(token, user.telegramChatId, text);
     logger.info({ userId: user.id }, "Telegram alert sent");
   } catch (error) {
-    logger.error({ userId: user.id, error }, "Telegram alert failed");
+    if (error instanceof TelegramApiError) {
+      logger.warn({ userId: user.id, code: error.code, msg: error.message }, "Telegram API error");
+    } else {
+      logger.error({ userId: user.id, error }, "Telegram alert failed");
+    }
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatTelegramMessage(ruleType: string, data: AlertData): string {
+  const changeAbs = Math.abs(data.priceChange).toFixed(2);
+  const changePct = Math.abs(data.priceChangePct).toFixed(1);
+  const name = `<b>${escapeHtml(data.productName)}</b>`;
+  const marketplace = `🏪 ${escapeHtml(data.marketplace)}`;
+  const linkLine = `🔗 <a href="${escapeHtml(data.productUrl)}">Ürüne git</a>`;
+
+  switch (ruleType) {
+    case "PRICE_DROP":
+      return [
+        `📉 <b>Fiyat düştü</b>`,
+        ``,
+        name,
+        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `Değişim: <b>−${changeAbs} ₺</b> (%${changePct})`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+
+    case "PRICE_INCREASE":
+      return [
+        `📈 <b>Fiyat arttı</b>`,
+        ``,
+        name,
+        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `Değişim: <b>+${changeAbs} ₺</b> (%${changePct})`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+
+    case "PRICE_THRESHOLD":
+      return [
+        `🎯 <b>Hedef fiyata ulaşıldı</b>`,
+        ``,
+        name,
+        `Şu anki fiyat: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+
+    case "PERCENTAGE_CHANGE": {
+      const dir = data.priceChange < 0 ? "düştü" : "arttı";
+      const emoji = data.priceChange < 0 ? "📉" : "📈";
+      const sign = data.priceChange < 0 ? "−" : "+";
+      return [
+        `${emoji} <b>%${changePct} ${dir}</b>`,
+        ``,
+        name,
+        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `Değişim: <b>${sign}${changeAbs} ₺</b>`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+    }
+
+    case "COMPETITOR_CHEAPER":
+      return [
+        `⚡ <b>Rakip daha ucuz</b>`,
+        ``,
+        name,
+        `${marketplace} fiyatı: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        ``,
+        linkLine,
+      ].join("\n");
+
+    case "OUT_OF_STOCK":
+      return [`🚫 <b>Stoktan çıktı</b>`, ``, name, marketplace, ``, linkLine].join("\n");
+
+    case "BACK_IN_STOCK":
+      return [
+        `✅ <b>Stoğa girdi</b>`,
+        ``,
+        name,
+        `Fiyat: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+
+    default: {
+      const dir = data.priceChange < 0 ? "düştü" : "arttı";
+      const emoji = data.priceChange < 0 ? "📉" : "📈";
+      const sign = data.priceChange < 0 ? "−" : "+";
+      return [
+        `${emoji} <b>Fiyat ${dir}</b>`,
+        ``,
+        name,
+        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `Değişim: <b>${sign}${changeAbs} ₺</b> (%${changePct})`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+    }
   }
 }
 
@@ -142,7 +248,7 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
           await sendEmailAlert(rule.user, data, rule.ruleType);
           break;
         case "TELEGRAM":
-          await sendTelegramAlert(rule.user, data);
+          await sendTelegramAlert(rule.user, rule.ruleType, data);
           break;
         case "WEBHOOK":
           await sendWebhookAlert(rule.user, data);
