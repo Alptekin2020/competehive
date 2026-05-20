@@ -1,7 +1,6 @@
 import { Resend } from "resend";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
-import { decryptToken } from "../utils/telegram-crypto";
 import { sendMessage as tgSendMessage, TelegramApiError } from "../utils/telegram-api";
 import type { AlertRuleWithUser, AlertUser } from "../shared";
 
@@ -25,7 +24,7 @@ function getResend(): Resend | null {
 }
 
 // ============================================
-// Telegram Bot (per-user)
+// Telegram Bot (central)
 // ============================================
 
 async function sendTelegramAlert(
@@ -33,14 +32,14 @@ async function sendTelegramAlert(
   ruleType: string,
   data: AlertData,
 ): Promise<void> {
-  if (!user.telegramBotToken || !user.telegramChatId || user.telegramStatus !== "connected") {
-    return;
-  }
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return;
+
+  if (!user.telegramChatId || user.telegramStatus !== "connected") return;
 
   try {
-    const token = decryptToken(user.telegramBotToken);
     const text = formatTelegramMessage(ruleType, data);
-    await tgSendMessage(token, user.telegramChatId, text);
+    await tgSendMessage(botToken, user.telegramChatId, text);
     logger.info({ userId: user.id }, "Telegram alert sent");
   } catch (error) {
     if (error instanceof TelegramApiError) {

@@ -42,7 +42,6 @@ export interface AlertUser {
   id: string;
   email: string;
   telegramChatId: string | null;
-  telegramBotToken: string | null;
   telegramStatus: string | null;
   webhookUrl: string | null;
 }

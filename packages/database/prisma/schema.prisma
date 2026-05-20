@@ -36,6 +36,8 @@ model User {
   telegramWebhookSecret String?   @unique @map("telegram_webhook_secret")
   telegramStatus        String?   @map("telegram_status")
   telegramConnectedAt   DateTime? @map("telegram_connected_at")
+  telegramLinkToken          String?   @unique @map("telegram_link_token")
+  telegramLinkTokenExpiresAt DateTime? @map("telegram_link_token_expires_at")
   webhookUrl       String?  @map("webhook_url")
   stripeCustomerId String?  @map("stripe_customer_id")
   whopUserId       String?  @unique @map("whop_user_id")

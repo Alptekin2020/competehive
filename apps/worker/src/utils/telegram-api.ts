@@ -62,6 +62,15 @@ export async function deleteWebhook(token: string): Promise<boolean> {
   return callApi<boolean>(token, "deleteWebhook", { drop_pending_updates: true });
 }
 
+export interface BotCommand {
+  command: string;
+  description: string;
+}
+
+export async function setMyCommands(token: string, commands: BotCommand[]): Promise<boolean> {
+  return callApi<boolean>(token, "setMyCommands", { commands });
+}
+
 export async function sendMessage(
   token: string,
   chatId: string,

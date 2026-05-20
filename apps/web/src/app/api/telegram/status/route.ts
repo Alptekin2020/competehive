@@ -10,19 +10,21 @@ export async function GET() {
     const data = await prisma.user.findUnique({
       where: { clerkId: user.clerkId },
       select: {
-        telegramBotUsername: true,
         telegramStatus: true,
         telegramChatId: true,
         telegramConnectedAt: true,
+        telegramLinkTokenExpiresAt: true,
       },
     });
 
+    const botUsername = process.env.TELEGRAM_BOT_USERNAME || null;
+
     return apiSuccess({
-      botUsername: data?.telegramBotUsername || null,
+      botUsername,
       status: data?.telegramStatus || null,
       hasChatId: Boolean(data?.telegramChatId),
       connectedAt: data?.telegramConnectedAt || null,
-      deepLink: data?.telegramBotUsername ? `https://t.me/${data.telegramBotUsername}` : null,
+      linkExpiresAt: data?.telegramLinkTokenExpiresAt || null,
     });
   } catch (error) {
     return serverError(error, "GET /api/telegram/status");
