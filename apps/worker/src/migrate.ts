@@ -218,6 +218,40 @@ export async function runMigrations() {
 
     console.log("✅ Phase 6 migration: performance indexes added");
 
+    // Phase 7: Per-user Telegram bot integration
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_bot_token" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_bot_username" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_webhook_secret" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_status" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_connected_at" TIMESTAMP DEFAULT NULL
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "users_telegram_webhook_secret_key"
+      ON "users"("telegram_webhook_secret")
+      WHERE "telegram_webhook_secret" IS NOT NULL
+    `);
+
+    console.log("✅ Phase 7 migration: Telegram per-user bot fields added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
