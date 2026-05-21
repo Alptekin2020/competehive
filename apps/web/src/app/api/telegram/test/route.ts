@@ -1,7 +1,6 @@
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
-import { decryptToken } from "@/lib/telegram-crypto";
 import { sendMessage, TelegramApiError } from "@/lib/telegram-api";
 
 export async function POST() {
@@ -9,23 +8,23 @@ export async function POST() {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
 
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (!botToken) {
+      return serverError(new Error("TELEGRAM_BOT_TOKEN not set"), "POST /api/telegram/test");
+    }
+
     const data = await prisma.user.findUnique({
       where: { clerkId: user.clerkId },
-      select: {
-        telegramBotToken: true,
-        telegramChatId: true,
-        telegramStatus: true,
-      },
+      select: { telegramChatId: true, telegramStatus: true },
     });
 
-    if (!data?.telegramBotToken || !data?.telegramChatId || data.telegramStatus !== "connected") {
-      return badRequest("Telegram bağlantısı tamamlanmadı. Önce kurulumu bitir.");
+    if (!data?.telegramChatId || data.telegramStatus !== "connected") {
+      return badRequest("Telegram bağlantısı tamamlanmadı. Önce bağlantı kurulumunu bitir.");
     }
 
     try {
-      const token = decryptToken(data.telegramBotToken);
       await sendMessage(
-        token,
+        botToken,
         data.telegramChatId,
         [
           "🔔 <b>Test bildirimi</b>",

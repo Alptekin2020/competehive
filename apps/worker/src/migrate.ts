@@ -252,6 +252,25 @@ export async function runMigrations() {
 
     console.log("✅ Phase 7 migration: Telegram per-user bot fields added");
 
+    // Phase 8: Central bot — link tokens
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_link_token" TEXT DEFAULT NULL
+    `);
+
+    await client.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "telegram_link_token_expires_at" TIMESTAMP DEFAULT NULL
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "users_telegram_link_token_key"
+      ON "users"("telegram_link_token")
+      WHERE "telegram_link_token" IS NOT NULL
+    `);
+
+    console.log("✅ Phase 8 migration: Telegram link token fields added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);

@@ -10,6 +10,33 @@ import { processRefreshUrlJob } from "./jobs/refresh-product-url";
 import { prisma } from "./db";
 import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
+import { setWebhook, setMyCommands } from "./utils/telegram-api";
+
+async function registerTelegramBot(): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+
+  if (!token || !secret || !appUrl) {
+    logger.warn("Telegram env vars missing — bot registration skipped");
+    return;
+  }
+
+  const webhookUrl = `${appUrl}/api/telegram/webhook`;
+  try {
+    await setWebhook(token, webhookUrl, secret);
+    logger.info({ webhookUrl }, "Telegram webhook registered");
+
+    await setMyCommands(token, [
+      { command: "status", description: "Aktif takip durumu" },
+      { command: "test", description: "Test bildirimi gönder" },
+      { command: "stop", description: "Bildirimleri durdur" },
+    ]);
+    logger.info("Telegram bot commands set");
+  } catch (err) {
+    logger.error({ err }, "Telegram bot registration failed");
+  }
+}
 
 // Redis bağlantısı
 const connection = {
@@ -100,6 +127,8 @@ competitorWorker.on("failed", (job, err) => {
 
 async function start() {
   logger.info("CompeteHive Worker starting...");
+
+  await registerTelegramBot();
 
   // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri kuyruğa ekle
   setInterval(async () => {

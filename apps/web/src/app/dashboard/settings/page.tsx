@@ -1,15 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Link from "next/link";
-import { getPlanById } from "@/lib/plans";
 
 interface TelegramStatus {
   botUsername: string | null;
   status: "awaiting_start" | "connected" | "stopped" | null;
   hasChatId: boolean;
   connectedAt: string | null;
-  deepLink: string | null;
+  linkExpiresAt: string | null;
 }
 
 interface PlanData {
@@ -28,9 +26,8 @@ interface PlanData {
 
 export default function SettingsPage() {
   const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
-  const [botToken, setBotToken] = useState("");
-  const [showBotSetupGuide, setShowBotSetupGuide] = useState(false);
   const [tgLoading, setTgLoading] = useState(false);
+  const [tgDeepLink, setTgDeepLink] = useState<string | null>(null);
 
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSaving, setWebhookSaving] = useState(false);
@@ -54,7 +51,7 @@ export default function SettingsPage() {
         status: data.status,
         hasChatId: Boolean(data.hasChatId),
         connectedAt: data.connectedAt,
-        deepLink: data.deepLink,
+        linkExpiresAt: data.linkExpiresAt,
       };
       setTgStatus(newStatus);
       return newStatus.status;
@@ -85,7 +82,7 @@ export default function SettingsPage() {
       .finally(() => setLoading(false));
   }, [fetchTgStatus]);
 
-  // Poll while awaiting /start
+  // Awaiting /start iken polling
   useEffect(() => {
     if (tgStatus?.status !== "awaiting_start") {
       return;
@@ -94,6 +91,7 @@ export default function SettingsPage() {
       const newStatus = await fetchTgStatus();
       if (newStatus === "connected") {
         setSuccess("Telegram bağlantısı tamamlandı.");
+        setTgDeepLink(null);
         setTimeout(() => setSuccess(""), 4000);
         if (pollRef.current) {
           clearInterval(pollRef.current);
@@ -109,28 +107,23 @@ export default function SettingsPage() {
     };
   }, [tgStatus?.status, fetchTgStatus]);
 
-  const handleConnectBot = async () => {
+  const handleConnect = async () => {
     setError("");
     setSuccess("");
-    const trimmed = botToken.trim();
-    if (!trimmed) {
-      setError("Bot tokenı gerekli.");
-      return;
-    }
     setTgLoading(true);
     try {
-      const res = await fetch("/api/telegram/bot-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ botToken: trimmed }),
-      });
+      const res = await fetch("/api/telegram/connect", { method: "POST" });
       const json = await res.json();
+      const data = json.data || json;
       if (!res.ok || json.error) {
-        throw new Error(json.error || "Bot bağlanamadı");
+        throw new Error(json.error || "Bağlantı linki oluşturulamadı");
       }
-      setBotToken("");
+      // Linki state'e koy — popup blocker engellerse kullanıcı manuel açabilir
+      setTgDeepLink(data.deepLink);
+      // window.open sync olmadığı için bazı tarayıcılarda pop-up blocker tetiklenebilir;
+      // engellenirse aşağıdaki görünür buton fallback olarak çalışır.
+      window.open(data.deepLink, "_blank", "noopener,noreferrer");
       await fetchTgStatus();
-      setSuccess("Bot doğrulandı. Şimdi son adım: bot'una /start yaz.");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
@@ -158,7 +151,7 @@ export default function SettingsPage() {
   };
 
   const handleDisconnectTg = async () => {
-    if (!confirm("Telegram bağlantısı tamamen kaldırılacak. Devam edilsin mi?")) return;
+    if (!confirm("Telegram bağlantısı kaldırılacak. Devam edilsin mi?")) return;
     setError("");
     setSuccess("");
     setTgLoading(true);
@@ -169,6 +162,7 @@ export default function SettingsPage() {
         throw new Error(json.error || "Bağlantı kaldırılamadı");
       }
       await fetchTgStatus();
+      setTgDeepLink(null);
       setSuccess("Telegram bağlantısı kaldırıldı.");
       setTimeout(() => setSuccess(""), 4000);
     } catch (err: unknown) {
@@ -234,7 +228,6 @@ export default function SettingsPage() {
       )}
 
       <div className="space-y-6 max-w-2xl">
-        {/* Bildirim Kanalları */}
         <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
           <h2 className="text-lg font-semibold text-white mb-4">Bildirim Kanalları</h2>
 
@@ -260,10 +253,9 @@ export default function SettingsPage() {
                 <span className="text-xl">💬</span>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-white">Telegram</p>
-                  <p className="text-xs text-dark-500">Kendi botun üzerinden anlık bildirim al</p>
-                  {isConnected && tgStatus?.botUsername && (
-                    <p className="text-xs text-hive-500 mt-1">@{tgStatus.botUsername}</p>
-                  )}
+                  <p className="text-xs text-dark-500">
+                    @{tgStatus?.botUsername || "CompeteHive_bot"} üzerinden anlık bildirim al
+                  </p>
                 </div>
                 <span
                   className={`text-xs px-2 py-1 rounded-full ${
@@ -289,7 +281,7 @@ export default function SettingsPage() {
               {isConnected && (
                 <div className="space-y-3">
                   <p className="text-xs text-dark-500">
-                    Bildirimler @{tgStatus?.botUsername} üzerinden Telegram&apos;ına gönderilecek.
+                    Bildirimler Telegram&apos;ına gönderilecek.
                   </p>
                   <div className="flex gap-2">
                     <button
@@ -310,26 +302,36 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {isAwaiting && tgStatus?.deepLink && (
+              {isAwaiting && (
                 <div className="space-y-3">
                   <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg">
                     <p className="text-xs text-amber-400 font-medium mb-1">
-                      Son adım: Bot&apos;una /start yaz
+                      Son adım: Telegram&apos;da Start&apos;a bas
                     </p>
                     <p className="text-xs text-dark-500">
-                      Aşağıdaki butonla bot&apos;unu aç → <b>Start</b> butonuna bas. Bağlantı
-                      otomatik tamamlanacak.
+                      Telegram penceresinde &quot;Start&quot; butonuna basınca bağlantı otomatik
+                      tamamlanır. Pencereyi kapattıysan ya da pop-up engellendiyse aşağıdaki
+                      bağlantıya tıkla.
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  {tgDeepLink && (
                     <a
-                      href={tgStatus.deepLink}
+                      href={tgDeepLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex-1 text-center px-4 py-2 text-xs font-medium bg-hive-500 hover:bg-hive-600 text-dark-1000 rounded-lg transition"
+                      className="block w-full text-center px-4 py-2.5 text-sm font-semibold bg-hive-500 hover:bg-hive-600 text-dark-1000 rounded-xl transition"
                     >
-                      @{tgStatus.botUsername} &apos;u aç →
+                      Telegram&apos;da aç →
                     </a>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleConnect}
+                      disabled={tgLoading}
+                      className="flex-1 px-4 py-2 text-xs font-medium bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 rounded-lg transition"
+                    >
+                      Yeni link oluştur
+                    </button>
                     <button
                       onClick={handleDisconnectTg}
                       disabled={tgLoading}
@@ -344,8 +346,8 @@ export default function SettingsPage() {
               {isStopped && (
                 <div className="space-y-3">
                   <p className="text-xs text-dark-500">
-                    Bot&apos;una /stop yazdığın için bildirimler durduruldu. Tekrar aktifleştirmek
-                    için bot&apos;una /start yaz.
+                    Bot&apos;una /stop yazdığın için bildirimler durduruldu. Tekrar açmak için
+                    bot&apos;a /start yaz.
                   </p>
                   <button
                     onClick={handleDisconnectTg}
@@ -359,62 +361,16 @@ export default function SettingsPage() {
 
               {isUnconnected && (
                 <div className="space-y-3">
+                  <p className="text-xs text-dark-500">
+                    Tek tıklamayla bağlan. Telegram açılır, &quot;Start&quot; butonuna basarsın,
+                    hazırsın.
+                  </p>
                   <button
-                    type="button"
-                    onClick={() => setShowBotSetupGuide(!showBotSetupGuide)}
-                    className="text-xs text-hive-500 hover:text-hive-400 transition"
-                  >
-                    {showBotSetupGuide ? "▾" : "▸"} Bot nasıl oluşturulur?
-                  </button>
-
-                  {showBotSetupGuide && (
-                    <div className="p-3 bg-dark-900 border border-dark-800 rounded-lg space-y-2 text-xs text-dark-400">
-                      <p>
-                        <b className="text-white">1.</b> Telegram&apos;da{" "}
-                        <a
-                          href="https://t.me/BotFather"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-hive-500 hover:underline"
-                        >
-                          @BotFather
-                        </a>
-                        &apos;ı aç.
-                      </p>
-                      <p>
-                        <b className="text-white">2.</b>{" "}
-                        <code className="text-hive-500">/newbot</code> yaz.
-                      </p>
-                      <p>
-                        <b className="text-white">3.</b> İstediğin bir bot adı gir (örn.
-                        &quot;CompeteHive Bildirim&quot;).
-                      </p>
-                      <p>
-                        <b className="text-white">4.</b> Kullanıcı adı sorulunca{" "}
-                        <code className="text-hive-500">_bot</code> ile bitecek müsait bir isim gir
-                        (örn. <code className="text-hive-500">benim_competehive_bot</code>).
-                      </p>
-                      <p>
-                        <b className="text-white">5.</b> BotFather sana bir <b>token</b> verir (örn.{" "}
-                        <code className="text-hive-500">7891234567:AAE...</code>). Kopyala ve
-                        aşağıya yapıştır.
-                      </p>
-                    </div>
-                  )}
-
-                  <input
-                    type="password"
-                    value={botToken}
-                    onChange={(e) => setBotToken(e.target.value)}
-                    className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-2.5 text-white placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition text-sm font-mono"
-                    placeholder="7891234567:AAE..."
-                  />
-                  <button
-                    onClick={handleConnectBot}
-                    disabled={tgLoading || !botToken.trim()}
+                    onClick={handleConnect}
+                    disabled={tgLoading}
                     className="w-full px-4 py-2.5 text-sm font-semibold bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 rounded-xl transition"
                   >
-                    {tgLoading ? "Bağlanıyor..." : "Bot'u bağla"}
+                    {tgLoading ? "Yönlendiriliyor..." : "Telegram'a Bağla"}
                   </button>
                 </div>
               )}
@@ -456,132 +412,34 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Plan & Usage */}
-        <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Abonelik</h2>
-            <Link
-              href="/dashboard/pricing"
-              className="text-sm text-hive-500 hover:text-hive-400 font-medium transition"
-            >
-              Planları Gör →
-            </Link>
+        {planData && (
+          <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Hesap & Plan</h2>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-dark-500">Plan</span>
+                <span className="text-white font-medium">{planData.plan}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-dark-500">Ürün limiti</span>
+                <span className="text-white">
+                  {planData.usage.products} / {planData.maxProducts}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-dark-500">Aktif uyarı kuralı</span>
+                <span className="text-white">{planData.usage.alertRules}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-dark-500">Üyelik başlangıcı</span>
+                <span className="text-white">
+                  {new Date(planData.memberSince).toLocaleDateString("tr-TR")}
+                </span>
+              </div>
+            </div>
           </div>
-
-          {planData ? (
-            <div>
-              {/* Current plan badge */}
-              <div className="flex items-center gap-3 p-4 bg-dark-950 rounded-xl mb-4">
-                <div className="w-10 h-10 bg-hive-500/10 rounded-xl flex items-center justify-center">
-                  <span className="text-hive-500 text-lg font-bold">
-                    {getPlanById(planData.plan)?.name.charAt(0) || "F"}
-                  </span>
-                </div>
-                <div className="flex-1">
-                  <p className="text-white font-medium">
-                    {getPlanById(planData.plan)?.name || planData.plan} Plan
-                  </p>
-                  <p className="text-dark-500 text-xs">
-                    {new Date(planData.memberSince).toLocaleDateString("tr-TR")} tarihinden beri üye
-                  </p>
-                </div>
-                {planData.plan !== "ENTERPRISE" && (
-                  <Link
-                    href="/dashboard/pricing"
-                    className="bg-hive-500 hover:bg-hive-400 text-dark-1000 px-4 py-2 rounded-xl text-sm font-semibold transition"
-                  >
-                    Yükselt
-                  </Link>
-                )}
-                {planData.hasWhopMembership && (
-                  <a
-                    href="https://whop.com/orders"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-gray-400 hover:text-white transition"
-                  >
-                    Aboneliği Yönet (Whop) →
-                  </a>
-                )}
-              </div>
-
-              {/* Usage bars */}
-              <div className="space-y-4">
-                <UsageBar
-                  label="Ürün Takibi"
-                  current={planData.usage.products}
-                  max={planData.maxProducts}
-                />
-
-                <div className="flex items-center justify-between">
-                  <span className="text-dark-400 text-sm">Kullanılan Marketplace</span>
-                  <span className="text-white text-sm font-medium">
-                    {planData.usage.marketplaces}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-dark-400 text-sm">Aktif Uyarı Kuralı</span>
-                  <span className="text-white text-sm font-medium">
-                    {planData.usage.alertRules}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-dark-400 text-sm">Tespit Edilen Rakip</span>
-                  <span className="text-white text-sm font-medium">
-                    {planData.usage.competitors}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="animate-pulse space-y-3">
-              <div className="h-16 bg-dark-800 rounded-xl" />
-              <div className="h-4 bg-dark-800 rounded w-2/3" />
-              <div className="h-4 bg-dark-800 rounded w-1/2" />
-            </div>
-          )}
-        </div>
+        )}
       </div>
-    </div>
-  );
-}
-
-function UsageBar({ label, current, max }: { label: string; current: number; max: number }) {
-  const percentage = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
-  const isNearLimit = percentage >= 80;
-  const isAtLimit = percentage >= 100;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-dark-400 text-sm">{label}</span>
-        <span
-          className={`text-sm font-medium ${isAtLimit ? "text-red-400" : isNearLimit ? "text-amber-400" : "text-white"}`}
-        >
-          {current} / {max >= 99999 ? "∞" : max}
-        </span>
-      </div>
-      <div className="h-2 bg-dark-800 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${
-            isAtLimit ? "bg-red-500" : isNearLimit ? "bg-amber-500" : "bg-green-500"
-          }`}
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-      {isNearLimit && !isAtLimit && (
-        <p className="text-amber-400 text-xs mt-1">Limitinize yaklaşıyorsunuz</p>
-      )}
-      {isAtLimit && (
-        <p className="text-red-400 text-xs mt-1">
-          Limitinize ulaştınız.{" "}
-          <Link href="/dashboard/pricing" className="underline hover:text-red-300">
-            Planı yükseltin
-          </Link>
-        </p>
-      )}
     </div>
   );
 }
