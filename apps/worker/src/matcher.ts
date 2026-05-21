@@ -149,7 +149,27 @@ SKOR REHBERİ:
     // AI'nin isMatch field'ını nihai karar olarak kullanmıyoruz çünkü tutarsız çıktılar
     // (score=70 ama isMatch=false gibi) sayesinde aynı markalı ürünler kayboluyordu.
     // Tek source-of-truth: score >= MIN_MATCH_SCORE → isMatch=true.
-    const finalIsMatch = score >= MIN_MATCH_SCORE;
+    let finalScore = score;
+    let finalIsMatch = score >= MIN_MATCH_SCORE;
+
+    // Deterministic backstop (LLM-independent): a category mismatch is never the same product.
+    if (finalIsMatch && parsed.categoryMatch === false) {
+      finalIsMatch = false;
+      finalScore = Math.min(finalScore, 39);
+    }
+    // Deterministic backstop: an extreme price ratio (>4x or <1/4) is almost never the same product.
+    if (
+      finalIsMatch &&
+      typeof sourceProduct.price === "number" &&
+      sourceProduct.price > 0 &&
+      typeof candidate.price === "number"
+    ) {
+      const ratio = candidate.price / sourceProduct.price;
+      if (ratio > 4 || ratio < 0.25) {
+        finalIsMatch = false;
+        finalScore = Math.min(finalScore, 39);
+      }
+    }
 
     // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)
     if (parsed.isMatch === false && score >= MIN_MATCH_SCORE) {
@@ -176,7 +196,7 @@ SKOR REHBERİ:
 
     const result: MatchResult = {
       isMatch: finalIsMatch,
-      score,
+      score: finalScore,
       reason: String(parsed.reason || "Açıklama yok").slice(0, 200),
       attributes: {
         brandMatch: parsed.brandMatch === true,
