@@ -158,12 +158,32 @@ export async function verifyProductMatch(
 
     const obj = parsed as Record<string, unknown>;
     const score = Math.min(100, Math.max(0, parseInt(String(obj.score ?? "")) || 0));
-    const finalIsMatch = score >= MIN_MATCH_SCORE;
+    let finalScore = score;
+    let finalIsMatch = score >= MIN_MATCH_SCORE;
+
+    // Deterministic backstop (LLM-independent): a category mismatch is never the same product.
+    if (finalIsMatch && obj.categoryMatch === false) {
+      finalIsMatch = false;
+      finalScore = Math.min(finalScore, 39);
+    }
+    // Deterministic backstop: an extreme price ratio (>4x or <1/4) is almost never the same product.
+    if (
+      finalIsMatch &&
+      typeof source.price === "number" &&
+      source.price > 0 &&
+      typeof candidate.price === "number"
+    ) {
+      const ratio = candidate.price / source.price;
+      if (ratio > 4 || ratio < 0.25) {
+        finalIsMatch = false;
+        finalScore = Math.min(finalScore, 39);
+      }
+    }
 
     return {
       outcome: finalIsMatch ? "match" : "reject",
       isMatch: finalIsMatch,
-      score,
+      score: finalScore,
       reason: String(obj.reason ?? "Açıklama yok").slice(0, 200),
       attributes: {
         brandMatch: obj.brandMatch === true,
