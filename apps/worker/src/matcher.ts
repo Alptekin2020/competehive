@@ -158,7 +158,12 @@ SKOR REHBERİ:
       finalScore = Math.min(finalScore, 39);
     }
     // Deterministic backstop: an extreme price ratio (>4x or <1/4) is almost never the same product.
-    if (finalIsMatch && sourceProduct.price && candidate.price && sourceProduct.price > 0) {
+    if (
+      finalIsMatch &&
+      typeof sourceProduct.price === "number" &&
+      sourceProduct.price > 0 &&
+      typeof candidate.price === "number"
+    ) {
       const ratio = candidate.price / sourceProduct.price;
       if (ratio > 4 || ratio < 0.25) {
         finalIsMatch = false;
