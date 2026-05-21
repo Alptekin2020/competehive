@@ -12,19 +12,29 @@ async function main() {
   console.log("✅ Connected to Railway DB");
 
   // Phase 7: Per-user Telegram bot integration (eski mimariden kalan kolonlar)
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_bot_token" TEXT DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_bot_token" TEXT DEFAULT NULL`,
+  );
   console.log("✅ telegram_bot_token");
 
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_bot_username" TEXT DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_bot_username" TEXT DEFAULT NULL`,
+  );
   console.log("✅ telegram_bot_username");
 
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_webhook_secret" TEXT DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_webhook_secret" TEXT DEFAULT NULL`,
+  );
   console.log("✅ telegram_webhook_secret");
 
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_status" TEXT DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_status" TEXT DEFAULT NULL`,
+  );
   console.log("✅ telegram_status");
 
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_connected_at" TIMESTAMP DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_connected_at" TIMESTAMP DEFAULT NULL`,
+  );
   console.log("✅ telegram_connected_at");
 
   await client.query(`
@@ -35,10 +45,14 @@ async function main() {
   console.log("✅ users_telegram_webhook_secret_key index");
 
   // Phase 8: Central bot — link tokens
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_link_token" TEXT DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_link_token" TEXT DEFAULT NULL`,
+  );
   console.log("✅ telegram_link_token");
 
-  await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_link_token_expires_at" TIMESTAMP DEFAULT NULL`);
+  await client.query(
+    `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_link_token_expires_at" TIMESTAMP DEFAULT NULL`,
+  );
   console.log("✅ telegram_link_token_expires_at");
 
   await client.query(`
