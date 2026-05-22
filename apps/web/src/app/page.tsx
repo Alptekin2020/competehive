@@ -492,9 +492,15 @@ export default async function Home() {
             <Link href="/terms" className="hover:text-white transition">
               Kullanım Şartları
             </Link>
-            <a href="mailto:support@competehive.com" className="hover:text-white transition">
-              İletişim
-            </a>
+            <Link href="/kvkk" className="hover:text-white transition">
+              KVKK
+            </Link>
+            <Link href="/cerez" className="hover:text-white transition">
+              Çerez
+            </Link>
+            <Link href="/destek" className="hover:text-white transition">
+              Destek
+            </Link>
           </div>
         </div>
       </footer>
