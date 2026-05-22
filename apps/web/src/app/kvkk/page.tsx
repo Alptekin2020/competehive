@@ -39,9 +39,7 @@ export default function KvkkPage() {
               <p>
                 6698 sayılı Kişisel Verilerin Korunması Kanunu (&quot;KVKK&quot;) uyarınca kişisel
                 verileriniz, veri sorumlusu sıfatıyla{" "}
-                <span className="text-white">[ŞİRKET ADI]</span> (Vergi No:{" "}
-                <span className="text-white">[VERGİ NO]</span>, Adres:{" "}
-                <span className="text-white">[ADRES]</span>) tarafından aşağıda açıklanan kapsamda
+                <span className="text-white">CompeteHive</span> tarafından aşağıda açıklanan kapsamda
                 işlenmektedir.
               </p>
             </section>
@@ -122,8 +120,8 @@ export default function KvkkPage() {
               <h2 className="text-xl font-semibold text-white mb-3">8. Başvuru</h2>
               <p>
                 Haklarınıza ilişkin taleplerinizi{" "}
-                <a href="mailto:kvkk@competehive.com" className="text-hive-500 hover:underline">
-                  kvkk@competehive.com
+                <a href="mailto:support@competehive.com" className="text-hive-500 hover:underline">
+                  support@competehive.com
                 </a>{" "}
                 adresine iletebilirsiniz. Başvurularınız en geç 30 gün içinde sonuçlandırılır.
               </p>
