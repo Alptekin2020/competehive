@@ -1,177 +1,272 @@
 import { NextResponse } from "next/server";
-import { Webhook } from "svix";
-
+import crypto from "crypto";
 import prisma from "@/lib/prisma";
-import { WHOP_PRODUCT_TO_PLAN, type PlanTier } from "@/lib/plans";
+import { WHOP_PRODUCT_TO_PLAN, getPlanLimits, type PlanTier } from "@/lib/plans";
 
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-interface WhopEvent {
-  action?: string;
-  data?: Record<string, unknown>;
+// ---- Types for the Whop V1 (Standard Webhooks) payload ----
+interface WhopUser {
+  id?: string;
+  email?: string;
+  username?: string;
+  name?: string;
 }
 
-export async function POST(req: Request) {
+interface WhopMembershipData {
+  id?: string;
+  status?: string;
+  user?: WhopUser;
+  product?: { id?: string; title?: string };
+  plan?: { id?: string };
+  renewal_period_end?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+interface WhopEvent {
+  id?: string;
+  api_version?: string;
+  type?: string;
+  data?: WhopMembershipData;
+  company_id?: string | null;
+}
+
+// ---- Standard Webhooks signature verification (Whop V1) ----
+// Whop signs `${webhook-id}.${webhook-timestamp}.${rawBody}` with HMAC-SHA256
+// and sends the signature in the `webhook-signature` header as a
+// space-separated list of `v1,<base64>` tokens. The webhook secret looks like
+// `ws_...`; the Whop docs hand that raw string to the SDK (wrapped in btoa),
+// so the HMAC key is the raw secret string bytes. We also try the classic
+// Standard Webhooks key derivations as a safety net and log which one matched.
+function candidateKeys(secret: string): { name: string; key: Buffer }[] {
+  const keys: { name: string; key: Buffer }[] = [];
+  keys.push({ name: "raw-utf8", key: Buffer.from(secret, "utf8") });
+  const stripped = secret.replace(/^ws_/, "").replace(/^whsec_/, "");
+  try {
+    keys.push({ name: "b64-stripped", key: Buffer.from(stripped, "base64") });
+  } catch {
+    // ignore non-base64 secret
+  }
+  try {
+    keys.push({ name: "b64-full", key: Buffer.from(secret, "base64") });
+  } catch {
+    // ignore non-base64 secret
+  }
+  return keys;
+}
+
+function verifyWhopSignature(
+  rawBody: string,
+  msgId: string,
+  msgTimestamp: string,
+  sigHeader: string,
+  secret: string
+): { verified: boolean; scheme: string } {
+  if (!rawBody || !msgId || !msgTimestamp || !sigHeader || !secret) {
+    return { verified: false, scheme: "missing-input" };
+  }
+  const signedContent = msgId + "." + msgTimestamp + "." + rawBody;
+  const passedSigs = sigHeader
+    .split(" ")
+    .map((token) => (token.includes(",") ? token.split(",")[1] : token))
+    .filter(Boolean);
+
+  for (const { name, key } of candidateKeys(secret)) {
+    if (key.length === 0) continue;
+    const expected = crypto
+      .createHmac("sha256", key)
+      .update(signedContent)
+      .digest("base64");
+    const expectedBuf = Buffer.from(expected, "base64");
+    for (const sig of passedSigs) {
+      let sigBuf: Buffer;
+      try {
+        sigBuf = Buffer.from(sig, "base64");
+      } catch {
+        continue;
+      }
+      if (
+        sigBuf.length === expectedBuf.length &&
+        crypto.timingSafeEqual(sigBuf, expectedBuf)
+      ) {
+        return { verified: true, scheme: name };
+      }
+    }
+  }
+  return { verified: false, scheme: "no-match" };
+}
+
+function header(headers: Headers, ...names: string[]): string {
+  for (const n of names) {
+    const v = headers.get(n);
+    if (v) return v;
+  }
+  return "";
+}
+
+async function findUser(data: WhopMembershipData) {
+  const md = (data.metadata || {}) as Record<string, unknown>;
+  const clerkFromMeta =
+    md.clerkId || md.clerk_user_id || md.clerkUserId || md.clerk_id;
+  const internalFromMeta =
+    md.userId || md.user_id || md.internalUserId || md.internal_user_id;
+  const email = data.user?.email;
+  const whopUserId = data.user?.id;
+
+  // Priority: clerk metadata -> internal id -> email -> whop user id
+  if (clerkFromMeta) {
+    const u = await prisma.user.findUnique({
+      where: { clerkId: String(clerkFromMeta) },
+    });
+    if (u) return u;
+  }
+  if (internalFromMeta) {
+    const u = await prisma.user.findUnique({
+      where: { id: String(internalFromMeta) },
+    });
+    if (u) return u;
+  }
+  if (email) {
+    const u = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+    });
+    if (u) return u;
+  }
+  if (whopUserId) {
+    const u = await prisma.user.findUnique({ where: { whopUserId } });
+    if (u) return u;
+  }
+  return null;
+}
+
+export async function POST(request: Request) {
   const secret = process.env.WHOP_WEBHOOK_SECRET;
   if (!secret) {
-    console.error("[whop-webhook] WHOP_WEBHOOK_SECRET not configured");
+    console.error("[whop] WHOP_WEBHOOK_SECRET not configured");
     return NextResponse.json({ error: "not configured" }, { status: 500 });
   }
 
-  const body = await req.text();
-  const svixId = req.headers.get("svix-id");
-  const svixTimestamp = req.headers.get("svix-timestamp");
-  const svixSignature = req.headers.get("svix-signature");
+  const rawBody = await request.text();
+  const msgId = header(request.headers, "webhook-id", "svix-id");
+  const msgTimestamp = header(
+    request.headers,
+    "webhook-timestamp",
+    "svix-timestamp"
+  );
+  const sigHeader = header(
+    request.headers,
+    "webhook-signature",
+    "svix-signature"
+  );
 
-  if (!svixId || !svixTimestamp || !svixSignature) {
-    console.error("[whop-webhook] missing svix headers");
-    return NextResponse.json({ error: "missing headers" }, { status: 400 });
+  const { verified, scheme } = verifyWhopSignature(
+    rawBody,
+    msgId,
+    msgTimestamp,
+    sigHeader,
+    secret
+  );
+  if (!verified) {
+    console.error(
+      "[whop] signature verification failed scheme=" +
+        scheme +
+        " hasId=" +
+        Boolean(msgId) +
+        " hasTs=" +
+        Boolean(msgTimestamp) +
+        " hasSig=" +
+        Boolean(sigHeader)
+    );
+    return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
   let event: WhopEvent;
   try {
-    const wh = new Webhook(secret);
-    event = wh.verify(body, {
-      "svix-id": svixId,
-      "svix-timestamp": svixTimestamp,
-      "svix-signature": svixSignature,
-    }) as WhopEvent;
-  } catch (err) {
-    console.error("[whop-webhook] signature verification failed:", err);
-    return NextResponse.json({ error: "invalid signature" }, { status: 401 });
+    event = JSON.parse(rawBody) as WhopEvent;
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const action = event.action ?? "";
-  const data = (event.data ?? {}) as Record<string, unknown>;
-  console.log(`[whop-webhook] ${action}`, JSON.stringify(data).slice(0, 500));
+  const type = event.type || "";
+  const data = event.data || {};
+  console.log("[whop] verified type=" + type + " scheme=" + scheme);
 
   try {
-    if (action === "membership.went_valid" || action === "membership.activated") {
-      await handleMembershipValid(data);
-    } else if (action === "membership.went_invalid" || action === "membership.deactivated") {
-      await handleMembershipInvalid(data);
-    } else if (action === "payment.succeeded") {
-      await handlePaymentSucceeded(data);
-    } else {
-      console.log(`[whop-webhook] unhandled action: ${action}`);
+    if (type === "membership.activated") {
+      const productId = data.product?.id;
+      const tier = productId
+        ? (WHOP_PRODUCT_TO_PLAN[productId] as PlanTier | undefined)
+        : undefined;
+      if (!productId || !tier) {
+        console.warn(
+          "[whop] activated for unknown product=" + String(productId)
+        );
+        return NextResponse.json({ received: true });
+      }
+      const user = await findUser(data);
+      if (!user) {
+        console.warn(
+          "[whop] membership.activated: user not found (email/whopId)"
+        );
+        return NextResponse.json({ received: true });
+      }
+      const limits = getPlanLimits(tier);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          plan: tier,
+          planStatus: "ACTIVE",
+          planExpiresAt: data.renewal_period_end
+            ? new Date(data.renewal_period_end)
+            : null,
+          maxProducts: limits.maxProducts,
+          whopUserId: data.user?.id ?? undefined,
+          whopMembershipId: data.id ?? undefined,
+          whopProductId: productId,
+          whopPlanId: data.plan?.id ?? undefined,
+        },
+      });
+      console.log("[whop] activated user=" + user.id + " plan=" + tier);
+      return NextResponse.json({ received: true });
     }
-    // Always 200 to prevent infinite Whop retries on logic errors.
-    return NextResponse.json({ ok: true });
+
+    if (type === "membership.deactivated") {
+      const user = await findUser(data);
+      if (!user) {
+        console.warn("[whop] membership.deactivated: user not found");
+        return NextResponse.json({ received: true });
+      }
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { planStatus: "EXPIRED" },
+      });
+      console.log("[whop] deactivated user=" + user.id);
+      return NextResponse.json({ received: true });
+    }
+
+    if (type === "payment.succeeded" || type === "invoice.paid") {
+      // Renewal / successful charge. Whop also emits membership.activated for
+      // access changes, so here we only refresh the expiry when we can match.
+      const user = await findUser(data);
+      if (user && data.renewal_period_end) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            planStatus: "ACTIVE",
+            planExpiresAt: new Date(data.renewal_period_end),
+          },
+        });
+        console.log("[whop] payment renewal user=" + user.id);
+      } else {
+        console.log("[whop] payment event logged type=" + type);
+      }
+      return NextResponse.json({ received: true });
+    }
+
+    console.log("[whop] ignored event type=" + type);
+    return NextResponse.json({ received: true });
   } catch (err) {
-    console.error(`[whop-webhook] error in ${action}:`, err);
-    return NextResponse.json({ ok: true, warning: "logged" });
+    console.error("[whop] handler error", err);
+    return NextResponse.json({ error: "handler error" }, { status: 500 });
   }
-}
-
-function pickString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function pickRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-async function handleMembershipValid(data: Record<string, unknown>) {
-  const userObj = pickRecord(data.user);
-  const accessPass = pickRecord(data.access_pass);
-  const planObj = pickRecord(data.plan);
-  const metadata = pickRecord(data.metadata) ?? {};
-  const checkoutMeta = pickRecord(pickRecord(data.checkout)?.metadata) ?? {};
-
-  const whopUserId = pickString(data.user_id) ?? pickString(userObj?.id);
-  const email = pickString(userObj?.email);
-  const clerkUserIdFromMeta =
-    pickString(metadata.clerk_user_id) ?? pickString(checkoutMeta.clerk_user_id);
-  const internalUserIdFromMeta =
-    pickString(metadata.competehive_user_id) ?? pickString(checkoutMeta.competehive_user_id);
-
-  const productId = pickString(data.product_id) ?? pickString(accessPass?.id);
-  const membershipId = pickString(data.id);
-  const planId = pickString(data.plan_id) ?? pickString(planObj?.id);
-
-  const expiresAtSec =
-    typeof data.expires_at === "number"
-      ? data.expires_at
-      : typeof data.renewal_period_end === "number"
-        ? data.renewal_period_end
-        : typeof planObj?.expires_at === "number"
-          ? (planObj.expires_at as number)
-          : undefined;
-  const expiresAt = expiresAtSec ? new Date(expiresAtSec * 1000) : null;
-
-  if (!productId || !membershipId) {
-    console.error("[whop-webhook] missing productId or membershipId", { productId, membershipId });
-    return;
-  }
-
-  const plan: PlanTier | undefined = WHOP_PRODUCT_TO_PLAN[productId];
-  if (!plan) {
-    console.error(
-      `[whop-webhook] unknown Whop product ID: ${productId}. Update WHOP_PRODUCT_TO_PLAN.`,
-    );
-    return;
-  }
-
-  // Find user — try metadata (best), then email, then whopUserId.
-  let user = null;
-  if (clerkUserIdFromMeta) {
-    user = await prisma.user.findUnique({ where: { clerkId: clerkUserIdFromMeta } });
-  }
-  if (!user && internalUserIdFromMeta) {
-    user = await prisma.user.findUnique({ where: { id: internalUserIdFromMeta } });
-  }
-  if (!user && email) {
-    user = await prisma.user.findUnique({ where: { email } });
-  }
-  if (!user && whopUserId) {
-    user = await prisma.user.findUnique({ where: { whopUserId } });
-  }
-
-  if (!user) {
-    console.error("[whop-webhook] user not found", { clerkUserIdFromMeta, email, whopUserId });
-    return;
-  }
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      plan,
-      planStatus: "ACTIVE",
-      planExpiresAt: expiresAt,
-      whopUserId: whopUserId ?? user.whopUserId,
-      whopMembershipId: membershipId,
-      whopProductId: productId,
-      whopPlanId: planId ?? user.whopPlanId,
-    },
-  });
-
-  console.log(`[whop-webhook] activated ${plan} for ${user.email}`);
-}
-
-async function handleMembershipInvalid(data: Record<string, unknown>) {
-  const membershipId = pickString(data.id);
-  if (!membershipId) return;
-
-  const user = await prisma.user.findUnique({ where: { whopMembershipId: membershipId } });
-  if (!user) {
-    console.error(`[whop-webhook] no user found for membership ${membershipId}`);
-    return;
-  }
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { planStatus: "EXPIRED" },
-  });
-  console.log(`[whop-webhook] expired plan for ${user.email}`);
-}
-
-async function handlePaymentSucceeded(data: Record<string, unknown>) {
-  // Whop also sends membership.went_valid on renewals, so we just log here for
-  // observability. Plan-state changes go through the membership handlers.
-  const membershipObj = pickRecord(data.membership);
-  console.log("[whop-webhook] payment succeeded", {
-    membershipId: pickString(data.membership_id) ?? pickString(membershipObj?.id),
-  });
 }
