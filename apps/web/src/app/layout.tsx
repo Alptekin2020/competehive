@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { trTR } from "@clerk/localizations";
 import "./globals.css";
+import CookieBanner from "@/components/CookieBanner";
 
 export const metadata: Metadata = {
   title: "CompeteHive — Rakip Fiyat Takip Platformu",
@@ -19,7 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <ClerkProvider localization={trTR} afterSignOutUrl="/">
       <html lang="tr">
-        <body className="bg-[#0A0A0B] text-white antialiased">{children}</body>
+        <body className="bg-[#0A0A0B] text-white antialiased">
+          {children}
+          <CookieBanner />
+        </body>
       </html>
     </ClerkProvider>
   );
