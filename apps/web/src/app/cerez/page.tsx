@@ -87,8 +87,8 @@ export default function CerezPage() {
               <h2 className="text-xl font-semibold text-white mb-3">5. İletişim</h2>
               <p>
                 Çerezlerle ilgili sorularınız için{" "}
-                <a href="mailto:kvkk@competehive.com" className="text-hive-500 hover:underline">
-                  kvkk@competehive.com
+                <a href="mailto:support@competehive.com" className="text-hive-500 hover:underline">
+                  support@competehive.com
                 </a>{" "}
                 adresine yazabilirsiniz.
               </p>
