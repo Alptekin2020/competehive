@@ -40,8 +40,8 @@ export default function DestekPage() {
           <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6 mb-10">
             <p className="text-sm text-dark-300">
               E-posta:{" "}
-              <a href="mailto:destek@competehive.com" className="text-hive-500 hover:underline">
-                destek@competehive.com
+              <a href="mailto:support@competehive.com" className="text-hive-500 hover:underline">
+                support@competehive.com
               </a>
             </p>
             <p className="text-xs text-dark-500 mt-2">
@@ -88,8 +88,8 @@ export default function DestekPage() {
               <p className="text-dark-300 text-sm mt-3 leading-relaxed">
                 Hesabınızı sildiğinizde takip ettiğiniz ürünler ve fiyat geçmişiniz dahil tüm
                 verileriniz kalıcı olarak kaldırılır. KVKK kapsamındaki haklarınız için{" "}
-                <a href="mailto:kvkk@competehive.com" className="text-hive-500 hover:underline">
-                  kvkk@competehive.com
+                <a href="mailto:support@competehive.com" className="text-hive-500 hover:underline">
+                  support@competehive.com
                 </a>{" "}
                 adresine yazabilirsiniz.
               </p>
@@ -110,6 +110,12 @@ export default function DestekPage() {
             </Link>
             <Link href="/terms" className="hover:text-white transition">
               Kullanım Şartları
+            </Link>
+            <Link href="/kvkk" className="hover:text-white transition">
+              KVKK
+            </Link>
+            <Link href="/cerez" className="hover:text-white transition">
+              Çerez
             </Link>
             <Link href="/destek" className="hover:text-white transition text-white">
               Destek
