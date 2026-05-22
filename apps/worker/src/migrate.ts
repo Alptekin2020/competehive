@@ -271,6 +271,20 @@ export async function runMigrations() {
 
     console.log("✅ Phase 8 migration: Telegram link token fields added");
 
+    // Phase 9: Plan limit enforcement (Whop subscription tracking).
+    // Single ALTER TABLE so PostgreSQL takes the metadata lock only once.
+    await client.query(`
+      ALTER TABLE "users"
+        ADD COLUMN IF NOT EXISTS "plan_status" TEXT,
+        ADD COLUMN IF NOT EXISTS "whop_product_id" TEXT,
+        ADD COLUMN IF NOT EXISTS "whop_plan_id" TEXT
+    `);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "users_whop_membership_id_key" ON "users"("whop_membership_id")`,
+    );
+
+    console.log("✅ Phase 9 migration: plan limit enforcement fields added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);

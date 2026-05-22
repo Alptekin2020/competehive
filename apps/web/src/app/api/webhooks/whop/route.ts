@@ -1,245 +1,177 @@
-import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { getCompeteHivePlanByWhopId, getPlanLimits } from "@/lib/plans";
-import crypto from "crypto";
+import { NextResponse } from "next/server";
+import { Webhook } from "svix";
 
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
+import { WHOP_PRODUCT_TO_PLAN, type PlanTier } from "@/lib/plans";
 
-// Verify Whop webhook signature (Standard Webhooks spec)
-function verifyWebhookSignature(body: string, headers: Headers): boolean {
-  const webhookKey = process.env.WHOP_WEBHOOK_SECRET;
-  if (!webhookKey) {
-    if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
-      console.warn("WHOP_WEBHOOK_SECRET not set — skipping signature verification (dev only)");
-      return true;
-    }
-    console.error("WHOP_WEBHOOK_SECRET is not set. Signature verification is required.");
-    return false;
+export const dynamic = "force-dynamic";
+
+interface WhopEvent {
+  action?: string;
+  data?: Record<string, unknown>;
+}
+
+export async function POST(req: Request) {
+  const secret = process.env.WHOP_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error("[whop-webhook] WHOP_WEBHOOK_SECRET not configured");
+    return NextResponse.json({ error: "not configured" }, { status: 500 });
   }
 
-  const svixId = headers.get("svix-id");
-  const svixTimestamp = headers.get("svix-timestamp");
-  const svixSignature = headers.get("svix-signature");
+  const body = await req.text();
+  const svixId = req.headers.get("svix-id");
+  const svixTimestamp = req.headers.get("svix-timestamp");
+  const svixSignature = req.headers.get("svix-signature");
 
   if (!svixId || !svixTimestamp || !svixSignature) {
-    return false;
+    console.error("[whop-webhook] missing svix headers");
+    return NextResponse.json({ error: "missing headers" }, { status: 400 });
   }
 
-  // Verify timestamp is recent (within 5 minutes)
-  const timestamp = parseInt(svixTimestamp);
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - timestamp) > 300) {
-    return false;
-  }
-
-  // Compute expected signature
-  const signedContent = `${svixId}.${svixTimestamp}.${body}`;
-  const secret = Buffer.from(webhookKey.replace("whsec_", ""), "base64");
-  const expectedSignature = crypto
-    .createHmac("sha256", secret)
-    .update(signedContent)
-    .digest("base64");
-
-  // Compare signatures (Whop sends multiple, check each)
-  const signatures = svixSignature.split(" ");
-  return signatures.some((sig) => {
-    const sigValue = sig.split(",")[1]; // format: "v1,base64signature"
-    return sigValue === expectedSignature;
-  });
-}
-
-export async function POST(req: NextRequest) {
+  let event: WhopEvent;
   try {
-    const body = await req.text();
+    const wh = new Webhook(secret);
+    event = wh.verify(body, {
+      "svix-id": svixId,
+      "svix-timestamp": svixTimestamp,
+      "svix-signature": svixSignature,
+    }) as WhopEvent;
+  } catch (err) {
+    console.error("[whop-webhook] signature verification failed:", err);
+    return NextResponse.json({ error: "invalid signature" }, { status: 401 });
+  }
 
-    // Verify signature
-    if (!verifyWebhookSignature(body, req.headers)) {
-      console.error("Whop webhook signature verification failed");
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  const action = event.action ?? "";
+  const data = (event.data ?? {}) as Record<string, unknown>;
+  console.log(`[whop-webhook] ${action}`, JSON.stringify(data).slice(0, 500));
+
+  try {
+    if (action === "membership.went_valid" || action === "membership.activated") {
+      await handleMembershipValid(data);
+    } else if (action === "membership.went_invalid" || action === "membership.deactivated") {
+      await handleMembershipInvalid(data);
+    } else if (action === "payment.succeeded") {
+      await handlePaymentSucceeded(data);
+    } else {
+      console.log(`[whop-webhook] unhandled action: ${action}`);
     }
-
-    const payload = JSON.parse(body);
-    const action = payload.action;
-    const data = payload.data;
-
-    console.log(`Whop webhook received: ${action}`, {
-      membershipId: data?.id,
-      userId: data?.user?.id,
-      planId: data?.plan?.id,
-    });
-
-    switch (action) {
-      case "membership.went_valid": {
-        await handleMembershipValid(data);
-        break;
-      }
-      case "membership.went_invalid": {
-        await handleMembershipInvalid(data);
-        break;
-      }
-      case "payment.succeeded": {
-        console.log("Payment succeeded:", {
-          membershipId: data?.membership_id,
-          amount: data?.amount,
-        });
-        // Payment success is informational — plan change is handled by membership events
-        break;
-      }
-      case "payment.failed": {
-        console.log("Payment failed:", {
-          membershipId: data?.membership_id,
-        });
-        // Payment failure will eventually trigger membership.went_invalid
-        break;
-      }
-      default:
-        console.log(`Unhandled Whop webhook action: ${action}`);
-    }
-
-    return NextResponse.json({ received: true });
-  } catch (error) {
-    console.error("Whop webhook error:", error);
-    return NextResponse.json({ error: "Webhook processing failed" }, { status: 500 });
+    // Always 200 to prevent infinite Whop retries on logic errors.
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error(`[whop-webhook] error in ${action}:`, err);
+    return NextResponse.json({ ok: true, warning: "logged" });
   }
 }
 
-// ============================================
-// Membership Activated — Upgrade Plan
-// ============================================
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function pickRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
 
 async function handleMembershipValid(data: Record<string, unknown>) {
-  const user_data = data.user as Record<string, unknown> | undefined;
-  const plan_data = data.plan as Record<string, unknown> | undefined;
-  const whopUserId = user_data?.id as string | undefined;
-  const whopMembershipId = data.id as string | undefined;
-  const whopPlanId = plan_data?.id as string | undefined;
-  const userEmail = user_data?.email as string | undefined;
-  const metadata = (data.metadata as Record<string, unknown>) || {};
+  const userObj = pickRecord(data.user);
+  const accessPass = pickRecord(data.access_pass);
+  const planObj = pickRecord(data.plan);
+  const metadata = pickRecord(data.metadata) ?? {};
+  const checkoutMeta = pickRecord(pickRecord(data.checkout)?.metadata) ?? {};
 
-  if (!whopPlanId) {
-    console.error("No plan ID in membership.went_valid webhook");
+  const whopUserId = pickString(data.user_id) ?? pickString(userObj?.id);
+  const email = pickString(userObj?.email);
+  const clerkUserIdFromMeta =
+    pickString(metadata.clerk_user_id) ?? pickString(checkoutMeta.clerk_user_id);
+  const internalUserIdFromMeta =
+    pickString(metadata.competehive_user_id) ?? pickString(checkoutMeta.competehive_user_id);
+
+  const productId = pickString(data.product_id) ?? pickString(accessPass?.id);
+  const membershipId = pickString(data.id);
+  const planId = pickString(data.plan_id) ?? pickString(planObj?.id);
+
+  const expiresAtSec =
+    typeof data.expires_at === "number"
+      ? data.expires_at
+      : typeof data.renewal_period_end === "number"
+        ? data.renewal_period_end
+        : typeof planObj?.expires_at === "number"
+          ? (planObj.expires_at as number)
+          : undefined;
+  const expiresAt = expiresAtSec ? new Date(expiresAtSec * 1000) : null;
+
+  if (!productId || !membershipId) {
+    console.error("[whop-webhook] missing productId or membershipId", { productId, membershipId });
     return;
   }
 
-  // Map Whop plan to CompeteHive plan
-  const competehivePlan = getCompeteHivePlanByWhopId(whopPlanId);
-  const limits = getPlanLimits(competehivePlan);
+  const plan: PlanTier | undefined = WHOP_PRODUCT_TO_PLAN[productId];
+  if (!plan) {
+    console.error(
+      `[whop-webhook] unknown Whop product ID: ${productId}. Update WHOP_PRODUCT_TO_PLAN.`,
+    );
+    return;
+  }
 
-  console.log(`Upgrading user to ${competehivePlan}`, {
-    whopUserId,
-    whopMembershipId,
-    whopPlanId,
-    email: userEmail,
-  });
-
-  // Find user by metadata (preferred) or by email (fallback)
-  const competehiveUserId = metadata.competehive_user_id as string | undefined;
+  // Find user — try metadata (best), then email, then whopUserId.
   let user = null;
-
-  if (competehiveUserId) {
-    user = await prisma.user.findUnique({ where: { id: competehiveUserId } });
+  if (clerkUserIdFromMeta) {
+    user = await prisma.user.findUnique({ where: { clerkId: clerkUserIdFromMeta } });
   }
-
+  if (!user && internalUserIdFromMeta) {
+    user = await prisma.user.findUnique({ where: { id: internalUserIdFromMeta } });
+  }
+  if (!user && email) {
+    user = await prisma.user.findUnique({ where: { email } });
+  }
   if (!user && whopUserId) {
-    user = await prisma.user.findFirst({ where: { whopUserId } });
-  }
-
-  if (!user && userEmail) {
-    user = await prisma.user.findFirst({ where: { email: userEmail } });
+    user = await prisma.user.findUnique({ where: { whopUserId } });
   }
 
   if (!user) {
-    console.error("Could not find CompeteHive user for Whop membership", {
-      competehiveUserId,
-      whopUserId,
-      email: userEmail,
-    });
+    console.error("[whop-webhook] user not found", { clerkUserIdFromMeta, email, whopUserId });
     return;
   }
 
-  // Update user's plan
   await prisma.user.update({
     where: { id: user.id },
     data: {
-      plan: competehivePlan as "FREE" | "STARTER" | "PRO" | "ENTERPRISE",
-      maxProducts: limits.maxProducts,
-      whopUserId: whopUserId || user.whopUserId,
-      whopMembershipId: whopMembershipId,
-      planExpiresAt: null, // Active membership — no expiry
+      plan,
+      planStatus: "ACTIVE",
+      planExpiresAt: expiresAt,
+      whopUserId: whopUserId ?? user.whopUserId,
+      whopMembershipId: membershipId,
+      whopProductId: productId,
+      whopPlanId: planId ?? user.whopPlanId,
     },
   });
 
-  // Update scrape intervals for all user's products
-  await prisma.trackedProduct.updateMany({
-    where: { userId: user.id },
-    data: { scrapeInterval: limits.scrapeInterval },
-  });
-
-  console.log(`User ${user.id} upgraded to ${competehivePlan}`);
+  console.log(`[whop-webhook] activated ${plan} for ${user.email}`);
 }
 
-// ============================================
-// Membership Deactivated — Downgrade to FREE
-// ============================================
-
 async function handleMembershipInvalid(data: Record<string, unknown>) {
-  const user_data = data.user as Record<string, unknown> | undefined;
-  const whopUserId = user_data?.id as string | undefined;
-  const whopMembershipId = data.id as string | undefined;
+  const membershipId = pickString(data.id);
+  if (!membershipId) return;
 
-  console.log("Membership went invalid", { whopUserId, whopMembershipId });
-
-  // Find user by Whop membership ID or user ID
-  let user = null;
-
-  if (whopMembershipId) {
-    user = await prisma.user.findFirst({ where: { whopMembershipId } });
-  }
-
-  if (!user && whopUserId) {
-    user = await prisma.user.findFirst({ where: { whopUserId } });
-  }
-
+  const user = await prisma.user.findUnique({ where: { whopMembershipId: membershipId } });
   if (!user) {
-    console.error("Could not find user for invalid membership", { whopUserId, whopMembershipId });
+    console.error(`[whop-webhook] no user found for membership ${membershipId}`);
     return;
   }
 
-  const freeLimits = getPlanLimits("FREE");
-
-  // Downgrade to FREE
   await prisma.user.update({
     where: { id: user.id },
-    data: {
-      plan: "FREE",
-      maxProducts: freeLimits.maxProducts,
-      whopMembershipId: null,
-      planExpiresAt: new Date(), // Mark as expired
-    },
+    data: { planStatus: "EXPIRED" },
   });
+  console.log(`[whop-webhook] expired plan for ${user.email}`);
+}
 
-  // Update scrape intervals
-  await prisma.trackedProduct.updateMany({
-    where: { userId: user.id },
-    data: { scrapeInterval: freeLimits.scrapeInterval },
+async function handlePaymentSucceeded(data: Record<string, unknown>) {
+  // Whop also sends membership.went_valid on renewals, so we just log here for
+  // observability. Plan-state changes go through the membership handlers.
+  const membershipObj = pickRecord(data.membership);
+  console.log("[whop-webhook] payment succeeded", {
+    membershipId: pickString(data.membership_id) ?? pickString(membershipObj?.id),
   });
-
-  // If user has more products than free limit, pause excess
-  const activeProducts = await prisma.trackedProduct.findMany({
-    where: { userId: user.id, status: "ACTIVE" },
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (activeProducts.length > freeLimits.maxProducts) {
-    const toDeactivate = activeProducts.slice(freeLimits.maxProducts);
-    for (const product of toDeactivate) {
-      await prisma.trackedProduct.update({
-        where: { id: product.id },
-        data: { status: "PAUSED" },
-      });
-    }
-    console.log(`Paused ${toDeactivate.length} products due to plan downgrade`);
-  }
-
-  console.log(`User ${user.id} downgraded to FREE`);
 }
