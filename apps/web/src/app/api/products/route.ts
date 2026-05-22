@@ -13,6 +13,7 @@ import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 import { getPlanFeatures } from "@/lib/plan-gates";
+import { canAddProduct } from "@/lib/limits";
 import { normalizeProductImage } from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
@@ -152,6 +153,21 @@ export async function POST(req: NextRequest) {
     const user = await getCurrentUser();
     if (!user) return unauthorized();
     logContext.userId = user.id;
+
+    // Plan limit gate (Whop subscription state + per-tier product cap)
+    const planCheck = await canAddProduct(user.id);
+    if (!planCheck.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: planCheck.reason,
+          code: "PLAN_LIMIT_REACHED",
+          current: planCheck.current,
+          limit: planCheck.limit,
+          plan: planCheck.plan,
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
     // Rate limit: 10 products per minute per user
     const rl = await rateLimit(`rate:products:${user.id}`, 10, 60);

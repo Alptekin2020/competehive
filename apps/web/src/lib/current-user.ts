@@ -47,6 +47,7 @@ async function applyAdminOverride(user: {
   plan: string;
   maxProducts: number;
   isActive: boolean;
+  planStatus?: string | null;
 }): Promise<AppUser> {
   if (!user.clerkId || !isAdminUser({ clerkId: user.clerkId, email: user.email })) {
     return {
@@ -63,7 +64,8 @@ async function applyAdminOverride(user: {
   const needsAdminUpdate =
     user.plan !== ADMIN_OVERRIDE_PLAN ||
     user.maxProducts !== ADMIN_OVERRIDE_MAX_PRODUCTS ||
-    user.isActive !== true;
+    user.isActive !== true ||
+    user.planStatus !== "ACTIVE";
 
   if (needsAdminUpdate) {
     console.info(
@@ -76,6 +78,7 @@ async function applyAdminOverride(user: {
         plan: ADMIN_OVERRIDE_PLAN,
         maxProducts: ADMIN_OVERRIDE_MAX_PRODUCTS,
         isActive: true,
+        planStatus: "ACTIVE",
       },
     });
 

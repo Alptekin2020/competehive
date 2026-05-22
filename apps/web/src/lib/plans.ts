@@ -143,3 +143,36 @@ export function getPlanLimits(planId: string): { maxProducts: number; scrapeInte
       return { maxProducts: 5, scrapeInterval: 1440 };
   }
 }
+
+// ============================================
+// Plan limit enforcement (Whop subscription gating)
+// ============================================
+
+export type PlanTier = "STARTER" | "PRO" | "ENTERPRISE";
+
+export interface PlanTierLimits {
+  maxProducts: number;
+  refreshIntervalHours: number;
+  displayName: string;
+}
+
+export const PLAN_LIMITS: Record<PlanTier, PlanTierLimits> = {
+  STARTER: { maxProducts: 25, refreshIntervalHours: 24, displayName: "Başlangıç" },
+  PRO: { maxProducts: 100, refreshIntervalHours: 12, displayName: "Profesyonel" },
+  ENTERPRISE: { maxProducts: 500, refreshIntervalHours: 6, displayName: "Kurumsal" },
+};
+
+// Whop product ID → our plan tier mapping.
+// Configured via env so deploys can update mappings without code changes.
+// Product IDs live at: https://whop.com/dashboard → Products
+export const WHOP_PRODUCT_TO_PLAN: Record<string, PlanTier> = {
+  ...(process.env.WHOP_STARTER_PRODUCT_ID
+    ? { [process.env.WHOP_STARTER_PRODUCT_ID]: "STARTER" as PlanTier }
+    : {}),
+  ...(process.env.WHOP_PRO_PRODUCT_ID
+    ? { [process.env.WHOP_PRO_PRODUCT_ID]: "PRO" as PlanTier }
+    : {}),
+  ...(process.env.WHOP_ENTERPRISE_PRODUCT_ID
+    ? { [process.env.WHOP_ENTERPRISE_PRODUCT_ID]: "ENTERPRISE" as PlanTier }
+    : {}),
+};

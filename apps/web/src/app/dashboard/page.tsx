@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { StatCardSkeleton } from "@/components/Skeleton";
 import EmptyState from "@/components/EmptyState";
+import { PlanUsageCard } from "@/components/PlanUsageCard";
 import PriceTrend from "@/components/PriceTrend";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 
@@ -352,6 +353,10 @@ export default function DashboardPage() {
         <p className="text-gray-500 text-xs sm:text-sm">
           Bugün müdahale gerektiren ürünleri hızlıca bulun ve aksiyon alın.
         </p>
+      </div>
+
+      <div className="mb-6">
+        <PlanUsageCard />
       </div>
 
       <div className="mb-6 sm:mb-8 bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5">
