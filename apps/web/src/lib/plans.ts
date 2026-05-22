@@ -44,13 +44,13 @@ export const PLANS: PlanInfo[] = [
     yearlyPrice: 249,
     whopPlanId: process.env.NEXT_PUBLIC_WHOP_STARTER_PLAN_ID || "plan_STARTER_PLACEHOLDER",
     whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID || null,
-    maxProducts: 25,
+    maxProducts: 50,
     scrapeInterval: "Günde 1",
     marketplaces: "2 marketplace",
     priceHistoryDays: 30,
     channels: ["E-posta", "Telegram"],
     features: [
-      "25 ürün takibi",
+      "50 ürün takibi",
       "Günde 1 tarama",
       "2 marketplace",
       "30 gün fiyat geçmişi",
@@ -68,13 +68,13 @@ export const PLANS: PlanInfo[] = [
     yearlyPrice: 649,
     whopPlanId: process.env.NEXT_PUBLIC_WHOP_PRO_PLAN_ID || "plan_PRO_PLACEHOLDER",
     whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID || null,
-    maxProducts: 100,
+    maxProducts: 500,
     scrapeInterval: "12 saatte 1",
     marketplaces: "Tüm marketplace'ler",
     priceHistoryDays: 365,
     channels: ["E-posta", "Telegram", "Webhook"],
     features: [
-      "100 ürün takibi",
+      "500 ürün takibi",
       "12 saatte 1 tarama",
       "Tüm marketplace'ler (8+)",
       "1 yıl fiyat geçmişi",
@@ -92,13 +92,13 @@ export const PLANS: PlanInfo[] = [
     yearlyPrice: 1599,
     whopPlanId: process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID || "plan_ENTERPRISE_PLACEHOLDER",
     whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID || null,
-    maxProducts: 500,
+    maxProducts: 99999,
     scrapeInterval: "6 saatte 1",
     marketplaces: "Tüm marketplace'ler",
     priceHistoryDays: 99999,
     channels: ["E-posta", "Telegram", "Webhook"],
     features: [
-      "500 ürün takibi",
+      "Sınırsız ürün takibi",
       "6 saatte 1 tarama",
       "Tüm marketplace'ler (8+)",
       "Sınırsız fiyat geçmişi",
@@ -137,11 +137,11 @@ export function getCompeteHivePlanByWhopId(whopPlanId: string): string {
 export function getPlanLimits(planId: string): { maxProducts: number; scrapeInterval: number } {
   switch (planId) {
     case "STARTER":
-      return { maxProducts: 25, scrapeInterval: 1440 };
+      return { maxProducts: 50, scrapeInterval: 1440 };
     case "PRO":
-      return { maxProducts: 100, scrapeInterval: 720 };
+      return { maxProducts: 500, scrapeInterval: 720 };
     case "ENTERPRISE":
-      return { maxProducts: 500, scrapeInterval: 360 };
+      return { maxProducts: 99999, scrapeInterval: 360 };
     default:
       return { maxProducts: 5, scrapeInterval: 1440 };
   }
@@ -160,9 +160,9 @@ export interface PlanTierLimits {
 }
 
 export const PLAN_LIMITS: Record<PlanTier, PlanTierLimits> = {
-  STARTER: { maxProducts: 25, refreshIntervalHours: 24, displayName: "Başlangıç" },
-  PRO: { maxProducts: 100, refreshIntervalHours: 12, displayName: "Profesyonel" },
-  ENTERPRISE: { maxProducts: 500, refreshIntervalHours: 6, displayName: "Kurumsal" },
+  STARTER: { maxProducts: 50, refreshIntervalHours: 24, displayName: "Başlangıç" },
+  PRO: { maxProducts: 500, refreshIntervalHours: 12, displayName: "Profesyonel" },
+  ENTERPRISE: { maxProducts: 99999, refreshIntervalHours: 6, displayName: "Kurumsal" },
 };
 
 // Whop product ID → our plan tier mapping.
