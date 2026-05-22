@@ -122,6 +122,25 @@ function isStale(lastScrapedAt: string | null): boolean {
   return Date.now() - ts > STALE_HOURS * 60 * 60 * 1000;
 }
 
+function priceAgeBadge(lastScrapedAt: string | null): { className: string; label: string } | null {
+  if (!lastScrapedAt) return null;
+  const ts = new Date(lastScrapedAt).getTime();
+  if (Number.isNaN(ts)) return null;
+  const diffMs = Date.now() - ts;
+  if (diffMs < 24 * 60 * 60 * 1000) return null;
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  if (diffMs <= 72 * 60 * 60 * 1000) {
+    return {
+      className: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+      label: `Güncellenmedi: ${days} gün önce`,
+    };
+  }
+  return {
+    className: "text-red-400 bg-red-500/10 border-red-500/30",
+    label: `Eski veri: ${days} gün önce`,
+  };
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -776,11 +795,23 @@ export default function DashboardPage() {
                             </span>
                           </div>
                         </div>
-                        <span className="text-xs text-gray-400 whitespace-nowrap">
-                          {item.last_scraped_at
-                            ? (formatRelativeTime(new Date(item.last_scraped_at)) ?? "-")
-                            : "güncel değil"}
-                        </span>
+                        {(() => {
+                          const ageBadge = priceAgeBadge(item.last_scraped_at);
+                          if (ageBadge) {
+                            return (
+                              <span className={`text-[11px] px-2 py-0.5 rounded-md border whitespace-nowrap ${ageBadge.className}`}>
+                                {ageBadge.label}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="text-xs text-gray-400 whitespace-nowrap">
+                              {item.last_scraped_at
+                                ? (formatRelativeTime(new Date(item.last_scraped_at)) ?? "-")
+                                : "güncel değil"}
+                            </span>
+                          );
+                        })()}
                       </Link>
                     ))}
                   </div>
