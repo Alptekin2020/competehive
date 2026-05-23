@@ -314,7 +314,7 @@ export default async function Home() {
             {[
               {
                 icon: "📊",
-                title: "Anlık Fiyat Takibi",
+                title: "Otomatik Fiyat Takibi",
                 desc: "Seçili marketplace&apos;lerdeki fiyatları düzenli aralıklarla otomatik tarayın ve tek ekranda görün.",
               },
               {
@@ -403,19 +403,19 @@ export default async function Home() {
               {
                 plan: "Başlangıç",
                 price: "₺299",
-                features: ["50 ürün", "Saatte 1 tarama", "2 marketplace", "Telegram + E-posta"],
+                features: ["50 ürün", "Günde 1 tarama", "2 marketplace", "Telegram + E-posta"],
                 hl: true,
               },
               {
                 plan: "Profesyonel",
                 price: "₺799",
-                features: ["500 ürün", "15 dk tarama", "Tüm marketplace", "Oto-fiyat kuralları"],
+                features: ["500 ürün", "12 saatte 1 tarama", "Tüm marketplace", "Oto-fiyat kuralları"],
                 hl: false,
               },
               {
                 plan: "Kurumsal",
                 price: "₺1.999",
-                features: ["Sınırsız ürün", "5 dk tarama", "API erişimi", "Webhook + Özel"],
+                features: ["Sınırsız ürün", "6 saatte 1 tarama", "API erişimi", "Webhook + Özel"],
                 hl: false,
               },
             ].map((p, i) => (
