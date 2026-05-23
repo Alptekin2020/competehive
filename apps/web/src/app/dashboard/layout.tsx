@@ -254,6 +254,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Content */}
         <main className="flex-1 p-4 sm:p-6">{children}</main>
+        {/* Footer */}
+        <footer className="border-t border-dark-800 px-4 sm:px-6 py-4">
+          <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-dark-500">
+            <Link href="/privacy" className="hover:text-dark-300 transition">Gizlilik</Link>
+            <span className="text-dark-700">·</span>
+            <Link href="/terms" className="hover:text-dark-300 transition">Kullanım Şartları</Link>
+            <span className="text-dark-700">·</span>
+            <Link href="/kvkk" className="hover:text-dark-300 transition">KVKK</Link>
+            <span className="text-dark-700">·</span>
+            <Link href="/cerez" className="hover:text-dark-300 transition">Çerez</Link>
+            <span className="text-dark-700">·</span>
+            <Link href="/destek" className="hover:text-dark-300 transition">Destek</Link>
+          </nav>
+        </footer>
       </div>
     </div>
   );
