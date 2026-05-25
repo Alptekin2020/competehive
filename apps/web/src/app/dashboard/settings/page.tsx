@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import AlertPrefsCard from "@/components/AlertPrefsCard";
 
 interface TelegramStatus {
   botUsername: string | null;
@@ -228,6 +229,7 @@ export default function SettingsPage() {
       )}
 
       <div className="space-y-6 max-w-2xl">
+        <AlertPrefsCard />
         <div className="bg-dark-900 border border-dark-800 rounded-2xl p-6">
           <h2 className="text-lg font-semibold text-white mb-4">Bildirim Kanalları</h2>
 
