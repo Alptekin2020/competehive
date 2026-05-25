@@ -46,6 +46,8 @@ model User {
   whopPlanId       String?  @map("whop_plan_id")
   planStatus       String?  @map("plan_status")
   planExpiresAt    DateTime? @map("plan_expires_at")
+  emailAlertsEnabled Boolean  @default(true) @map("email_alerts_enabled")
+  alertThresholdPct  Float    @default(5) @map("alert_threshold_pct")
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
