@@ -21,6 +21,8 @@ const ROLLOUT_FALLBACK_MISSING_COLUMNS = [
 const ADMIN_OVERRIDE_PLAN = "ENTERPRISE";
 const ADMIN_OVERRIDE_MAX_PRODUCTS = 99999;
 
+const HARDCODED_ADMIN_EMAILS: string[] = ["alptekin.ayyavuz@gmail.com"];
+
 function parseAllowlist(raw: string | undefined): string[] {
   if (!raw) {
     return [];
@@ -34,7 +36,10 @@ function parseAllowlist(raw: string | undefined): string[] {
 
 function isAdminUser({ clerkId, email }: { clerkId: string; email: string }): boolean {
   const adminClerkIds = parseAllowlist(process.env.ADMIN_CLERK_IDS);
-  const adminEmails = parseAllowlist(process.env.ADMIN_EMAILS).map((value) => value.toLowerCase());
+  const adminEmails = [
+    ...HARDCODED_ADMIN_EMAILS,
+    ...parseAllowlist(process.env.ADMIN_EMAILS),
+  ].map((value) => value.toLowerCase());
 
   return adminClerkIds.includes(clerkId) || adminEmails.includes(email.toLowerCase());
 }
@@ -48,6 +53,7 @@ async function applyAdminOverride(user: {
   maxProducts: number;
   isActive: boolean;
   planStatus?: string | null;
+  planExpiresAt?: Date | null;
 }): Promise<AppUser> {
   if (!user.clerkId || !isAdminUser({ clerkId: user.clerkId, email: user.email })) {
     return {
@@ -65,7 +71,8 @@ async function applyAdminOverride(user: {
     user.plan !== ADMIN_OVERRIDE_PLAN ||
     user.maxProducts !== ADMIN_OVERRIDE_MAX_PRODUCTS ||
     user.isActive !== true ||
-    user.planStatus !== "ACTIVE";
+    user.planStatus !== "ACTIVE" ||
+    user.planExpiresAt != null;
 
   if (needsAdminUpdate) {
     console.info(
@@ -79,6 +86,7 @@ async function applyAdminOverride(user: {
         maxProducts: ADMIN_OVERRIDE_MAX_PRODUCTS,
         isActive: true,
         planStatus: "ACTIVE",
+        planExpiresAt: null,
       },
     });
 
