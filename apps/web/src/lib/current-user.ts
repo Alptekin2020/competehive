@@ -36,10 +36,9 @@ function parseAllowlist(raw: string | undefined): string[] {
 
 function isAdminUser({ clerkId, email }: { clerkId: string; email: string }): boolean {
   const adminClerkIds = parseAllowlist(process.env.ADMIN_CLERK_IDS);
-  const adminEmails = [
-    ...HARDCODED_ADMIN_EMAILS,
-    ...parseAllowlist(process.env.ADMIN_EMAILS),
-  ].map((value) => value.toLowerCase());
+  const adminEmails = [...HARDCODED_ADMIN_EMAILS, ...parseAllowlist(process.env.ADMIN_EMAILS)].map(
+    (value) => value.toLowerCase(),
+  );
 
   return adminClerkIds.includes(clerkId) || adminEmails.includes(email.toLowerCase());
 }
