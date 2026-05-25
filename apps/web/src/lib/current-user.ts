@@ -51,8 +51,8 @@ async function applyAdminOverride(user: {
   plan: string;
   maxProducts: number;
   isActive: boolean;
-  planStatus?: string | null;
-  planExpiresAt?: Date | null;
+  planStatus: string | null;
+  planExpiresAt: Date | null;
 }): Promise<AppUser> {
   if (!user.clerkId || !isAdminUser({ clerkId: user.clerkId, email: user.email })) {
     return {
