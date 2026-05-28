@@ -10,6 +10,7 @@ export interface AppUser {
   plan: string;
   maxProducts: number;
   isActive: boolean;
+  alertThresholdPct: number;
 }
 
 const ROLLOUT_FALLBACK_MISSING_COLUMNS = [
@@ -53,6 +54,7 @@ async function applyAdminOverride(user: {
   isActive: boolean;
   planStatus: string | null;
   planExpiresAt: Date | null;
+  alertThresholdPct: number;
 }): Promise<AppUser> {
   if (!user.clerkId || !isAdminUser({ clerkId: user.clerkId, email: user.email })) {
     return {
@@ -63,6 +65,7 @@ async function applyAdminOverride(user: {
       plan: user.plan,
       maxProducts: user.maxProducts,
       isActive: user.isActive,
+      alertThresholdPct: user.alertThresholdPct,
     };
   }
 
@@ -97,6 +100,7 @@ async function applyAdminOverride(user: {
       plan: updatedUser.plan,
       maxProducts: updatedUser.maxProducts,
       isActive: updatedUser.isActive,
+      alertThresholdPct: updatedUser.alertThresholdPct,
     };
   }
 
@@ -108,6 +112,7 @@ async function applyAdminOverride(user: {
     plan: ADMIN_OVERRIDE_PLAN,
     maxProducts: ADMIN_OVERRIDE_MAX_PRODUCTS,
     isActive: true,
+    alertThresholdPct: user.alertThresholdPct,
   };
 }
 

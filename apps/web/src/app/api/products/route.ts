@@ -298,16 +298,11 @@ export async function POST(req: NextRequest) {
     // 6. Varsayilan bildirim kurallarini otomatik olustur
     // Kullanici istemiyorsa uyarilar sayfasindan kaldirabilir.
     try {
-      const userPrefs = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { alertThresholdPct: true },
-      });
-
       const { created, skipped } = await createDefaultAlertRules({
         userId: user.id,
         trackedProductId: product.id,
         plan: user.plan,
-        alertThresholdPct: userPrefs?.alertThresholdPct ?? 5,
+        alertThresholdPct: user.alertThresholdPct,
       });
 
       logger.info(
