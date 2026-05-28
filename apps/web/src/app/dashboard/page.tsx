@@ -799,7 +799,9 @@ export default function DashboardPage() {
                           const ageBadge = priceAgeBadge(item.last_scraped_at);
                           if (ageBadge) {
                             return (
-                              <span className={`text-[11px] px-2 py-0.5 rounded-md border whitespace-nowrap ${ageBadge.className}`}>
+                              <span
+                                className={`text-[11px] px-2 py-0.5 rounded-md border whitespace-nowrap ${ageBadge.className}`}
+                              >
                                 {ageBadge.label}
                               </span>
                             );
