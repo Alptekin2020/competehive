@@ -58,10 +58,27 @@ export function AddProductModal({
             required
             disabled={loading}
           />
-          <p className="text-dark-600 text-xs mb-6">
+          <p className="text-dark-600 text-xs mb-4">
             Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon veya MediaMarkt ürün
             linkini yapıştırın.
           </p>
+
+          <div className="bg-hive-500/5 border border-hive-500/20 rounded-xl px-3.5 py-3 mb-6">
+            <div className="flex items-start gap-2.5">
+              <span className="text-base leading-none mt-0.5">🔔</span>
+              <div className="min-w-0">
+                <p className="text-xs sm:text-sm text-hive-300 font-medium">
+                  Tüm bildirimler otomatik açılır
+                </p>
+                <p className="text-[11px] sm:text-xs text-dark-400 mt-1 leading-relaxed">
+                  Fiyat düşüşü, fiyat artışı, rakip ucuzladığında, stoğa girince ve yüzde değişim
+                  bildirimleri planınıza uygun kanallarla aktif edilir. İstemediklerinizi{" "}
+                  <span className="text-dark-200">Uyarılar</span> sayfasından tek tıkla
+                  kapatabilirsiniz.
+                </p>
+              </div>
+            </div>
+          </div>
 
           <div className="flex gap-3">
             <button

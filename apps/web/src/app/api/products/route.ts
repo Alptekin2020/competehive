@@ -14,6 +14,7 @@ import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 import { getPlanFeatures } from "@/lib/plan-gates";
 import { canAddProduct } from "@/lib/limits";
+import { createDefaultAlertRules } from "@/lib/default-alerts";
 import { normalizeProductImage } from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
@@ -294,7 +295,30 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 6. Trigger scrape fallback
+    // 6. Varsayilan bildirim kurallarini otomatik olustur
+    // Kullanici istemiyorsa uyarilar sayfasindan kaldirabilir.
+    try {
+      const userPrefs = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { alertThresholdPct: true },
+      });
+
+      const { created, skipped } = await createDefaultAlertRules({
+        userId: user.id,
+        trackedProductId: product.id,
+        plan: user.plan,
+        alertThresholdPct: userPrefs?.alertThresholdPct ?? 5,
+      });
+
+      logger.info(
+        { userId: user.id, productId: product.id, created, skipped },
+        "Default alert rules provisioned",
+      );
+    } catch (err) {
+      logger.error({ err }, "Default alert rules error (non-fatal)");
+    }
+
+    // 7. Trigger scrape fallback
     try {
       const baseUrl = req.nextUrl.origin;
       fetch(`${baseUrl}/api/scrape/trigger`, {
