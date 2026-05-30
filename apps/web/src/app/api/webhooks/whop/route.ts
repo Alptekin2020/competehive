@@ -101,26 +101,37 @@ function header(headers: Headers, ...names: string[]): string {
 async function findUser(data: WhopMembershipData) {
   const md = (data.metadata || {}) as Record<string, unknown>;
   const clerkFromMeta = md.clerkId || md.clerk_user_id || md.clerkUserId || md.clerk_id;
-  const internalFromMeta = md.userId || md.user_id || md.internalUserId || md.internal_user_id;
+  // `competehive_user_id` / `competehive_email` are the keys the checkout flow
+  // actually sets (see /api/checkout). They MUST be checked first or paying
+  // users are never matched and never upgraded.
+  const internalFromMeta =
+    md.competehive_user_id || md.userId || md.user_id || md.internalUserId || md.internal_user_id;
+  const metaEmail = typeof md.competehive_email === "string" ? md.competehive_email : undefined;
   const email = data.user?.email;
   const whopUserId = data.user?.id;
 
-  // Priority: clerk metadata -> internal id -> email -> whop user id
+  // Priority: internal id (from checkout) -> clerk metadata -> checkout email
+  // -> whop account email -> whop user id
+  // `User.id` may be a Postgres uuid column in some environments; querying it
+  // with a non-UUID string throws "invalid input syntax for type uuid" and
+  // would 500 the webhook on attacker-/client-supplied metadata.
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (internalFromMeta && uuidRegex.test(String(internalFromMeta))) {
+    const u = await prisma.user.findUnique({
+      where: { id: String(internalFromMeta) },
+    });
+    if (u) return u;
+  }
   if (clerkFromMeta) {
     const u = await prisma.user.findUnique({
       where: { clerkId: String(clerkFromMeta) },
     });
     if (u) return u;
   }
-  if (internalFromMeta) {
-    const u = await prisma.user.findUnique({
-      where: { id: String(internalFromMeta) },
-    });
-    if (u) return u;
-  }
-  if (email) {
+  for (const candidate of [metaEmail, email]) {
+    if (!candidate) continue;
     const u = await prisma.user.findFirst({
-      where: { email: { equals: email, mode: "insensitive" } },
+      where: { email: { equals: candidate, mode: "insensitive" } },
     });
     if (u) return u;
   }

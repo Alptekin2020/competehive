@@ -19,6 +19,8 @@
     "db:studio": "npm --workspace @competehive/database run studio",
     "db:seed": "npm --workspace @competehive/database exec prisma db seed",
     "db:deploy": "npm --workspace @competehive/database run deploy",
+    "sync:schema": "node scripts/sync-worker-schema.mjs",
+    "check:schema-sync": "node scripts/sync-worker-schema.mjs --check",
     "deploy:web": "npm run db:deploy && npm --workspace @competehive/web run build",
     "deploy:worker": "npm run db:deploy && npm --workspace @competehive/worker run build",
     "typecheck": "npm run --workspaces --if-present typecheck",

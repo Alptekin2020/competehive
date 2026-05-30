@@ -3,12 +3,13 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { addCompetitorSearchJob } from "@/lib/queue";
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Giriş gerekli" }, { status: 401 });
 
+  const { id } = await params;
   const product = await prisma.trackedProduct.findFirst({
-    where: { id: params.id, userId: user.id },
+    where: { id, userId: user.id },
   });
 
   if (!product) return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });

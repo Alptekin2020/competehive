@@ -11,6 +11,7 @@ import { prisma } from "./db";
 import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
 import { setWebhook, setMyCommands } from "./utils/telegram-api";
+import { validateWorkerEnv } from "./shared";
 
 async function registerTelegramBot(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -127,6 +128,10 @@ competitorWorker.on("failed", (job, err) => {
 
 async function start() {
   logger.info("CompeteHive Worker starting...");
+
+  // Fail fast on invalid/missing configuration instead of failing late on the
+  // first job (e.g. a missing DATABASE_URL surfacing as a deep Prisma error).
+  validateWorkerEnv();
 
   await registerTelegramBot();
 

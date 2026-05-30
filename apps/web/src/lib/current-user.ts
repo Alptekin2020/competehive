@@ -35,7 +35,7 @@ function parseAllowlist(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function isAdminUser({ clerkId, email }: { clerkId: string; email: string }): boolean {
+export function isAdminUser({ clerkId, email }: { clerkId: string; email: string }): boolean {
   const adminClerkIds = parseAllowlist(process.env.ADMIN_CLERK_IDS);
   const adminEmails = [...HARDCODED_ADMIN_EMAILS, ...parseAllowlist(process.env.ADMIN_EMAILS)].map(
     (value) => value.toLowerCase(),

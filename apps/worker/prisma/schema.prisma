@@ -3,6 +3,8 @@
 
 generator client {
   provider      = "prisma-client-js"
+  // "debian-openssl-3.0.x" is required by the worker's node:20-slim (Debian)
+  // Docker image, which generates its client from a copy of THIS schema.
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
@@ -41,6 +43,14 @@ model User {
   telegramLinkTokenExpiresAt DateTime? @map("telegram_link_token_expires_at")
   webhookUrl       String?  @map("webhook_url")
   stripeCustomerId String?  @map("stripe_customer_id")
+  whopUserId       String?  @unique @map("whop_user_id")
+  whopMembershipId String?  @unique @map("whop_membership_id")
+  whopProductId    String?  @map("whop_product_id")
+  whopPlanId       String?  @map("whop_plan_id")
+  planStatus       String?  @map("plan_status")
+  planExpiresAt    DateTime? @map("plan_expires_at")
+  emailAlertsEnabled Boolean  @default(true) @map("email_alerts_enabled")
+  alertThresholdPct  Float    @default(5) @map("alert_threshold_pct")
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
@@ -49,6 +59,7 @@ model User {
   alertRules      AlertRule[]
   notifications   Notification[]
   apiKeys         ApiKey[]
+  tags            Tag[]
 
   @@map("users")
 }
@@ -121,7 +132,7 @@ model TrackedProduct {
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
 
-  // Refresh tracking
+  // Step 1.4: Refresh tracking
   refreshStatus       String?    @map("refresh_status")
   refreshRequestedAt  DateTime?  @map("refresh_requested_at")
   refreshCompletedAt  DateTime?  @map("refresh_completed_at")
@@ -131,6 +142,7 @@ model TrackedProduct {
   priceHistory PriceHistory[]
   alertRules   AlertRule[]
   competitors  Competitor[]
+  tags         ProductTag[]
 
   @@index([userId, marketplace])
   @@index([status, lastScrapedAt])
@@ -291,4 +303,33 @@ model SystemLog {
 
   @@index([level, createdAt])
   @@map("system_logs")
+}
+
+// ============================================
+// TAGS (User-defined product grouping)
+// ============================================
+
+model Tag {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  name      String
+  color     String   @default("#F59E0B")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products ProductTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model ProductTag {
+  productId String @map("product_id")
+  tagId     String @map("tag_id")
+
+  product TrackedProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag     Tag            @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@map("product_tags")
 }
