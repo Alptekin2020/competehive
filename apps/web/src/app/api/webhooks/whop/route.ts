@@ -112,7 +112,11 @@ async function findUser(data: WhopMembershipData) {
 
   // Priority: internal id (from checkout) -> clerk metadata -> checkout email
   // -> whop account email -> whop user id
-  if (internalFromMeta) {
+  // `User.id` may be a Postgres uuid column in some environments; querying it
+  // with a non-UUID string throws "invalid input syntax for type uuid" and
+  // would 500 the webhook on attacker-/client-supplied metadata.
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (internalFromMeta && uuidRegex.test(String(internalFromMeta))) {
     const u = await prisma.user.findUnique({
       where: { id: String(internalFromMeta) },
     });

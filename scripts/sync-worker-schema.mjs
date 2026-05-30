@@ -29,7 +29,9 @@ if (isCheck) {
   } catch {
     // missing file is treated as out of sync
   }
-  if (worker !== canonical) {
+  // Normalize line endings so a CRLF checkout (Windows) doesn't false-fail.
+  const normalize = (s) => s.replace(/\r\n/g, "\n");
+  if (normalize(worker) !== normalize(canonical)) {
     console.error(
       "✖ apps/worker/prisma/schema.prisma is out of sync with the canonical schema.\n" +
         "  Run `npm run sync:schema` and commit the result.",

@@ -29,17 +29,18 @@ export async function analyzeProduct(
   marketplace: string,
   price: number | null,
 ): Promise<ProductAnalysis> {
-  const response = await getOpenAI().chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    messages: [
-      {
-        role: "system",
-        content: `Sen bir e-ticaret urun analiz asistanisin. Verilen urun basligindan marka, model ve arama anahtar kelimelerini cikar. Yanitini sadece JSON formatinda ver, baska hicbir sey yazma.`,
-      },
-      {
-        role: "user",
-        content: `Urun: "${productName}"
+  try {
+    const response = await getOpenAI().chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: `Sen bir e-ticaret urun analiz asistanisin. Verilen urun basligindan marka, model ve arama anahtar kelimelerini cikar. Yanitini sadece JSON formatinda ver, baska hicbir sey yazma.`,
+        },
+        {
+          role: "user",
+          content: `Urun: "${productName}"
 Marketplace: ${marketplace}
 Fiyat: ${price ? price + " TL" : "bilinmiyor"}
 
@@ -58,17 +59,16 @@ Su JSON formatinda yanit ver:
 }
 
 ONEMLI: searchKeywords icin 3-5 farkli arama varyasyonu uret. Amac: farkli marketplace'lerde (Trendyol, Hepsiburada, Amazon, N11) ayni urunu bulmak. Her marketplace farkli baslik kullanabilir, bu yuzden hem model kodlu hem model kodsuz arama kelimeleri olustur.`,
-      },
-    ],
-    max_tokens: 300,
-  });
+        },
+      ],
+      max_tokens: 300,
+    });
 
-  const text = response.choices[0]?.message?.content || "";
-
-  try {
+    const text = response.choices[0]?.message?.content || "";
     const cleaned = text.replace(/```json|```/g, "").trim();
     return JSON.parse(cleaned);
-  } catch {
+  } catch (error) {
+    console.error("AI analizi başarısız oldu, varsayılan değerler kullanılıyor:", error);
     return {
       brand: "Bilinmiyor",
       model: productName.substring(0, 50),
