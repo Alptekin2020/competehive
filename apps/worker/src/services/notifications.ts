@@ -59,9 +59,40 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#039;");
 }
 
+// Null-safe formatters: alerts triggered by stock or competitor changes carry
+// no price delta, so previousPrice/priceChange/priceChangePct can be null.
+function money(n: number | null): string {
+  return n == null ? "—" : n.toFixed(2);
+}
+function absMoney(n: number | null): string {
+  return n == null ? "—" : Math.abs(n).toFixed(2);
+}
+function absPct(n: number | null): string {
+  return n == null ? "—" : Math.abs(n).toFixed(1);
+}
+function isDrop(n: number | null): boolean {
+  return n != null && n < 0;
+}
+function emailHeadline(ruleType: string, drop: boolean): { emoji: string; heading: string } {
+  switch (ruleType) {
+    case "OUT_OF_STOCK":
+      return { emoji: "🚫", heading: "Stoktan çıktı" };
+    case "BACK_IN_STOCK":
+      return { emoji: "✅", heading: "Stoğa girdi" };
+    case "COMPETITOR_CHEAPER":
+      return { emoji: "⚡", heading: "Rakip daha ucuz" };
+    case "PRICE_THRESHOLD":
+      return { emoji: "🎯", heading: "Hedef fiyata ulaşıldı" };
+    default:
+      return drop
+        ? { emoji: "📉", heading: "Fiyat düştü" }
+        : { emoji: "📈", heading: "Fiyat arttı" };
+  }
+}
+
 function formatTelegramMessage(ruleType: string, data: AlertData): string {
-  const changeAbs = Math.abs(data.priceChange).toFixed(2);
-  const changePct = Math.abs(data.priceChangePct).toFixed(1);
+  const changeAbs = absMoney(data.priceChange);
+  const changePct = absPct(data.priceChangePct);
   const name = `<b>${escapeHtml(data.productName)}</b>`;
   const marketplace = `🏪 ${escapeHtml(data.marketplace)}`;
   const linkLine = `🔗 <a href="${escapeHtml(data.productUrl)}">Ürüne git</a>`;
@@ -72,7 +103,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `📉 <b>Fiyat düştü</b>`,
         ``,
         name,
-        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
         `Değişim: <b>−${changeAbs} ₺</b> (%${changePct})`,
         marketplace,
         ``,
@@ -84,7 +115,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `📈 <b>Fiyat arttı</b>`,
         ``,
         name,
-        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
         `Değişim: <b>+${changeAbs} ₺</b> (%${changePct})`,
         marketplace,
         ``,
@@ -103,14 +134,14 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
       ].join("\n");
 
     case "PERCENTAGE_CHANGE": {
-      const dir = data.priceChange < 0 ? "düştü" : "arttı";
-      const emoji = data.priceChange < 0 ? "📉" : "📈";
-      const sign = data.priceChange < 0 ? "−" : "+";
+      const dir = isDrop(data.priceChange) ? "düştü" : "arttı";
+      const emoji = isDrop(data.priceChange) ? "📉" : "📈";
+      const sign = isDrop(data.priceChange) ? "−" : "+";
       return [
         `${emoji} <b>%${changePct} ${dir}</b>`,
         ``,
         name,
-        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
         `Değişim: <b>${sign}${changeAbs} ₺</b>`,
         marketplace,
         ``,
@@ -143,14 +174,14 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
       ].join("\n");
 
     default: {
-      const dir = data.priceChange < 0 ? "düştü" : "arttı";
-      const emoji = data.priceChange < 0 ? "📉" : "📈";
-      const sign = data.priceChange < 0 ? "−" : "+";
+      const dir = isDrop(data.priceChange) ? "düştü" : "arttı";
+      const emoji = isDrop(data.priceChange) ? "📉" : "📈";
+      const sign = isDrop(data.priceChange) ? "−" : "+";
       return [
         `${emoji} <b>Fiyat ${dir}</b>`,
         ``,
         name,
-        `${data.previousPrice.toFixed(2)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
         `Değişim: <b>${sign}${changeAbs} ₺</b> (%${changePct})`,
         marketplace,
         ``,
@@ -167,9 +198,9 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
 interface AlertData {
   productName: string;
   currentPrice: number;
-  previousPrice: number;
-  priceChange: number;
-  priceChangePct: number;
+  previousPrice: number | null;
+  priceChange: number | null;
+  priceChangePct: number | null;
   marketplace: string;
   productUrl: string;
 }
@@ -179,7 +210,7 @@ interface AlertData {
 // ============================================
 
 function generateNotificationTitle(ruleType: string, data: AlertData): string {
-  const changePct = Math.abs(data.priceChangePct).toFixed(1);
+  const changePct = absPct(data.priceChangePct);
 
   switch (ruleType) {
     case "PRICE_DROP":
@@ -197,18 +228,29 @@ function generateNotificationTitle(ruleType: string, data: AlertData): string {
     case "BACK_IN_STOCK":
       return `✅ Stoğa girdi: ${data.productName}`;
     default: {
-      const direction = data.priceChange < 0 ? "düştü" : "arttı";
+      const direction = isDrop(data.priceChange) ? "düştü" : "arttı";
       return `🔔 Fiyat ${direction}: ${data.productName}`;
     }
   }
 }
 
-function generateNotificationMessage(_ruleType: string, data: AlertData): string {
-  const changeAbs = Math.abs(data.priceChange).toFixed(2);
-  const changePct = Math.abs(data.priceChangePct).toFixed(1);
-  const direction = data.priceChange < 0 ? "düştü" : "arttı";
+function generateNotificationMessage(ruleType: string, data: AlertData): string {
+  if (ruleType === "OUT_OF_STOCK") {
+    return `${data.productName} stoktan çıktı. Marketplace: ${data.marketplace}.`;
+  }
+  if (ruleType === "BACK_IN_STOCK") {
+    return `${data.productName} tekrar stokta. Güncel fiyat: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+  }
+  if (ruleType === "COMPETITOR_CHEAPER") {
+    return `${data.productName} için bir rakip daha ucuz. Senin fiyatın: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+  }
+  if (data.previousPrice === null || data.priceChange === null) {
+    return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+  }
 
-  return `${data.productName} fiyatı ${data.previousPrice.toFixed(2)} ₺'den ${data.currentPrice.toFixed(2)} ₺'ye ${direction} (${data.priceChange < 0 ? "-" : "+"}${changeAbs} ₺, %${changePct}). Marketplace: ${data.marketplace}.`;
+  const direction = data.priceChange < 0 ? "düştü" : "arttı";
+  const sign = data.priceChange < 0 ? "-" : "+";
+  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} (${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)}). Marketplace: ${data.marketplace}.`;
 }
 
 // ============================================
@@ -299,7 +341,7 @@ async function writeNotificationToDB(params: {
 // Email Alert — Resend
 // ============================================
 
-async function sendEmailAlert(user: AlertUser, data: AlertData, _ruleType: string): Promise<void> {
+async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string): Promise<void> {
   const resend = getResend();
   if (!resend) return;
   if (!user?.email) {
@@ -307,17 +349,17 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, _ruleType: strin
     return;
   }
 
-  const direction = data.priceChange < 0 ? "düştü" : "arttı";
-  const emoji = data.priceChange < 0 ? "📉" : "📈";
-  const changeAbs = Math.abs(data.priceChange).toFixed(2);
-  const changePct = Math.abs(data.priceChangePct).toFixed(1);
-  const priceColor = data.priceChange < 0 ? "#22C55E" : "#EF4444";
+  const drop = isDrop(data.priceChange);
+  const changeAbs = absMoney(data.priceChange);
+  const changePct = absPct(data.priceChangePct);
+  const priceColor = drop ? "#22C55E" : "#EF4444";
+  const { emoji, heading } = emailHeadline(ruleType, drop);
 
   try {
     await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || "CompeteHive <onboarding@resend.dev>",
       to: user.email,
-      subject: `${emoji} Fiyat ${direction}: ${data.productName}`,
+      subject: `${emoji} ${heading}: ${data.productName}`,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0A0A0B; color: #FFFFFF;">
           <!-- Header -->
@@ -337,7 +379,7 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, _ruleType: strin
           <!-- Body -->
           <div style="padding: 32px 24px;">
             <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #FFFFFF;">
-              ${emoji} Fiyat ${direction}!
+              ${emoji} ${heading}!
             </h2>
             <p style="margin: 0 0 24px 0; color: #9CA3AF; font-size: 14px;">
               ${data.productName}
@@ -349,7 +391,7 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, _ruleType: strin
                 <tr>
                   <td style="padding: 8px 0; color: #9CA3AF; font-size: 13px;">Önceki Fiyat</td>
                   <td style="padding: 8px 0; text-align: right; color: #9CA3AF; font-size: 14px;">
-                    ${data.previousPrice.toFixed(2)} ₺
+                    ${money(data.previousPrice)} ₺
                   </td>
                 </tr>
                 <tr>
@@ -361,7 +403,7 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, _ruleType: strin
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Değişim</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${priceColor}; font-size: 14px; font-weight: 600;">
-                    ${data.priceChange < 0 ? "-" : "+"}${changeAbs} ₺ (%${changePct})
+                    ${drop ? "-" : "+"}${changeAbs} ₺ (%${changePct})
                   </td>
                 </tr>
                 <tr>

@@ -12,6 +12,7 @@ import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
 import { setWebhook, setMyCommands } from "./utils/telegram-api";
 import { validateWorkerEnv } from "./shared";
+import { closeBrowser } from "./scrapers";
 
 async function registerTelegramBot(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -198,6 +199,7 @@ async function shutdown() {
     productWorker.close(),
     competitorWorker.close(),
   ]);
+  await closeBrowser();
   await prisma.$disconnect();
   logger.info("Workers shut down successfully");
   process.exit(0);

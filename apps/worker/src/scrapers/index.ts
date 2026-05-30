@@ -48,7 +48,7 @@ export function createUnsupportedMarketplaceError(marketplace: string): ScraperE
   });
 }
 
-function parsePrice(raw?: string | null): number {
+export function parsePrice(raw?: string | null): number {
   if (!raw) return 0;
   const cleaned = raw
     .replace(/\u00a0/g, " ")
@@ -161,6 +161,9 @@ async function getBrowser() {
     return browserInstance;
   }
 
+  // A previously launched browser that crashed/disconnected must not be reused.
+  browserInstance = null;
+
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
 
   browserInstance = await puppeteer.launch({
@@ -177,7 +180,25 @@ async function getBrowser() {
     ],
   });
 
+  // If Chromium crashes, drop the singleton so the next call relaunches it
+  // instead of handing out a dead browser.
+  browserInstance.on("disconnected", () => {
+    browserInstance = null;
+  });
+
   return browserInstance;
+}
+
+/** Close the shared Puppeteer browser (called on graceful shutdown). */
+export async function closeBrowser(): Promise<void> {
+  if (browserInstance) {
+    try {
+      await browserInstance.close();
+    } catch {
+      // already closed or crashed — nothing to do
+    }
+    browserInstance = null;
+  }
 }
 
 async function scrapeWithPuppeteer(url: string, config: ScraperConfig): Promise<string> {
@@ -247,7 +268,7 @@ function parseTrendyolHtml(html: string): ScrapedProduct | null {
         const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
         holder.data = {
           name: ld.name || "",
-          price: parseFloat(offer?.price || "0"),
+          price: parsePrice(String(offer?.price ?? "")),
           currency: offer?.priceCurrency || "TRY",
           inStock: offer?.availability?.includes("InStock") ?? true,
           imageUrl: ld.image?.[0] || ld.image || undefined,
@@ -273,7 +294,7 @@ function parseTrendyolHtml(html: string): ScrapedProduct | null {
     const name = $(".pr-new-br h1").text().trim() || $("h1.product-name").text().trim();
     const priceText =
       $(".prc-dsc").first().text().trim() || $(".product-price-container .prc-slg").text().trim();
-    const price = parseFloat(priceText.replace(/[^\d,]/g, "").replace(",", ".")) || 0;
+    const price = parsePrice(priceText);
     const sellerName = $(".merchant-text").text().trim() || $(".seller-name").text().trim();
     const imageUrl =
       $(".base-product-image img").attr("src") || $("img.detail-section-img").attr("src");
@@ -1306,7 +1327,7 @@ function parseAmazonTRHtml(html: string): ScrapedProduct | null {
       if (offer?.price) {
         holder.data = {
           name: ld?.name,
-          price: parseFloat(offer.price || "0"),
+          price: parsePrice(String(offer.price ?? "")),
           currency: offer.priceCurrency || "TRY",
           sellerName: offer.seller?.name,
           imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
@@ -1367,7 +1388,7 @@ function parseN11Html(html: string): ScrapedProduct | null {
       if (offer?.price) {
         holder.data = {
           name: ld?.name,
-          price: parseFloat(offer.price || "0"),
+          price: parsePrice(String(offer.price ?? "")),
           currency: offer.priceCurrency || "TRY",
           sellerName: offer.seller?.name,
           imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
@@ -1670,7 +1691,7 @@ export async function scrapeGeneric(
           const offers = Array.isArray(product.offers) ? product.offers[0] : product.offers;
           holder.data = {
             name: product.name || "",
-            price: parseFloat(offers?.price || "0"),
+            price: parsePrice(String(offers?.price ?? "")),
             currency: offers?.priceCurrency || "TRY",
             inStock: offers?.availability?.includes("InStock") ?? true,
             imageUrl: Array.isArray(product.image) ? product.image[0] : product.image || undefined,

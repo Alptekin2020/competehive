@@ -4,6 +4,7 @@ import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
+import { evaluateAlertRule } from "./alert-rules";
 
 const prisma = new PrismaClient();
 
@@ -277,9 +278,20 @@ export const alertWorker = new Worker(
       },
     });
 
-    for (const rule of rules) {
-      let shouldAlert = false;
+    // COMPETITOR_CHEAPER kuralları için en ucuz rakip fiyatını bir kez yükle.
+    let minCompetitorPrice: number | null = null;
+    if (rules.some((r) => r.ruleType === "COMPETITOR_CHEAPER")) {
+      const competitors = await prisma.competitor.findMany({
+        where: { trackedProductId: productId, currentPrice: { not: null } },
+        select: { currentPrice: true },
+      });
+      const prices = competitors
+        .map((c) => (c.currentPrice != null ? Number(c.currentPrice) : null))
+        .filter((p): p is number => p != null && p > 0);
+      minCompetitorPrice = prices.length > 0 ? Math.min(...prices) : null;
+    }
 
+    for (const rule of rules) {
       // Cooldown kontrolü
       if (rule.lastTriggered) {
         const cooldownMs = rule.cooldownMinutes * 60 * 1000;
@@ -288,37 +300,18 @@ export const alertWorker = new Worker(
         }
       }
 
-      // Kural tipine göre kontrol
-      switch (rule.ruleType) {
-        case "PRICE_DROP":
-          if (!isPriceEvent || priceChange === null) break;
-          shouldAlert = priceChange < 0;
-          break;
-        case "PRICE_INCREASE":
-          if (!isPriceEvent || priceChange === null) break;
-          shouldAlert = priceChange > 0;
-          break;
-        case "PRICE_THRESHOLD":
-          if (!isPriceEvent) break;
-          if (rule.direction === "below") {
-            shouldAlert = currentPrice <= Number(rule.thresholdValue);
-          } else {
-            shouldAlert = currentPrice >= Number(rule.thresholdValue);
-          }
-          break;
-        case "PERCENTAGE_CHANGE":
-          if (!isPriceEvent || priceChangePct === null) break;
-          shouldAlert = Math.abs(priceChangePct) >= Number(rule.thresholdValue);
-          break;
-        case "OUT_OF_STOCK":
-          if (!isStockEvent || previousStockState === null) break;
-          shouldAlert = previousStockState && !inStock;
-          break;
-        case "BACK_IN_STOCK":
-          if (!isStockEvent || previousStockState === null) break;
-          shouldAlert = !previousStockState && inStock;
-          break;
-      }
+      const shouldAlert = evaluateAlertRule(rule.ruleType, {
+        currentPrice,
+        priceChange,
+        priceChangePct,
+        isPriceEvent,
+        isStockEvent,
+        inStock,
+        previousStockState,
+        thresholdValue: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
+        direction: rule.direction,
+        minCompetitorPrice,
+      });
 
       if (shouldAlert) {
         await sendAlerts(rule, {

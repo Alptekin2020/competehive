@@ -6,6 +6,7 @@ import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
+import { alertQueue } from "./processor";
 
 interface OnboardJobData {
   productId: string;
@@ -338,6 +339,20 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       } catch (err) {
         console.error(`Kendi fiyatı kaydetme hatası:`, err);
       }
+    }
+
+    // COMPETITOR_CHEAPER alarmlarını rakip fiyatları güncellendiğinde de tetikle.
+    if (savedCount > 0 && sourcePrice && sourcePrice > 0) {
+      await alertQueue.add("check-alerts", {
+        productId,
+        eventTypes: ["competitor-change"],
+        currentPrice: sourcePrice,
+        previousPrice: null,
+        priceChange: null,
+        priceChangePct: null,
+        inStock: product.status !== "OUT_OF_STOCK",
+        previousInStock: null,
+      });
     }
 
     await updateTrackedProductRefresh(productId, {
