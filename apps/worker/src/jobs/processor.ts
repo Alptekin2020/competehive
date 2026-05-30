@@ -281,14 +281,13 @@ export const alertWorker = new Worker(
     // COMPETITOR_CHEAPER kuralları için en ucuz rakip fiyatını bir kez yükle.
     let minCompetitorPrice: number | null = null;
     if (rules.some((r) => r.ruleType === "COMPETITOR_CHEAPER")) {
-      const competitors = await prisma.competitor.findMany({
-        where: { trackedProductId: productId, currentPrice: { not: null } },
-        select: { currentPrice: true },
+      // Let the DB compute the cheapest competitor instead of pulling every row.
+      const aggregate = await prisma.competitor.aggregate({
+        where: { trackedProductId: productId, currentPrice: { gt: 0 } },
+        _min: { currentPrice: true },
       });
-      const prices = competitors
-        .map((c) => (c.currentPrice != null ? Number(c.currentPrice) : null))
-        .filter((p): p is number => p != null && p > 0);
-      minCompetitorPrice = prices.length > 0 ? Math.min(...prices) : null;
+      minCompetitorPrice =
+        aggregate._min.currentPrice != null ? Number(aggregate._min.currentPrice) : null;
     }
 
     for (const rule of rules) {

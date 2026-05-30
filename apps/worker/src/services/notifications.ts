@@ -352,7 +352,7 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string
   const drop = isDrop(data.priceChange);
   const changeAbs = absMoney(data.priceChange);
   const changePct = absPct(data.priceChangePct);
-  const priceColor = drop ? "#22C55E" : "#EF4444";
+  const priceColor = data.priceChange === null ? "#FFFFFF" : drop ? "#22C55E" : "#EF4444";
   const { emoji, heading } = emailHeadline(ruleType, drop);
 
   try {
@@ -388,24 +388,32 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string
             <!-- Price Card -->
             <div style="background: #111113; border: 1px solid #1F1F23; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
               <table style="width: 100%; border-collapse: collapse;">
-                <tr>
-                  <td style="padding: 8px 0; color: #9CA3AF; font-size: 13px;">Önceki Fiyat</td>
-                  <td style="padding: 8px 0; text-align: right; color: #9CA3AF; font-size: 14px;">
-                    ${money(data.previousPrice)} ₺
-                  </td>
-                </tr>
+                ${
+                  data.previousPrice === null
+                    ? ""
+                    : `<tr>
+                      <td style="padding: 8px 0; color: #9CA3AF; font-size: 13px;">Önceki Fiyat</td>
+                      <td style="padding: 8px 0; text-align: right; color: #9CA3AF; font-size: 14px;">
+                        ${money(data.previousPrice)} ₺
+                      </td>
+                    </tr>`
+                }
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #FFFFFF; font-size: 13px; font-weight: 600;">Yeni Fiyat</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; font-size: 20px; font-weight: 700; color: ${priceColor};">
                     ${data.currentPrice.toFixed(2)} ₺
                   </td>
                 </tr>
-                <tr>
-                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Değişim</td>
-                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${priceColor}; font-size: 14px; font-weight: 600;">
-                    ${drop ? "-" : "+"}${changeAbs} ₺ (%${changePct})
-                  </td>
-                </tr>
+                ${
+                  data.priceChange === null
+                    ? ""
+                    : `<tr>
+                      <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Değişim</td>
+                      <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${priceColor}; font-size: 14px; font-weight: 600;">
+                        ${drop ? "-" : "+"}${changeAbs} ₺ (%${changePct})
+                      </td>
+                    </tr>`
+                }
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Marketplace</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
