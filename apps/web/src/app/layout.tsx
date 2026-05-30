@@ -9,6 +9,7 @@ const SITE_DESCRIPTION =
   "Trendyol, Hepsiburada, Amazon ve N11'deki rakip fiyatları otomatik takip edin.";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://competehive-web.vercel.app"),
   title: SITE_TITLE,
   description: SITE_DESCRIPTION,
   icons: {
