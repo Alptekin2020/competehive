@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { detectMarketplaceFromUrl, MARKETPLACE_VALUES } from "../marketplaces";
+import {
+  detectMarketplaceFromUrl,
+  MARKETPLACE_VALUES,
+  isScraperSupportedMarketplace,
+} from "../marketplaces";
 
 describe("detectMarketplaceFromUrl", () => {
   it("should detect Trendyol URLs", () => {
@@ -46,5 +50,19 @@ describe("detectMarketplaceFromUrl", () => {
 
   it("should detect PTT AVM URLs as PTTAVM", () => {
     expect(detectMarketplaceFromUrl("https://www.pttavm.com/urun/abc-123")).toBe("PTTAVM");
+  });
+});
+
+describe("isScraperSupportedMarketplace", () => {
+  it("accepts marketplaces the worker can scrape", () => {
+    for (const mp of ["TRENDYOL", "HEPSIBURADA", "AMAZON_TR", "N11", "MEDIAMARKT", "PTTAVM"]) {
+      expect(isScraperSupportedMarketplace(mp)).toBe(true);
+    }
+  });
+
+  it("rejects unsupported marketplaces and CUSTOM", () => {
+    for (const mp of ["CICEKSEPETI", "AKAKCE", "SHOPIFY", "CUSTOM", "UNKNOWN"]) {
+      expect(isScraperSupportedMarketplace(mp)).toBe(false);
+    }
   });
 });

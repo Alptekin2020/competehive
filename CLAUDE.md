@@ -154,9 +154,9 @@ Defined in `packages/shared/src/index.ts` (`PLAN_LIMITS`):
 | Plan       | Products | Min Interval | Marketplaces | History   | Channels         |
 | ---------- | -------- | ------------ | ------------ | --------- | ---------------- |
 | FREE       | 5        | 1440 min     | 1            | 7 days    | EMAIL            |
-| STARTER    | 50       | 60 min       | 2            | 30 days   | EMAIL, TELEGRAM  |
-| PRO        | 500      | 15 min       | 99           | 365 days  | All + auto rules |
-| ENTERPRISE | 99999    | 5 min        | 99           | Unlimited | All features     |
+| STARTER    | 50       | 1440 min     | 2            | 30 days   | EMAIL, TELEGRAM  |
+| PRO        | 500      | 720 min      | 99           | 365 days  | All + auto rules |
+| ENTERPRISE | 99999    | 360 min      | 99           | Unlimited | All features     |
 
 ### Worker Jobs
 

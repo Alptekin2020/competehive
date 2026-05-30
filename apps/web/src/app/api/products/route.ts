@@ -6,7 +6,11 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
-import { detectMarketplaceFromUrl } from "@/lib/marketplaces";
+import {
+  detectMarketplaceFromUrl,
+  isScraperSupportedMarketplace,
+  SUPPORTED_MARKETPLACE_LABEL,
+} from "@/lib/marketplaces";
 import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { addProductSchema } from "@/lib/validation";
@@ -183,6 +187,12 @@ export async function POST(req: NextRequest) {
 
     const marketplace = detectMarketplaceFromUrl(productUrl);
     logContext.marketplace = marketplace;
+
+    if (!isScraperSupportedMarketplace(marketplace)) {
+      return badRequest(
+        `Bu pazar yeri henüz desteklenmiyor. Desteklenen pazar yerleri: ${SUPPORTED_MARKETPLACE_LABEL}.`,
+      );
+    }
 
     const productCount = await prisma.trackedProduct.count({
       where: { userId: user.id },
