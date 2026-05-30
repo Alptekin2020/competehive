@@ -235,7 +235,12 @@ export async function POST(request: Request) {
       // UI and limit checks stop treating the user as a paying customer.
       await prisma.user.update({
         where: { id: user.id },
-        data: { plan: "FREE", planStatus: "EXPIRED", maxProducts: 5 },
+        data: {
+          plan: "FREE",
+          planStatus: "EXPIRED",
+          maxProducts: getPlanLimits("FREE").maxProducts,
+          planExpiresAt: null,
+        },
       });
       console.log("[whop] membership terminated -> FREE, user=" + user.id);
       return NextResponse.json({ received: true });
