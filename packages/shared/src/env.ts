@@ -31,6 +31,14 @@ export const webEnvSchema = baseSchema.extend({
 
   // Optional Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+
+  // Optional Whop billing
+  WHOP_API_KEY: z.string().optional(),
+  WHOP_WEBHOOK_SECRET: z.string().optional(),
+  WHOP_STARTER_PRODUCT_ID: z.string().optional(),
+  WHOP_PRO_PRODUCT_ID: z.string().optional(),
+  WHOP_ENTERPRISE_PRODUCT_ID: z.string().optional(),
 
   // Optional admin bootstrap override
   ADMIN_EMAILS: z.string().optional(),
