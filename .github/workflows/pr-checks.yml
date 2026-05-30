@@ -25,8 +25,14 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: "1"
 
+      - name: Security audit (fail on high/critical)
+        run: npm audit --audit-level=high
+
       - name: Prisma generate
         run: npm run db:generate
+
+      - name: Schema sync check
+        run: npm run check:schema-sync
 
       - name: Format check
         run: npm run format:check
@@ -39,3 +45,13 @@ jobs:
 
       - name: Tests
         run: npm run test:run
+
+      - name: Build
+        run: npm run build
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+          DATABASE_URL: "postgresql://user:pass@localhost:5432/ci"
+          REDIS_URL: "redis://localhost:6379"
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_Y2ktYnVpbGQuY2xlcmsuYWNjb3VudHMuZGV2JA=="
+          CLERK_SECRET_KEY: "sk_test_ci_build_placeholder_00000000000000"
+          NEXT_PUBLIC_APP_URL: "http://localhost:3000"
