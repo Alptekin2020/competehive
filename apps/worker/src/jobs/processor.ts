@@ -31,10 +31,11 @@ export const scrapeQueue = new Queue("scrape", {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 5000 },
-    // Age-based (< the 5-min schedule floor) so a stable jobId is freed before
-    // the next legitimate re-scrape, while still deduping in-flight/recent jobs.
-    removeOnComplete: { age: 180, count: 1000 },
-    removeOnFail: { count: 500 },
+    // Remove finished jobs immediately so the stable per-product jobId is freed
+    // the moment a scrape ends — only waiting/active jobs dedup (in-flight), so
+    // the next scheduled scan and manual refresh are never blocked.
+    removeOnComplete: true,
+    removeOnFail: true,
   },
 });
 
@@ -343,7 +344,9 @@ export const alertWorker = new Worker(
 // ============================================
 
 // Guards against overlapping scheduleScans runs (the 60s interval can fire
-// again before a slow run finishes) so a product isn't queued twice per window.
+// again before a slow run finishes). In-process lock (single-worker deploy);
+// the stable per-product jobId is the Redis-level dedup that also covers
+// multiple processes.
 let isScheduling = false;
 
 export async function scheduleScans() {
@@ -354,6 +357,8 @@ export async function scheduleScans() {
   isScheduling = true;
   try {
     await runScheduleScans();
+  } catch (error) {
+    logger.error({ error }, "scheduleScans failed");
   } finally {
     isScheduling = false;
   }
