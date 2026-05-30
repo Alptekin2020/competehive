@@ -274,6 +274,7 @@ export async function POST(req: NextRequest) {
         currency: scraped.currency,
         status: productStatus,
         lastScrapedAt: new Date(),
+        scrapeInterval: features.scrapeIntervalMinutes,
         metadata: {
           brand: analysis.brand,
           model: analysis.model,
