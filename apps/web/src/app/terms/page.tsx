@@ -1,4 +1,10 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Kullanım Koşulları — CompeteHive",
+  description: "CompeteHive kullanım koşulları ve hizmet şartları.",
+};
 
 export default function TermsPage() {
   return (

@@ -23,7 +23,7 @@ export function AddProductModal({
       />
       <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-lg relative z-10 max-h-[85vh] overflow-y-auto safe-bottom">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-bold text-white">Urun Ekle</h2>
+          <h2 className="text-lg font-bold text-white">Ürün Ekle</h2>
           <button
             onClick={() => !loading && onClose()}
             className="text-dark-500 hover:text-white transition p-2 -m-1"
@@ -48,7 +48,7 @@ export function AddProductModal({
         )}
 
         <form onSubmit={onSubmit}>
-          <label className="block text-sm font-medium text-dark-300 mb-2">Urun URL&apos;si</label>
+          <label className="block text-sm font-medium text-dark-300 mb-2">Ürün URL&apos;si</label>
           <input
             type="url"
             value={url}
@@ -87,7 +87,7 @@ export function AddProductModal({
               className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 transition"
               disabled={loading}
             >
-              Iptal
+              İptal
             </button>
             <button
               type="submit"

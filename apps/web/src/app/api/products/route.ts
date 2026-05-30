@@ -231,7 +231,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       logger.error({ err }, "Scrape error");
       scraped = {
-        name: "Urun adi alinamadi",
+        name: "Ürün adı alınamadı",
         price: null,
         currency: "TRY",
         image: null,

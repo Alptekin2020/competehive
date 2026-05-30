@@ -4,20 +4,38 @@ import { trTR } from "@clerk/localizations";
 import "./globals.css";
 import CookieBanner from "@/components/CookieBanner";
 
+const SITE_TITLE = "CompeteHive — Rakip Fiyat Takip Platformu";
+const SITE_DESCRIPTION =
+  "Trendyol, Hepsiburada, Amazon ve N11'deki rakip fiyatları otomatik takip edin.";
+
 export const metadata: Metadata = {
-  title: "CompeteHive — Rakip Fiyat Takip Platformu",
-  description: "Trendyol, Hepsiburada, Amazon ve N11'deki rakip fiyatları otomatik takip edin.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://competehive-web.vercel.app"),
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
   icons: {
     icon: [{ url: "/favicon.png", type: "image/png" }],
     shortcut: "/favicon.png",
     apple: "/favicon.png",
+  },
+  openGraph: {
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    type: "website",
+    locale: "tr_TR",
+    siteName: "CompeteHive",
+    images: [{ url: "/competehive-logo.png" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: ["/competehive-logo.png"],
   },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: "cover",
 };
 

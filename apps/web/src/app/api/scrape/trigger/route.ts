@@ -87,6 +87,7 @@ export async function POST(req: NextRequest) {
     // Only update the name if the current one is the scraper fallback
     const isFallbackName =
       !product.productName ||
+      product.productName === "Ürün adı alınamadı" ||
       product.productName === "Urun adi alinamadi" ||
       product.productName.endsWith(" ürünü") ||
       /ürünü\s*[-–]\s*Online/i.test(product.productName);
