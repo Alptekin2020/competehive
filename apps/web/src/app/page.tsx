@@ -409,7 +409,12 @@ export default async function Home() {
               {
                 plan: "Profesyonel",
                 price: "₺799",
-                features: ["500 ürün", "12 saatte 1 tarama", "Tüm marketplace", "Oto-fiyat kuralları"],
+                features: [
+                  "500 ürün",
+                  "12 saatte 1 tarama",
+                  "Tüm marketplace",
+                  "Oto-fiyat kuralları",
+                ],
                 hl: false,
               },
               {

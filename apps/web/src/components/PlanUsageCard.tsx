@@ -75,7 +75,10 @@ export function PlanUsageCard() {
       <div className="mt-3 flex items-baseline justify-between">
         <p className="text-white">
           <span className="text-2xl font-bold">{data.currentProductCount}</span>
-          <span className="text-gray-400 text-sm"> / {data.maxProducts >= 99999 ? "Sınırsız" : data.maxProducts} ürün</span>
+          <span className="text-gray-400 text-sm">
+            {" "}
+            / {data.maxProducts >= 99999 ? "Sınırsız" : data.maxProducts} ürün
+          </span>
         </p>
         {(isNearLimit || isAtLimit) && (
           <Link href="/dashboard/checkout" className="text-amber-400 text-xs hover:text-amber-300">

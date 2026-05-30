@@ -32,9 +32,9 @@ export default function DestekPage() {
         <div className="max-w-3xl mx-auto">
           <h1 className="text-4xl font-bold text-white mb-4">Destek</h1>
           <p className="text-dark-300 text-sm leading-relaxed mb-8">
-            Sorularınız için buradayız. Aşağıdaki sıkça sorulan soruları inceleyebilir veya
-            doğrudan bize yazabilirsiniz. Genellikle{" "}
-            <span className="text-white font-medium">24 saat</span> içinde yanıt veriyoruz.
+            Sorularınız için buradayız. Aşağıdaki sıkça sorulan soruları inceleyebilir veya doğrudan
+            bize yazabilirsiniz. Genellikle <span className="text-white font-medium">24 saat</span>{" "}
+            içinde yanıt veriyoruz.
           </p>
 
           <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6 mb-10">

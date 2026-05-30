@@ -7,6 +7,11 @@ import CookieBanner from "@/components/CookieBanner";
 export const metadata: Metadata = {
   title: "CompeteHive — Rakip Fiyat Takip Platformu",
   description: "Trendyol, Hepsiburada, Amazon ve N11'deki rakip fiyatları otomatik takip edin.",
+  icons: {
+    icon: [{ url: "/favicon.png", type: "image/png" }],
+    shortcut: "/favicon.png",
+    apple: "/favicon.png",
+  },
 };
 
 export const viewport: Viewport = {
