@@ -31,7 +31,9 @@ export const scrapeQueue = new Queue("scrape", {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 5000 },
-    removeOnComplete: { count: 1000 },
+    // Age-based (< the 5-min schedule floor) so a stable jobId is freed before
+    // the next legitimate re-scrape, while still deduping in-flight/recent jobs.
+    removeOnComplete: { age: 180, count: 1000 },
     removeOnFail: { count: 500 },
   },
 });
@@ -340,7 +342,24 @@ export const alertWorker = new Worker(
 // SCHEDULER - Periyodik tarama
 // ============================================
 
+// Guards against overlapping scheduleScans runs (the 60s interval can fire
+// again before a slow run finishes) so a product isn't queued twice per window.
+let isScheduling = false;
+
 export async function scheduleScans() {
+  if (isScheduling) {
+    logger.warn("scheduleScans still running — skipping this tick");
+    return;
+  }
+  isScheduling = true;
+  try {
+    await runScheduleScans();
+  } finally {
+    isScheduling = false;
+  }
+}
+
+async function runScheduleScans() {
   logger.info("Scheduling product scans...");
 
   // Taranması gereken ürünleri bul
@@ -384,7 +403,7 @@ export async function scheduleScans() {
         productUrl: product.productUrl,
       },
       {
-        jobId: `scrape-${product.id}-${Date.now()}`,
+        jobId: `scrape-${product.id}`, // stable id dedups a product still queued from a prior tick
         priority: product.lastScrapedAt ? 2 : 1, // Hiç taranmamışlar öncelikli
       },
     );
