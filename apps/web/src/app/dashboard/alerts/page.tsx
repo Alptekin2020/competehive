@@ -334,6 +334,20 @@ export default function AlertsPage() {
             </div>
           )}
 
+          <div className="flex items-start gap-3 rounded-xl border border-hive-500/20 bg-hive-500/5 px-4 py-3">
+            <span className="text-base leading-none mt-0.5">🔔</span>
+            <div className="min-w-0">
+              <p className="text-sm text-hive-300 font-medium">
+                Her yeni ürün için bildirimler otomatik açılır
+              </p>
+              <p className="text-xs text-dark-400 mt-1 leading-relaxed">
+                Ürün eklediğinizde fiyat düşüşü, fiyat artışı, rakip ucuzladığında, stok değişimi ve
+                yüzde değişim kuralları planınıza uygun kanallarla aktif edilir. İstemediklerinizi
+                aşağıdaki listeden kapatın veya silin.
+              </p>
+            </div>
+          </div>
+
           <div className="bg-dark-900 border border-dark-800 rounded-2xl p-4">
             <div className="flex items-start justify-between gap-3 mb-3">
               <div>
