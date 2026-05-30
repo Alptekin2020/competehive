@@ -23,9 +23,9 @@ export default function ProductsError({
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
         </div>
-        <h2 className="text-lg font-bold text-white mb-2">Urunler yuklenemedi</h2>
+        <h2 className="text-lg font-bold text-white mb-2">Ürünler yüklenemedi</h2>
         <p className="text-dark-500 text-sm mb-6">
-          {error.message || "Urunler yuklenirken bir hata olustu."}
+          {error.message || "Ürünler yüklenirken bir hata oluştu."}
         </p>
         <button
           onClick={reset}

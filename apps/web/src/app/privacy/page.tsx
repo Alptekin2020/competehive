@@ -1,4 +1,10 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Gizlilik Politikası — CompeteHive",
+  description: "CompeteHive gizlilik politikası ve kişisel verilerin korunması hakkında bilgi.",
+};
 
 export default function PrivacyPage() {
   return (

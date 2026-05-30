@@ -23,7 +23,7 @@ export default function DashboardError({
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
         </div>
-        <h2 className="text-lg font-bold text-white mb-2">Bir hata olustu</h2>
+        <h2 className="text-lg font-bold text-white mb-2">Bir hata oluştu</h2>
         <p className="text-dark-500 text-sm mb-6">
           {error.message || "Beklenmeyen bir hata meydana geldi."}
         </p>
