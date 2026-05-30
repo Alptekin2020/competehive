@@ -25,7 +25,7 @@ describe("PLAN_LIMITS", () => {
     }
   });
 
-  it("should have decreasing scrapeIntervalMinutes across plans", () => {
+  it("should have non-increasing scrapeIntervalMinutes across plans (higher tiers scrape at least as often)", () => {
     const intervals = [
       PLAN_LIMITS.FREE.scrapeIntervalMinutes,
       PLAN_LIMITS.STARTER.scrapeIntervalMinutes,
@@ -33,7 +33,7 @@ describe("PLAN_LIMITS", () => {
       PLAN_LIMITS.ENTERPRISE.scrapeIntervalMinutes,
     ];
     for (let i = 1; i < intervals.length; i++) {
-      expect(intervals[i]).toBeLessThan(intervals[i - 1]);
+      expect(intervals[i]).toBeLessThanOrEqual(intervals[i - 1]);
     }
   });
 

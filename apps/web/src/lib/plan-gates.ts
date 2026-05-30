@@ -1,4 +1,5 @@
 // Centralized plan permission checks
+import { PLAN_LIMITS } from "@competehive/shared";
 
 export interface PlanFeatures {
   maxProducts: number;
@@ -20,7 +21,7 @@ export const PLAN_FEATURES: Record<string, PlanFeatures> = {
     maxProducts: 5,
     maxAlertRules: 3,
     maxTags: 0,
-    scrapeIntervalMinutes: 1440,
+    scrapeIntervalMinutes: PLAN_LIMITS.FREE.scrapeIntervalMinutes,
     marketplaceLimit: 1,
     priceHistoryDays: 7,
     allowedChannels: ["EMAIL"],
@@ -34,7 +35,7 @@ export const PLAN_FEATURES: Record<string, PlanFeatures> = {
     maxProducts: 50,
     maxAlertRules: 20,
     maxTags: 10,
-    scrapeIntervalMinutes: 60,
+    scrapeIntervalMinutes: PLAN_LIMITS.STARTER.scrapeIntervalMinutes,
     marketplaceLimit: 2,
     priceHistoryDays: 30,
     allowedChannels: ["EMAIL", "TELEGRAM"],
@@ -48,7 +49,7 @@ export const PLAN_FEATURES: Record<string, PlanFeatures> = {
     maxProducts: 500,
     maxAlertRules: 100,
     maxTags: 20,
-    scrapeIntervalMinutes: 15,
+    scrapeIntervalMinutes: PLAN_LIMITS.PRO.scrapeIntervalMinutes,
     marketplaceLimit: 99,
     priceHistoryDays: 365,
     allowedChannels: ["EMAIL", "TELEGRAM", "WEBHOOK"],
@@ -62,7 +63,7 @@ export const PLAN_FEATURES: Record<string, PlanFeatures> = {
     maxProducts: 99999,
     maxAlertRules: 99999,
     maxTags: 99999,
-    scrapeIntervalMinutes: 5,
+    scrapeIntervalMinutes: PLAN_LIMITS.ENTERPRISE.scrapeIntervalMinutes,
     marketplaceLimit: 99,
     priceHistoryDays: 99999,
     allowedChannels: ["EMAIL", "TELEGRAM", "WEBHOOK"],

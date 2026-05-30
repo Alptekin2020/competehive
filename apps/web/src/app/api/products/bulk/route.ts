@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { detectMarketplaceFromUrl } from "@/lib/marketplaces";
+import { detectMarketplaceFromUrl, isScraperSupportedMarketplace } from "@/lib/marketplaces";
 import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { z } from "zod";
 import { PLAN_LIMITS } from "@competehive/shared";
@@ -94,11 +94,11 @@ export async function POST(req: NextRequest) {
 
       // Detect marketplace
       const marketplace = detectMarketplaceFromUrl(url);
-      if (marketplace === "CUSTOM") {
+      if (!isScraperSupportedMarketplace(marketplace)) {
         results.push({
           url,
           status: "error",
-          message: "Desteklenmeyen marketplace",
+          message: "Desteklenmeyen pazar yeri",
         });
         continue;
       }

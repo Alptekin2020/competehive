@@ -54,3 +54,15 @@ export function detectMarketplaceFromUrl(url: string): MarketplaceValue {
   const found = MARKETPLACE_DOMAIN_MAP.find(({ keyword }) => lower.includes(keyword));
   return found?.marketplace ?? "CUSTOM";
 }
+
+const SCRAPER_SUPPORTED_SET = new Set<string>(SUPPORTED_SCRAPER_MARKETPLACES);
+
+/** True when the marketplace has worker scraper support (see worker getScraper). */
+export function isScraperSupportedMarketplace(marketplace: string): boolean {
+  return SCRAPER_SUPPORTED_SET.has(marketplace);
+}
+
+/** Human-readable, comma-separated list of supported marketplace names. */
+export const SUPPORTED_MARKETPLACE_LABEL = SUPPORTED_SCRAPER_MARKETPLACES.map(
+  (id) => MARKETPLACES[id]?.name ?? id,
+).join(", ");

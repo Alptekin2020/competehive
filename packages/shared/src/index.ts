@@ -38,7 +38,7 @@ export const PLAN_LIMITS: Record<string, PlanLimits> = {
   },
   STARTER: {
     maxProducts: 50,
-    scrapeIntervalMinutes: 60,
+    scrapeIntervalMinutes: 1440, // günde 1
     marketplaces: 2,
     priceHistoryDays: 30,
     channels: ["EMAIL", "TELEGRAM"],
@@ -47,7 +47,7 @@ export const PLAN_LIMITS: Record<string, PlanLimits> = {
   },
   PRO: {
     maxProducts: 500,
-    scrapeIntervalMinutes: 15,
+    scrapeIntervalMinutes: 720, // 12 saatte 1
     marketplaces: 99, // tümü
     priceHistoryDays: 365,
     channels: ["EMAIL", "TELEGRAM", "WEBHOOK"],
@@ -56,7 +56,7 @@ export const PLAN_LIMITS: Record<string, PlanLimits> = {
   },
   ENTERPRISE: {
     maxProducts: 99999,
-    scrapeIntervalMinutes: 5,
+    scrapeIntervalMinutes: 360, // 6 saatte 1
     marketplaces: 99,
     priceHistoryDays: 99999,
     channels: ["EMAIL", "TELEGRAM", "WEBHOOK"],
