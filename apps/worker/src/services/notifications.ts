@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
 import { sendMessage as tgSendMessage, TelegramApiError } from "../utils/telegram-api";
+import { assertSafeWebhookUrl } from "../utils/webhook-guard";
 import type { AlertRuleWithUser, AlertUser } from "../shared";
 
 const prisma = new PrismaClient();
@@ -456,6 +457,17 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string
 async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<void> {
   if (!user?.webhookUrl) return;
 
+  // SSRF guard: reject non-http(s) or private/internal targets.
+  try {
+    await assertSafeWebhookUrl(user.webhookUrl);
+  } catch (err) {
+    logger.warn({ userId: user.id, err }, "Webhook URL rejected (unsafe)");
+    return;
+  }
+
+  // Time-box the request so a hung user endpoint can't block the alert worker.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(user.webhookUrl, {
       method: "POST",
@@ -475,6 +487,7 @@ async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<void>
           changePercent: data.priceChangePct,
         },
       }),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -485,5 +498,7 @@ async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<void>
   } catch (error) {
     logger.error({ userId: user.id, error }, "Webhook alert failed");
     throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
