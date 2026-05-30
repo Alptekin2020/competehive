@@ -31,6 +31,20 @@ export const webEnvSchema = baseSchema.extend({
 
   // Optional Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+
+  // Optional Whop billing
+  WHOP_API_KEY: z.string().optional(),
+  WHOP_WEBHOOK_SECRET: z.string().optional(),
+  WHOP_STARTER_PRODUCT_ID: z.string().optional(),
+  WHOP_PRO_PRODUCT_ID: z.string().optional(),
+  WHOP_ENTERPRISE_PRODUCT_ID: z.string().optional(),
+  NEXT_PUBLIC_WHOP_STARTER_PLAN_ID: z.string().optional(),
+  NEXT_PUBLIC_WHOP_PRO_PLAN_ID: z.string().optional(),
+  NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID: z.string().optional(),
+  NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID: z.string().optional(),
+  NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID: z.string().optional(),
+  NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID: z.string().optional(),
 
   // Optional admin bootstrap override
   ADMIN_EMAILS: z.string().optional(),
@@ -40,6 +54,9 @@ export const webEnvSchema = baseSchema.extend({
 export const workerEnvSchema = baseSchema.extend({
   // Optional notifications
   TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_USER: z.string().optional(),

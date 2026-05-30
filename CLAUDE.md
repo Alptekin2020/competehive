@@ -34,7 +34,7 @@ competehive/
 - **UI**: Lucide React (icons), Recharts (charts)
 - **Validation**: Zod 3.24
 - **Logging**: Pino (worker structured logging)
-- **Notifications**: Nodemailer (SMTP), node-telegram-bot-api, Webhooks (JSON POST)
+- **Notifications**: Resend (email), Telegram Bot API, Webhooks (JSON POST)
 - **Testing**: Vitest 4.x, Testing Library (React + jest-dom)
 - **CI/CD**: GitHub Actions (`pr-checks.yml`), Husky + lint-staged
 
@@ -185,7 +185,7 @@ Located in `apps/worker/src/scrapers/`:
 
 Located in `apps/worker/src/services/notifications.ts`:
 
-- **Email**: Styled HTML via Nodemailer with responsive design and price comparison
+- **Email**: Styled HTML via Resend with responsive design and price comparison
 - **Telegram**: Emoji formatting with clickable URLs via node-telegram-bot-api
 - **Webhook**: JSON POST with structured event data (product, price, change metadata)
 
@@ -240,8 +240,9 @@ Validated at startup via Zod schemas in `packages/shared/src/env.ts`.
 **Optional:**
 
 - `TELEGRAM_BOT_TOKEN` — Telegram notification bot
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` — Email notifications
-- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_*_PRICE_ID` — Payment integration
+- `RESEND_API_KEY`, `RESEND_FROM_EMAIL` — Email notifications (worker, via Resend)
+- `WHOP_API_KEY`, `WHOP_WEBHOOK_SECRET`, `WHOP_*_PRODUCT_ID`, `NEXT_PUBLIC_WHOP_*_PLAN_ID` — Whop payment/subscription integration
+- `TELEGRAM_WEBHOOK_SECRET` — Telegram webhook request validation
 - `PROXY_HOST`, `PROXY_PORT`, `PROXY_USER`, `PROXY_PASS` — Proxy for scraping
 - `OPENAI_API_KEY` — AI product analysis
 - `SERPER_API_KEY` — Search API for competitor discovery

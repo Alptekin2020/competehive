@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { WHOP_PRODUCT_TO_PLAN, getPlanLimits, type PlanTier } from "@/lib/plans";
+import { isFreshWebhookTimestamp } from "@/lib/whop-webhook";
 
 export const runtime = "nodejs";
 
@@ -169,6 +170,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
+  // Replay protection (Standard Webhooks): reject stale/early-dated messages
+  // so a captured, validly-signed request can't be replayed later.
+  if (!isFreshWebhookTimestamp(msgTimestamp)) {
+    console.error("[whop] stale or invalid timestamp — possible replay");
+    return NextResponse.json({ error: "stale timestamp" }, { status: 401 });
+  }
+
   let event: WhopEvent;
   try {
     event = JSON.parse(rawBody) as WhopEvent;
@@ -213,17 +221,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ received: true });
     }
 
-    if (type === "membership.deactivated") {
+    if (
+      type === "membership.deactivated" ||
+      type === "membership.went_invalid" ||
+      type === "membership.expired"
+    ) {
       const user = await findUser(data);
       if (!user) {
-        console.warn("[whop] membership.deactivated: user not found");
+        console.warn("[whop] membership terminated: user not found");
         return NextResponse.json({ received: true });
       }
+      // Access has ended — revert to the FREE plan and its product cap so the
+      // UI and limit checks stop treating the user as a paying customer.
       await prisma.user.update({
         where: { id: user.id },
-        data: { planStatus: "EXPIRED" },
+        data: {
+          plan: "FREE",
+          planStatus: "EXPIRED",
+          maxProducts: getPlanLimits("FREE").maxProducts,
+          planExpiresAt: null,
+        },
       });
-      console.log("[whop] deactivated user=" + user.id);
+      console.log("[whop] membership terminated -> FREE, user=" + user.id);
       return NextResponse.json({ received: true });
     }
 
