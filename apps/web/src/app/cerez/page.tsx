@@ -54,8 +54,8 @@ export default function CerezPage() {
                   onayı) hatırlamak için kullanılır.
                 </li>
                 <li>
-                  <span className="text-white">Analitik çerezler:</span> Sitenin nasıl kullanıldığını
-                  anlamak ve hizmeti iyileştirmek için anonim istatistikler toplar.
+                  <span className="text-white">Analitik çerezler:</span> Sitenin nasıl
+                  kullanıldığını anlamak ve hizmeti iyileştirmek için anonim istatistikler toplar.
                 </li>
               </ul>
             </section>

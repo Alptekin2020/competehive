@@ -39,8 +39,8 @@ export default function KvkkPage() {
               <p>
                 6698 sayılı Kişisel Verilerin Korunması Kanunu (&quot;KVKK&quot;) uyarınca kişisel
                 verileriniz, veri sorumlusu sıfatıyla{" "}
-                <span className="text-white">CompeteHive</span> tarafından aşağıda açıklanan kapsamda
-                işlenmektedir.
+                <span className="text-white">CompeteHive</span> tarafından aşağıda açıklanan
+                kapsamda işlenmektedir.
               </p>
             </section>
 
@@ -110,8 +110,8 @@ export default function KvkkPage() {
                 <li>Silinmesini veya yok edilmesini isteme</li>
                 <li>Yapılan işlemlerin aktarıldığı üçüncü kişilere bildirilmesini isteme</li>
                 <li>
-                  Münhasıran otomatik sistemlerle analiz sonucu aleyhinize bir sonuç çıkmasına itiraz
-                  etme ve zarara uğramanız halinde tazminini talep etme
+                  Münhasıran otomatik sistemlerle analiz sonucu aleyhinize bir sonuç çıkmasına
+                  itiraz etme ve zarara uğramanız halinde tazminini talep etme
                 </li>
               </ul>
             </section>

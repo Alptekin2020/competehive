@@ -60,7 +60,7 @@ function verifyWhopSignature(
   msgId: string,
   msgTimestamp: string,
   sigHeader: string,
-  secret: string
+  secret: string,
 ): { verified: boolean; scheme: string } {
   if (!rawBody || !msgId || !msgTimestamp || !sigHeader || !secret) {
     return { verified: false, scheme: "missing-input" };
@@ -73,10 +73,7 @@ function verifyWhopSignature(
 
   for (const { name, key } of candidateKeys(secret)) {
     if (key.length === 0) continue;
-    const expected = crypto
-      .createHmac("sha256", key)
-      .update(signedContent)
-      .digest("base64");
+    const expected = crypto.createHmac("sha256", key).update(signedContent).digest("base64");
     const expectedBuf = Buffer.from(expected, "base64");
     for (const sig of passedSigs) {
       let sigBuf: Buffer;
@@ -85,10 +82,7 @@ function verifyWhopSignature(
       } catch {
         continue;
       }
-      if (
-        sigBuf.length === expectedBuf.length &&
-        crypto.timingSafeEqual(sigBuf, expectedBuf)
-      ) {
+      if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
         return { verified: true, scheme: name };
       }
     }
@@ -106,10 +100,8 @@ function header(headers: Headers, ...names: string[]): string {
 
 async function findUser(data: WhopMembershipData) {
   const md = (data.metadata || {}) as Record<string, unknown>;
-  const clerkFromMeta =
-    md.clerkId || md.clerk_user_id || md.clerkUserId || md.clerk_id;
-  const internalFromMeta =
-    md.userId || md.user_id || md.internalUserId || md.internal_user_id;
+  const clerkFromMeta = md.clerkId || md.clerk_user_id || md.clerkUserId || md.clerk_id;
+  const internalFromMeta = md.userId || md.user_id || md.internalUserId || md.internal_user_id;
   const email = data.user?.email;
   const whopUserId = data.user?.id;
 
@@ -148,24 +140,10 @@ export async function POST(request: Request) {
 
   const rawBody = await request.text();
   const msgId = header(request.headers, "webhook-id", "svix-id");
-  const msgTimestamp = header(
-    request.headers,
-    "webhook-timestamp",
-    "svix-timestamp"
-  );
-  const sigHeader = header(
-    request.headers,
-    "webhook-signature",
-    "svix-signature"
-  );
+  const msgTimestamp = header(request.headers, "webhook-timestamp", "svix-timestamp");
+  const sigHeader = header(request.headers, "webhook-signature", "svix-signature");
 
-  const { verified, scheme } = verifyWhopSignature(
-    rawBody,
-    msgId,
-    msgTimestamp,
-    sigHeader,
-    secret
-  );
+  const { verified, scheme } = verifyWhopSignature(rawBody, msgId, msgTimestamp, sigHeader, secret);
   if (!verified) {
     console.error(
       "[whop] signature verification failed scheme=" +
@@ -175,7 +153,7 @@ export async function POST(request: Request) {
         " hasTs=" +
         Boolean(msgTimestamp) +
         " hasSig=" +
-        Boolean(sigHeader)
+        Boolean(sigHeader),
     );
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
@@ -198,16 +176,12 @@ export async function POST(request: Request) {
         ? (WHOP_PRODUCT_TO_PLAN[productId] as PlanTier | undefined)
         : undefined;
       if (!productId || !tier) {
-        console.warn(
-          "[whop] activated for unknown product=" + String(productId)
-        );
+        console.warn("[whop] activated for unknown product=" + String(productId));
         return NextResponse.json({ received: true });
       }
       const user = await findUser(data);
       if (!user) {
-        console.warn(
-          "[whop] membership.activated: user not found (email/whopId)"
-        );
+        console.warn("[whop] membership.activated: user not found (email/whopId)");
         return NextResponse.json({ received: true });
       }
       const limits = getPlanLimits(tier);
@@ -216,9 +190,7 @@ export async function POST(request: Request) {
         data: {
           plan: tier,
           planStatus: "ACTIVE",
-          planExpiresAt: data.renewal_period_end
-            ? new Date(data.renewal_period_end)
-            : null,
+          planExpiresAt: data.renewal_period_end ? new Date(data.renewal_period_end) : null,
           maxProducts: limits.maxProducts,
           whopUserId: data.user?.id ?? undefined,
           whopMembershipId: data.id ?? undefined,
