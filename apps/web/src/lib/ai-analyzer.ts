@@ -1,8 +1,20 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazily instantiate the OpenAI client so that importing this module never
+// throws when OPENAI_API_KEY is absent. Instantiating at module scope crashes
+// `next build` (page-data collection imports this file) and any runtime that
+// loads it without the key configured.
+let openaiClient: OpenAI | null = null;
+
+function getOpenAI(): OpenAI {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  if (!openaiClient) {
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openaiClient;
+}
 
 export interface ProductAnalysis {
   brand: string;
@@ -17,7 +29,7 @@ export async function analyzeProduct(
   marketplace: string,
   price: number | null,
 ): Promise<ProductAnalysis> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0,
     messages: [

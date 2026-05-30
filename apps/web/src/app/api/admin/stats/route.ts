@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/current-user";
+import { getCurrentUser, isAdminUser } from "@/lib/current-user";
 
 export async function GET() {
   try {
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    }
+    if (!isAdminUser({ clerkId: user.clerkId, email: user.email })) {
+      return NextResponse.json({ error: "Bu işlem için yetkiniz yok" }, { status: 403 });
     }
 
     const [
