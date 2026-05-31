@@ -15,17 +15,19 @@ export default function SessionExpiryGuard() {
     const originalFetch = window.fetch;
     let redirecting = false;
 
-    window.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
+    const patchedFetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
       const response = await originalFetch(...args);
       if (response.status === 401 && !redirecting) {
         try {
           const input = args[0];
-          const rawUrl =
-            typeof input === "string" || input instanceof URL ? input.toString() : input.url;
-          const url = new URL(rawUrl, window.location.origin);
-          if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
-            redirecting = true;
-            window.location.href = "/sign-in";
+          if (input) {
+            const rawUrl =
+              typeof input === "string" || input instanceof URL ? input.toString() : input.url;
+            const url = new URL(rawUrl, window.location.origin);
+            if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
+              redirecting = true;
+              window.location.href = "/sign-in";
+            }
           }
         } catch {
           // Never let URL parsing get in the way of returning the response.
@@ -34,8 +36,14 @@ export default function SessionExpiryGuard() {
       return response;
     };
 
+    window.fetch = patchedFetch;
+
     return () => {
-      window.fetch = originalFetch;
+      // Only restore if nothing else wrapped fetch on top of ours, so we don't
+      // clobber another library's (e.g. Sentry) wrapper.
+      if (window.fetch === patchedFetch) {
+        window.fetch = originalFetch;
+      }
     };
   }, []);
 
