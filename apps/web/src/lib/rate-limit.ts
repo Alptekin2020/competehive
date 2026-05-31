@@ -17,19 +17,25 @@ export async function rateLimit(
   maxRequests: number,
   windowSeconds: number,
 ): Promise<RateLimitResult> {
-  const current = await redis.incr(key);
+  try {
+    const current = await redis.incr(key);
 
-  if (current === 1) {
-    await redis.expire(key, windowSeconds);
+    if (current === 1) {
+      await redis.expire(key, windowSeconds);
+    }
+
+    const ttl = await redis.ttl(key);
+
+    return {
+      success: current <= maxRequests,
+      remaining: Math.max(0, maxRequests - current),
+      reset: ttl > 0 ? ttl : windowSeconds,
+    };
+  } catch (error) {
+    // If Redis is down, allow the request (fail open) — consistent with checkRateLimit.
+    console.warn("Rate limit check failed:", error);
+    return { success: true, remaining: maxRequests, reset: windowSeconds };
   }
-
-  const ttl = await redis.ttl(key);
-
-  return {
-    success: current <= maxRequests,
-    remaining: Math.max(0, maxRequests - current),
-    reset: ttl > 0 ? ttl : windowSeconds,
-  };
 }
 
 /**

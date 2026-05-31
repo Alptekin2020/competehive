@@ -176,6 +176,7 @@ export default function AlertsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -228,32 +229,45 @@ export default function AlertsPage() {
 
   const handleToggle = async (ruleId: string) => {
     setTogglingId(ruleId);
+    setActionError(null);
     try {
       const res = await fetch(`/api/alerts/${ruleId}/toggle`, { method: "PATCH" });
       if (res.ok) {
         setRules((prev) =>
           prev.map((r) => (r.id === ruleId ? { ...r, isActive: !r.isActive } : r)),
         );
+      } else {
+        setActionError("Uyarı durumu değiştirilemedi. Lütfen tekrar deneyin.");
       }
     } catch {
-      // silently fail
+      setActionError("Uyarı durumu değiştirilemedi. Lütfen tekrar deneyin.");
     } finally {
       setTogglingId(null);
     }
   };
 
   const handleDelete = async (ruleId: string) => {
+    setActionError(null);
     try {
       const res = await fetch(`/api/alerts?id=${ruleId}`, { method: "DELETE" });
       if (res.ok) {
         setRules((prev) => prev.filter((r) => r.id !== ruleId));
+      } else {
+        setActionError("Uyarı silinemedi. Lütfen tekrar deneyin.");
       }
     } catch {
-      // silently fail
+      setActionError("Uyarı silinemedi. Lütfen tekrar deneyin.");
     } finally {
       setDeleteConfirmId(null);
     }
   };
+
+  // Auto-dismiss the transient action error (toggle/delete failures).
+  useEffect(() => {
+    if (!actionError) return;
+    const timer = setTimeout(() => setActionError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [actionError]);
 
   const filteredRules = useMemo(() => {
     const text = searchTerm.trim().toLocaleLowerCase("tr-TR");
@@ -289,6 +303,11 @@ export default function AlertsPage() {
 
   return (
     <div>
+      {actionError && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 shadow-lg backdrop-blur">
+          {actionError}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6 sm:mb-8">
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Uyarılar</h1>
