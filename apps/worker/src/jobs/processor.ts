@@ -44,6 +44,8 @@ export const alertQueue = new Queue("alerts", {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 1000 },
   },
 });
 

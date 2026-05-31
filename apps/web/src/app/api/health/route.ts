@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
-  const checks: Record<string, { status: "ok" | "error"; latencyMs?: number; error?: string }> = {};
+  const checks: Record<string, { status: "ok" | "error"; latencyMs?: number }> = {};
   const startTime = Date.now();
 
   // 1. Database health check
@@ -15,8 +15,8 @@ export async function GET() {
     await prisma.$queryRaw`SELECT 1`;
     checks.database = { status: "ok", latencyMs: Date.now() - dbStart };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    checks.database = { status: "error", error: message };
+    console.error("[health] database check failed", error);
+    checks.database = { status: "error" };
   }
 
   // 2. Redis health check
@@ -25,8 +25,8 @@ export async function GET() {
     await redis.ping();
     checks.redis = { status: "ok", latencyMs: Date.now() - redisStart };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    checks.redis = { status: "error", error: message };
+    console.error("[health] redis check failed", error);
+    checks.redis = { status: "error" };
   }
 
   // 3. Overall status

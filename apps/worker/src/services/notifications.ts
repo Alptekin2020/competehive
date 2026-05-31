@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
 import { sendMessage as tgSendMessage, TelegramApiError } from "../utils/telegram-api";
+import { postWebhookSafe } from "../utils/webhook-guard";
 import type { AlertRuleWithUser, AlertUser } from "../shared";
 
 const prisma = new PrismaClient();
@@ -456,32 +457,32 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string
 async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<void> {
   if (!user?.webhookUrl) return;
 
+  const body = JSON.stringify({
+    event: "price_change",
+    timestamp: new Date().toISOString(),
+    product: {
+      name: data.productName,
+      url: data.productUrl,
+      marketplace: data.marketplace,
+    },
+    price: {
+      current: data.currentPrice,
+      previous: data.previousPrice,
+      change: data.priceChange,
+      changePercent: data.priceChangePct,
+    },
+  });
+
   try {
-    const response = await fetch(user.webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event: "price_change",
-        timestamp: new Date().toISOString(),
-        product: {
-          name: data.productName,
-          url: data.productUrl,
-          marketplace: data.marketplace,
-        },
-        price: {
-          current: data.currentPrice,
-          previous: data.previousPrice,
-          change: data.priceChange,
-          changePercent: data.priceChangePct,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      logger.warn({ userId: user.id, status: response.status }, "Webhook returned non-OK");
+    // postWebhookSafe enforces http(s)-only + no private/internal targets
+    // (validated at connection time, so DNS rebinding can't bypass it) with an
+    // 8s timeout.
+    const status = await postWebhookSafe(user.webhookUrl, body);
+    if (status < 200 || status >= 300) {
+      logger.warn({ userId: user.id, status }, "Webhook returned non-OK");
+    } else {
+      logger.info({ userId: user.id }, "Webhook alert sent");
     }
-
-    logger.info({ userId: user.id }, "Webhook alert sent");
   } catch (error) {
     logger.error({ userId: user.id, error }, "Webhook alert failed");
     throw error;
