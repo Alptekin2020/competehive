@@ -237,7 +237,8 @@ export default function AlertsPage() {
           prev.map((r) => (r.id === ruleId ? { ...r, isActive: !r.isActive } : r)),
         );
       } else {
-        setActionError("Uyarı durumu değiştirilemedi. Lütfen tekrar deneyin.");
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || "Uyarı durumu değiştirilemedi. Lütfen tekrar deneyin.");
       }
     } catch {
       setActionError("Uyarı durumu değiştirilemedi. Lütfen tekrar deneyin.");
@@ -253,7 +254,8 @@ export default function AlertsPage() {
       if (res.ok) {
         setRules((prev) => prev.filter((r) => r.id !== ruleId));
       } else {
-        setActionError("Uyarı silinemedi. Lütfen tekrar deneyin.");
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || "Uyarı silinemedi. Lütfen tekrar deneyin.");
       }
     } catch {
       setActionError("Uyarı silinemedi. Lütfen tekrar deneyin.");
@@ -304,7 +306,11 @@ export default function AlertsPage() {
   return (
     <div>
       {actionError && (
-        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 shadow-lg backdrop-blur">
+        <div
+          onClick={() => setActionError(null)}
+          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 cursor-pointer select-none rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 shadow-lg backdrop-blur"
+          title="Kapatmak için tıklayın"
+        >
           {actionError}
         </div>
       )}
