@@ -5,6 +5,7 @@ import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import { urlMatchKey } from "../utils/url-match";
+import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { getScraper } from "../scrapers";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
@@ -75,7 +76,19 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       const scraper = getScraper(product.marketplace);
       const sourceData = await scraper(product.productUrl);
 
-      if (sourceData?.price && sourceData.price > 0) {
+      const prevOwnPrice = product.currentPrice ? Number(product.currentPrice) : null;
+      if (
+        sourceData?.price &&
+        sourceData.price > 0 &&
+        !isPlausiblePriceChange(prevOwnPrice, sourceData.price)
+      ) {
+        // Implausible jump vs. last known price → almost certainly a parse
+        // error. Skip the write so we neither store a bad price nor fire a
+        // false alert; the next refresh re-checks.
+        console.warn(
+          `⚠️ Source refresh fiyat sanity-check başarısız: ${productId} eski=${prevOwnPrice} yeni=${sourceData.price} — atlanıyor`,
+        );
+      } else if (sourceData?.price && sourceData.price > 0) {
         refreshedOwnPrice = sourceData.price;
         const updateData: {
           currentPrice: number;

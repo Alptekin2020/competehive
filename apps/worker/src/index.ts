@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createHash } from "node:crypto";
 
 import { Worker, Queue } from "bullmq";
+import { setGlobalDispatcher, ProxyAgent } from "undici";
 
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
@@ -12,6 +13,7 @@ import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
 import { setWebhook, setMyCommands } from "./utils/telegram-api";
 import { validateWorkerEnv } from "./shared";
+import { getProxyConfig } from "./utils/proxy";
 import { closeBrowser } from "./scrapers";
 
 async function registerTelegramBot(): Promise<void> {
@@ -134,6 +136,18 @@ async function start() {
   // first job (e.g. a missing DATABASE_URL surfacing as a deep Prisma error).
   validateWorkerEnv();
 
+  // Route all outbound fetch (scrapers, Serper, Telegram, webhook delivery)
+  // through the configured proxy. DB (pg/Prisma) and Redis (ioredis) use their
+  // own clients and are unaffected. No proxy env → fetch stays direct.
+  const proxy = getProxyConfig();
+  if (proxy) {
+    setGlobalDispatcher(new ProxyAgent(proxy.url));
+    logger.info(
+      { server: proxy.server, authenticated: Boolean(proxy.username) },
+      "Outbound fetch routed through proxy",
+    );
+  }
+
   await registerTelegramBot();
 
   // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri kuyruğa ekle
@@ -155,7 +169,14 @@ async function start() {
     async () => {
       try {
         const uniqueUrlProducts = await prisma.trackedProduct.findMany({
-          where: { status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+          where: {
+            status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+            // Plan kapısı (B1): süresi dolmuş ücretli planların ürünleri için
+            // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural.
+            user: {
+              OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: new Date() } }],
+            },
+          },
           distinct: ["productUrl"],
           select: { productUrl: true },
         });

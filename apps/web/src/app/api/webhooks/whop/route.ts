@@ -195,13 +195,35 @@ export async function POST(request: Request) {
         ? (WHOP_PRODUCT_TO_PLAN[productId] as PlanTier | undefined)
         : undefined;
       if (!productId || !tier) {
-        console.warn("[whop] activated for unknown product=" + String(productId));
-        return NextResponse.json({ received: true });
+        // A paid activation we can't map to a tier means our WHOP_*_PRODUCT_ID
+        // env mapping is missing/wrong. Do NOT silently 200 it away — return a
+        // 5xx so Whop retries (buying time to fix config) and the failure shows
+        // up as a failed delivery instead of a silently-lost paying customer.
+        console.error(
+          "[whop] membership.activated for UNMAPPED product=" +
+            String(productId) +
+            " membership=" +
+            String(data.id) +
+            " — check WHOP_*_PRODUCT_ID env mapping",
+        );
+        return NextResponse.json({ error: "unmapped product" }, { status: 500 });
       }
       const user = await findUser(data);
       if (!user) {
-        console.warn("[whop] membership.activated: user not found (email/whopId)");
-        return NextResponse.json({ received: true });
+        // Paid activation but we couldn't match it to a user (metadata/email
+        // mismatch, or the Clerk->DB upsert hasn't happened yet). Returning a
+        // 5xx lets Whop retry so the upgrade isn't silently dropped.
+        console.error(
+          "[whop] membership.activated: USER NOT FOUND — membership=" +
+            String(data.id) +
+            " email=" +
+            String(data.user?.email) +
+            " whopUserId=" +
+            String(data.user?.id) +
+            " plan=" +
+            tier,
+        );
+        return NextResponse.json({ error: "user not found" }, { status: 500 });
       }
       const limits = getPlanLimits(tier);
       await prisma.user.update({
@@ -233,16 +255,43 @@ export async function POST(request: Request) {
       }
       // Access has ended — revert to the FREE plan and its product cap so the
       // UI and limit checks stop treating the user as a paying customer.
+      const freeCap = getPlanLimits("FREE").maxProducts;
       await prisma.user.update({
         where: { id: user.id },
         data: {
           plan: "FREE",
           planStatus: "EXPIRED",
-          maxProducts: getPlanLimits("FREE").maxProducts,
+          maxProducts: freeCap,
           planExpiresAt: null,
         },
       });
-      console.log("[whop] membership terminated -> FREE, user=" + user.id);
+
+      // Enforce the FREE product cap (B1): a lapsed subscriber must stop
+      // receiving paid-tier scraping. Keep the oldest `freeCap` tracked
+      // products active and pause the rest — the worker skips PAUSED products,
+      // so this is what actually stops over-cap scraping/alerting. Re-upgrading
+      // raises the cap again; paused products can be resumed manually.
+      const keep = await prisma.trackedProduct.findMany({
+        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+        orderBy: { createdAt: "asc" },
+        take: freeCap,
+        select: { id: true },
+      });
+      const paused = await prisma.trackedProduct.updateMany({
+        where: {
+          userId: user.id,
+          status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+          id: { notIn: keep.map((k) => k.id) },
+        },
+        data: { status: "PAUSED" },
+      });
+      console.log(
+        "[whop] membership terminated -> FREE, user=" +
+          user.id +
+          " paused=" +
+          paused.count +
+          " over-cap products",
+      );
       return NextResponse.json({ received: true });
     }
 

@@ -54,6 +54,8 @@ export async function GET(req: NextRequest) {
       title: n.title,
       message: n.message,
       metadata: n.metadata,
+      status: n.status,
+      error: n.error,
       is_read: n.isRead,
       sent_at: n.sentAt,
       rule_type: n.alertRule?.ruleType ?? null,

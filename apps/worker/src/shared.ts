@@ -10,6 +10,11 @@ const workerEnvSchema = baseSchema.extend({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().optional(),
+  // Competitor discovery (Serper) and AI product analysis (OpenAI). Optional:
+  // the worker boots without them, but the related features no-op/throw a
+  // clear error at call time instead of failing with a cryptic upstream 401.
+  SERPER_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
   PROXY_HOST: z.string().optional(),
   PROXY_PORT: z.coerce.number().optional(),
   PROXY_USER: z.string().optional(),
