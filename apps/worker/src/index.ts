@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createHash } from "node:crypto";
 
 import { Worker, Queue } from "bullmq";
+import { setGlobalDispatcher, ProxyAgent } from "undici";
 
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
@@ -12,6 +13,7 @@ import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
 import { setWebhook, setMyCommands } from "./utils/telegram-api";
 import { validateWorkerEnv } from "./shared";
+import { getProxyConfig } from "./utils/proxy";
 import { closeBrowser } from "./scrapers";
 
 async function registerTelegramBot(): Promise<void> {
@@ -133,6 +135,18 @@ async function start() {
   // Fail fast on invalid/missing configuration instead of failing late on the
   // first job (e.g. a missing DATABASE_URL surfacing as a deep Prisma error).
   validateWorkerEnv();
+
+  // Route all outbound fetch (scrapers, Serper, Telegram, webhook delivery)
+  // through the configured proxy. DB (pg/Prisma) and Redis (ioredis) use their
+  // own clients and are unaffected. No proxy env → fetch stays direct.
+  const proxy = getProxyConfig();
+  if (proxy) {
+    setGlobalDispatcher(new ProxyAgent(proxy.url));
+    logger.info(
+      { server: proxy.server, authenticated: Boolean(proxy.username) },
+      "Outbound fetch routed through proxy",
+    );
+  }
 
   await registerTelegramBot();
 

@@ -1,7 +1,9 @@
 import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
+import type { Page } from "puppeteer";
 import { logger } from "../utils/logger";
 import { getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
+import { getProxyConfig } from "../utils/proxy";
 
 // ============================================
 // Scraper Types
@@ -165,6 +167,7 @@ async function getBrowser() {
   browserInstance = null;
 
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
+  const proxy = getProxyConfig();
 
   browserInstance = await puppeteer.launch({
     headless: true,
@@ -177,6 +180,9 @@ async function getBrowser() {
       "--disable-extensions",
       "--disable-background-networking",
       "--single-process",
+      // Route Chromium through the proxy too (credentials, if any, are applied
+      // per-page via page.authenticate — Chromium rejects them in this flag).
+      ...(proxy ? [`--proxy-server=${proxy.server}`] : []),
     ],
   });
 
@@ -187,6 +193,17 @@ async function getBrowser() {
   });
 
   return browserInstance;
+}
+
+/**
+ * Apply proxy credentials to a freshly created page when the proxy needs auth.
+ * No-op when no proxy or no credentials are configured. Must run before goto().
+ */
+async function applyProxyAuth(page: Page): Promise<void> {
+  const proxy = getProxyConfig();
+  if (proxy?.username) {
+    await page.authenticate({ username: proxy.username, password: proxy.password ?? "" });
+  }
 }
 
 /** Close the shared Puppeteer browser (called on graceful shutdown). */
@@ -206,6 +223,7 @@ async function scrapeWithPuppeteer(url: string, config: ScraperConfig): Promise<
   const page = await browser.newPage();
 
   try {
+    await applyProxyAuth(page);
     await page.setUserAgent(config.userAgent || getRandomUserAgent());
     await page.setExtraHTTPHeaders({
       "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -601,6 +619,7 @@ export async function scrapeTrendyol(
     const page = await browser.newPage();
     let pageHtml = "";
     try {
+      await applyProxyAuth(page);
       await page.setUserAgent(config.userAgent || getRandomUserAgent());
       await page.setExtraHTTPHeaders({
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -1202,6 +1221,7 @@ export async function scrapeHepsiburada(
     const page = await browser.newPage();
     let pageHtml = "";
     try {
+      await applyProxyAuth(page);
       await page.setUserAgent(config.userAgent || getRandomUserAgent());
       await page.setExtraHTTPHeaders({
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",

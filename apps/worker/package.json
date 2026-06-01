@@ -19,7 +19,8 @@
     "pg": "^8.20.0",
     "pino": "^9.6.0",
     "puppeteer": "^24.2.0",
-    "resend": "^6.9.4"
+    "resend": "^6.9.4",
+    "undici": "^7.26.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
