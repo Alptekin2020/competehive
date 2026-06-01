@@ -256,6 +256,10 @@ model Notification {
   title       String
   message     String
   metadata    Json?
+  // External delivery outcome for this channel: SENT | FAILED | SKIPPED.
+  // `error` holds the failure reason when status is FAILED.
+  status      String       @default("SENT") @map("status")
+  error       String?      @map("error")
   isRead      Boolean      @default(false) @map("is_read")
   sentAt      DateTime     @default(now()) @map("sent_at")
 

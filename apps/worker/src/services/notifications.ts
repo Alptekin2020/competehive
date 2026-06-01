@@ -7,6 +7,21 @@ import type { AlertRuleWithUser, AlertUser } from "../shared";
 
 const prisma = new PrismaClient();
 
+// External delivery outcome recorded on each notification row.
+//   SENT    — handed off to the provider successfully
+//   FAILED  — provider rejected / errored (reason in `error`)
+//   SKIPPED — channel not configured for this user (no token/URL/key)
+type DeliveryStatus = "SENT" | "FAILED" | "SKIPPED";
+interface DeliveryOutcome {
+  status: DeliveryStatus;
+  error?: string;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 // ============================================
 // Resend Email Client
 // ============================================
@@ -32,22 +47,26 @@ async function sendTelegramAlert(
   user: AlertUser,
   ruleType: string,
   data: AlertData,
-): Promise<void> {
+): Promise<DeliveryOutcome> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) return;
+  if (!botToken) return { status: "SKIPPED", error: "TELEGRAM_BOT_TOKEN tanımlı değil" };
 
-  if (!user.telegramChatId || user.telegramStatus !== "connected") return;
+  if (!user.telegramChatId || user.telegramStatus !== "connected") {
+    return { status: "SKIPPED", error: "Telegram bağlı değil" };
+  }
 
   try {
     const text = formatTelegramMessage(ruleType, data);
     await tgSendMessage(botToken, user.telegramChatId, text);
     logger.info({ userId: user.id }, "Telegram alert sent");
+    return { status: "SENT" };
   } catch (error) {
     if (error instanceof TelegramApiError) {
       logger.warn({ userId: user.id, code: error.code, msg: error.message }, "Telegram API error");
     } else {
       logger.error({ userId: user.id, error }, "Telegram alert failed");
     }
+    return { status: "FAILED", error: errorMessage(error) };
   }
 }
 
@@ -264,46 +283,55 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
   const message = generateNotificationMessage(rule.ruleType, data);
 
   for (const channel of channels) {
+    // 1. Attempt the external send and capture the real outcome.
+    let outcome: DeliveryOutcome;
     try {
-      // 1. ALWAYS write to notifications table in DB
-      await writeNotificationToDB({
-        userId: rule.userId,
-        alertRuleId: rule.id,
-        channel,
-        title,
-        message,
-        metadata: {
-          productName: data.productName,
-          currentPrice: data.currentPrice,
-          previousPrice: data.previousPrice,
-          priceChange: data.priceChange,
-          priceChangePct: data.priceChangePct,
-          marketplace: data.marketplace,
-          productUrl: data.productUrl,
-          ruleType: rule.ruleType,
-        },
-      });
-
-      // 2. Send external notification based on channel
       switch (channel) {
         case "EMAIL":
-          await sendEmailAlert(rule.user, data, rule.ruleType);
+          outcome = await sendEmailAlert(rule.user, data, rule.ruleType);
           break;
         case "TELEGRAM":
-          await sendTelegramAlert(rule.user, rule.ruleType, data);
+          outcome = await sendTelegramAlert(rule.user, rule.ruleType, data);
           break;
         case "WEBHOOK":
-          await sendWebhookAlert(rule.user, data);
+          outcome = await sendWebhookAlert(rule.user, data);
           break;
+        default:
+          outcome = { status: "SKIPPED", error: `Bilinmeyen kanal: ${channel}` };
       }
-
-      logger.info(
-        { channel, userId: rule.userId, ruleType: rule.ruleType },
-        "Alert sent successfully",
-      );
     } catch (error) {
+      // Senders are written not to throw, but guard so one bad channel can't
+      // abort the rest or skip the DB record.
+      outcome = { status: "FAILED", error: errorMessage(error) };
       logger.error({ channel, userId: rule.userId, error }, "Failed to send alert");
     }
+
+    // 2. ALWAYS record the notification — the in-app feed shows it regardless
+    // of external delivery — now annotated with the actual delivery outcome.
+    await writeNotificationToDB({
+      userId: rule.userId,
+      alertRuleId: rule.id,
+      channel,
+      title,
+      message,
+      status: outcome.status,
+      error: outcome.error ?? null,
+      metadata: {
+        productName: data.productName,
+        currentPrice: data.currentPrice,
+        previousPrice: data.previousPrice,
+        priceChange: data.priceChange,
+        priceChangePct: data.priceChangePct,
+        marketplace: data.marketplace,
+        productUrl: data.productUrl,
+        ruleType: rule.ruleType,
+      },
+    });
+
+    logger.info(
+      { channel, userId: rule.userId, ruleType: rule.ruleType, status: outcome.status },
+      "Alert processed",
+    );
   }
 }
 
@@ -317,6 +345,8 @@ async function writeNotificationToDB(params: {
   channel: string;
   title: string;
   message: string;
+  status: string;
+  error: string | null;
   metadata: Record<string, unknown>;
 }): Promise<void> {
   try {
@@ -327,11 +357,16 @@ async function writeNotificationToDB(params: {
         channel: params.channel as "EMAIL" | "TELEGRAM" | "WEBHOOK",
         title: params.title,
         message: params.message,
+        status: params.status,
+        error: params.error,
         metadata: JSON.parse(JSON.stringify(params.metadata)),
         isRead: false,
       },
     });
-    logger.info({ userId: params.userId, channel: params.channel }, "Notification written to DB");
+    logger.info(
+      { userId: params.userId, channel: params.channel, status: params.status },
+      "Notification written to DB",
+    );
   } catch (error) {
     logger.error({ error }, "Failed to write notification to DB");
     // Don't throw — DB write failure shouldn't block external notification
@@ -342,12 +377,16 @@ async function writeNotificationToDB(params: {
 // Email Alert — Resend
 // ============================================
 
-async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string): Promise<void> {
+async function sendEmailAlert(
+  user: AlertUser,
+  data: AlertData,
+  ruleType: string,
+): Promise<DeliveryOutcome> {
   const resend = getResend();
-  if (!resend) return;
+  if (!resend) return { status: "SKIPPED", error: "RESEND_API_KEY tanımlı değil" };
   if (!user?.email) {
     logger.warn({ userId: user?.id }, "No email address — skipping email alert");
-    return;
+    return { status: "SKIPPED", error: "E-posta adresi yok" };
   }
 
   const drop = isDrop(data.priceChange);
@@ -444,9 +483,10 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string
     });
 
     logger.info({ userId: user.id, email: user.email }, "Email alert sent via Resend");
+    return { status: "SENT" };
   } catch (error) {
     logger.error({ userId: user.id, error }, "Resend email failed");
-    throw error;
+    return { status: "FAILED", error: errorMessage(error) };
   }
 }
 
@@ -454,8 +494,8 @@ async function sendEmailAlert(user: AlertUser, data: AlertData, ruleType: string
 // Webhook Alert
 // ============================================
 
-async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<void> {
-  if (!user?.webhookUrl) return;
+async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<DeliveryOutcome> {
+  if (!user?.webhookUrl) return { status: "SKIPPED", error: "Webhook URL yok" };
 
   const body = JSON.stringify({
     event: "price_change",
@@ -480,11 +520,12 @@ async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<void>
     const status = await postWebhookSafe(user.webhookUrl, body);
     if (status < 200 || status >= 300) {
       logger.warn({ userId: user.id, status }, "Webhook returned non-OK");
-    } else {
-      logger.info({ userId: user.id }, "Webhook alert sent");
+      return { status: "FAILED", error: `Webhook HTTP ${status}` };
     }
+    logger.info({ userId: user.id }, "Webhook alert sent");
+    return { status: "SENT" };
   } catch (error) {
     logger.error({ userId: user.id, error }, "Webhook alert failed");
-    throw error;
+    return { status: "FAILED", error: errorMessage(error) };
   }
 }
