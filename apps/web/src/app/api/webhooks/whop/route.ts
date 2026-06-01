@@ -195,13 +195,35 @@ export async function POST(request: Request) {
         ? (WHOP_PRODUCT_TO_PLAN[productId] as PlanTier | undefined)
         : undefined;
       if (!productId || !tier) {
-        console.warn("[whop] activated for unknown product=" + String(productId));
-        return NextResponse.json({ received: true });
+        // A paid activation we can't map to a tier means our WHOP_*_PRODUCT_ID
+        // env mapping is missing/wrong. Do NOT silently 200 it away — return a
+        // 5xx so Whop retries (buying time to fix config) and the failure shows
+        // up as a failed delivery instead of a silently-lost paying customer.
+        console.error(
+          "[whop] membership.activated for UNMAPPED product=" +
+            String(productId) +
+            " membership=" +
+            String(data.id) +
+            " — check WHOP_*_PRODUCT_ID env mapping",
+        );
+        return NextResponse.json({ error: "unmapped product" }, { status: 500 });
       }
       const user = await findUser(data);
       if (!user) {
-        console.warn("[whop] membership.activated: user not found (email/whopId)");
-        return NextResponse.json({ received: true });
+        // Paid activation but we couldn't match it to a user (metadata/email
+        // mismatch, or the Clerk->DB upsert hasn't happened yet). Returning a
+        // 5xx lets Whop retry so the upgrade isn't silently dropped.
+        console.error(
+          "[whop] membership.activated: USER NOT FOUND — membership=" +
+            String(data.id) +
+            " email=" +
+            String(data.user?.email) +
+            " whopUserId=" +
+            String(data.user?.id) +
+            " plan=" +
+            tier,
+        );
+        return NextResponse.json({ error: "user not found" }, { status: 500 });
       }
       const limits = getPlanLimits(tier);
       await prisma.user.update({
