@@ -159,11 +159,18 @@ export async function searchProduct(query: string): Promise<SerperShoppingResult
   const cached = await getCachedSerperResults(query);
   if (cached) return cached as SerperShoppingResult[];
 
-  // Cache miss — call Serper API
+  // Cache miss — call Serper API. Fail with a clear message when the key is
+  // missing instead of sending `X-API-KEY: undefined` and getting a cryptic
+  // upstream 401/403.
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) {
+    throw new Error("SERPER_API_KEY tanımlı değil — rakip araması yapılamıyor");
+  }
+
   const res = await fetch("https://google.serper.dev/shopping", {
     method: "POST",
     headers: {
-      "X-API-KEY": process.env.SERPER_API_KEY!,
+      "X-API-KEY": apiKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
