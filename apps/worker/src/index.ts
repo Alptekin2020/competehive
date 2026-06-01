@@ -155,7 +155,14 @@ async function start() {
     async () => {
       try {
         const uniqueUrlProducts = await prisma.trackedProduct.findMany({
-          where: { status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+          where: {
+            status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+            // Plan kapısı (B1): süresi dolmuş ücretli planların ürünleri için
+            // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural.
+            user: {
+              OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: new Date() } }],
+            },
+          },
           distinct: ["productUrl"],
           select: { productUrl: true },
         });

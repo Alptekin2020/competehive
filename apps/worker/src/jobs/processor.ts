@@ -382,6 +382,13 @@ async function runScheduleScans() {
           },
         },
       ],
+      // Plan kapısı (B1): süresi zamanla dolmuş ücretli planların ürünlerini
+      // tarama. FREE/aktif kullanıcılarda planExpiresAt null veya gelecekte
+      // olur; iptal edilen abonelikler webhook tarafında FREE'ye düşürülüp
+      // kapasite üstü ürünleri PAUSED yapıldığı için zaten elenir.
+      user: {
+        OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: now } }],
+      },
     },
     select: {
       id: true,

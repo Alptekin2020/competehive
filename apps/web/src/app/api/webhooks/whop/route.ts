@@ -233,16 +233,43 @@ export async function POST(request: Request) {
       }
       // Access has ended — revert to the FREE plan and its product cap so the
       // UI and limit checks stop treating the user as a paying customer.
+      const freeCap = getPlanLimits("FREE").maxProducts;
       await prisma.user.update({
         where: { id: user.id },
         data: {
           plan: "FREE",
           planStatus: "EXPIRED",
-          maxProducts: getPlanLimits("FREE").maxProducts,
+          maxProducts: freeCap,
           planExpiresAt: null,
         },
       });
-      console.log("[whop] membership terminated -> FREE, user=" + user.id);
+
+      // Enforce the FREE product cap (B1): a lapsed subscriber must stop
+      // receiving paid-tier scraping. Keep the oldest `freeCap` tracked
+      // products active and pause the rest — the worker skips PAUSED products,
+      // so this is what actually stops over-cap scraping/alerting. Re-upgrading
+      // raises the cap again; paused products can be resumed manually.
+      const keep = await prisma.trackedProduct.findMany({
+        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+        orderBy: { createdAt: "asc" },
+        take: freeCap,
+        select: { id: true },
+      });
+      const paused = await prisma.trackedProduct.updateMany({
+        where: {
+          userId: user.id,
+          status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+          id: { notIn: keep.map((k) => k.id) },
+        },
+        data: { status: "PAUSED" },
+      });
+      console.log(
+        "[whop] membership terminated -> FREE, user=" +
+          user.id +
+          " paused=" +
+          paused.count +
+          " over-cap products",
+      );
       return NextResponse.json({ received: true });
     }
 
