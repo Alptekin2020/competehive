@@ -16,6 +16,7 @@ export async function GET() {
 
   return NextResponse.json({
     hasActivePlan: planInfo.hasActivePlan,
+    isPaid: planInfo.isPaid,
     plan: planInfo.plan,
     planDisplayName: planInfo.planDisplayName,
     maxProducts: planInfo.maxProducts,
