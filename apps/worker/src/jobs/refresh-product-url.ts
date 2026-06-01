@@ -6,6 +6,7 @@ import type { SerperShoppingResult } from "../serper";
 import { getScraper } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { urlMatchKey } from "../utils/url-match";
+import { isPlausiblePriceChange } from "../utils/price-sanity";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -119,7 +120,20 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       const scraper = getScraper(primary.marketplace);
       const sourceData = await scraper(productUrl);
 
-      if (sourceData?.price && sourceData.price > 0) {
+      const prevUrlPrice = primary.currentPrice ? Number(primary.currentPrice) : null;
+      if (
+        sourceData?.price &&
+        sourceData.price > 0 &&
+        !isPlausiblePriceChange(prevUrlPrice, sourceData.price)
+      ) {
+        // Implausible jump vs. last known price → almost certainly a parse
+        // error. Crucially, this path fans the value out to every sibling via
+        // updateMany, so skipping prevents one bad scrape from corrupting all
+        // products tracking this URL.
+        console.warn(
+          `⚠️ URL refresh fiyat sanity-check başarısız: ${productUrl} eski=${prevUrlPrice} yeni=${sourceData.price} — ${siblings.length} sibling'e yayılması engellendi`,
+        );
+      } else if (sourceData?.price && sourceData.price > 0) {
         sourcePriceResolved = true;
         const updateData: {
           currentPrice: number;

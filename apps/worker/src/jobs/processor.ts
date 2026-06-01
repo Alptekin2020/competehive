@@ -4,6 +4,7 @@ import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
+import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { evaluateAlertRule } from "./alert-rules";
 
 const prisma = new PrismaClient();
@@ -78,24 +79,22 @@ export const scrapeWorker = new Worker(
       const previousInStock = product ? product.status !== "OUT_OF_STOCK" : null;
 
       // Price sanity check: reject changes > 90% unless price was null/0 before
-      if (previousPrice && previousPrice > 0 && result.price > 0) {
-        const changePct = Math.abs((result.price - previousPrice) / previousPrice) * 100;
-        if (changePct > 90) {
-          logger.warn(
-            {
-              productId,
-              oldPrice: previousPrice,
-              newPrice: result.price,
-              changePct: changePct.toFixed(1),
-            },
-            "Price change > 90% — likely parsing error, skipping update",
-          );
-          await prisma.trackedProduct.update({
-            where: { id: productId },
-            data: { lastScrapedAt: new Date() },
-          });
-          return { success: false, softFailed: true, code: "PRICE_SANITY_CHECK" };
-        }
+      if (!isPlausiblePriceChange(previousPrice, result.price)) {
+        const changePct = Math.abs((result.price - previousPrice!) / previousPrice!) * 100;
+        logger.warn(
+          {
+            productId,
+            oldPrice: previousPrice,
+            newPrice: result.price,
+            changePct: changePct.toFixed(1),
+          },
+          "Price change > 90% — likely parsing error, skipping update",
+        );
+        await prisma.trackedProduct.update({
+          where: { id: productId },
+          data: { lastScrapedAt: new Date() },
+        });
+        return { success: false, softFailed: true, code: "PRICE_SANITY_CHECK" };
       }
 
       const priceChange = previousPrice ? result.price - previousPrice : null;
