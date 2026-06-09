@@ -49,6 +49,7 @@ export interface AlertUser {
   telegramChatId: string | null;
   telegramStatus: string | null;
   webhookUrl: string | null;
+  emailAlertsEnabled: boolean;
 }
 
 export interface AlertRuleWithUser {

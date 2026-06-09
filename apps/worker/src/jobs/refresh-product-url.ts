@@ -5,6 +5,7 @@ import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { getScraper } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
+import { maybeEnqueueAlerts } from "./processor";
 import { urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 
@@ -98,6 +99,19 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
 
   const siblingIds = siblings.map((s) => s.id);
   const now = new Date();
+
+  // Faz 2: refresh ÖNCESİ her sibling'in saklı fiyat/stok durumu. `siblings`
+  // in-memory dizisi updateMany ile değişmediğinden, güncelleme sonrası
+  // karşılaştırma için orijinal ("önceki") değerleri verir.
+  const previousStateById = new Map(
+    siblings.map((s) => [
+      s.id,
+      {
+        price: s.currentPrice ? Number(s.currentPrice) : null,
+        inStock: s.status !== "OUT_OF_STOCK",
+      },
+    ]),
+  );
 
   // 2. Tüm siblingsleri "processing" olarak işaretle
   await Promise.all(
@@ -403,6 +417,29 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       } catch (err) {
         console.error("Bulk priceHistory insert hatası:", err);
       }
+    }
+
+    // Faz 2: tüm fiyat/competitor güncellemeleri bitti — her sibling için
+    // refresh ÖNCESİ saklı fiyata karşı değişiklik oluştuysa alert kuyruğa al.
+    try {
+      const finalStates = await prisma.trackedProduct.findMany({
+        where: { id: { in: siblingIds } },
+        select: { id: true, currentPrice: true, status: true },
+      });
+      for (const fs of finalStates) {
+        if (fs.currentPrice == null) continue;
+        const prev = previousStateById.get(fs.id);
+        if (!prev) continue;
+        await maybeEnqueueAlerts({
+          productId: fs.id,
+          previousPrice: prev.price,
+          currentPrice: Number(fs.currentPrice),
+          previousInStock: prev.inStock,
+          inStock: fs.status !== "OUT_OF_STOCK",
+        });
+      }
+    } catch (alertError) {
+      console.error(`⚠️ Alert kuyruğa alma hatası (URL refresh): ${productUrl}`, alertError);
     }
 
     // 8. Tüm siblings "completed"

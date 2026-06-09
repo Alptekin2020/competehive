@@ -51,6 +51,63 @@ export const alertQueue = new Queue("alerts", {
 });
 
 // ============================================
+// SHARED ALERT TRIGGER
+// ============================================
+
+/**
+ * Detect a price/stock change for a product and enqueue an alert check.
+ *
+ * Single source of truth shared by every price-update path — the scheduled
+ * scrape (below), the manual "Yenile" refresh, and the 6-hour URL refresh — so
+ * an alert fires no matter which path refreshed the price.
+ *
+ * `previousPrice`/`previousInStock` must be the values read from the product row
+ * *before* the caller overwrote them with the freshly-fetched values, and the
+ * stored price must be updated in the same operation as the fetch. That way
+ * whichever path fetches first detects the change and enqueues; a later path
+ * reads the already-updated price as its `previousPrice`, sees no delta, and
+ * does not re-enqueue. Rule-level cooldowns (alertWorker) are the final backstop
+ * against duplicate notifications.
+ */
+export async function maybeEnqueueAlerts(params: {
+  productId: string;
+  previousPrice: number | null;
+  currentPrice: number;
+  previousInStock: boolean | null;
+  inStock: boolean;
+}): Promise<void> {
+  const { productId, previousPrice, currentPrice, previousInStock, inStock } = params;
+
+  const priceChange = previousPrice ? currentPrice - previousPrice : null;
+  const priceChangePct =
+    previousPrice && previousPrice > 0
+      ? ((currentPrice - previousPrice) / previousPrice) * 100
+      : null;
+  const priceChanged = priceChange !== null && priceChange !== 0;
+  const stockChanged = previousInStock !== null && previousInStock !== inStock;
+
+  if (!priceChanged && !stockChanged) {
+    return;
+  }
+
+  const eventTypes = [
+    ...(priceChanged ? ["price-change"] : []),
+    ...(stockChanged ? ["stock-change"] : []),
+  ];
+
+  await alertQueue.add("check-alerts", {
+    productId,
+    eventTypes,
+    currentPrice,
+    previousPrice,
+    priceChange,
+    priceChangePct,
+    inStock,
+    previousInStock,
+  });
+}
+
+// ============================================
 // SCRAPE WORKER
 // ============================================
 
@@ -102,8 +159,6 @@ export const scrapeWorker = new Worker(
         previousPrice && previousPrice > 0
           ? ((result.price - previousPrice) / previousPrice) * 100
           : null;
-      const priceChanged = priceChange !== null && priceChange !== 0;
-      const stockChanged = previousInStock !== null && previousInStock !== result.inStock;
 
       // Fiyat geçmişine kaydet
       await prisma.priceHistory.create({
@@ -134,24 +189,16 @@ export const scrapeWorker = new Worker(
         },
       });
 
-      // Fiyat veya stok değişikliği varsa alert kontrolü yap
-      if (priceChanged || stockChanged) {
-        const eventTypes = [
-          ...(priceChanged ? ["price-change"] : []),
-          ...(stockChanged ? ["stock-change"] : []),
-        ];
-
-        await alertQueue.add("check-alerts", {
-          productId,
-          eventTypes,
-          currentPrice: result.price,
-          previousPrice,
-          priceChange,
-          priceChangePct,
-          inStock: result.inStock,
-          previousInStock,
-        });
-      }
+      // Fiyat/stok değiştiyse alert kontrolünü kuyruğa al — tüm fiyat-güncelleme
+      // yollarıyla paylaşılan ortak yardımcı (manuel "Yenile" ve 6 saatlik
+      // URL-refresh de aynı yardımcıyı çağırır).
+      await maybeEnqueueAlerts({
+        productId,
+        previousPrice,
+        currentPrice: result.price,
+        previousInStock,
+        inStock: result.inStock,
+      });
 
       logger.info(
         {
@@ -314,6 +361,7 @@ export const alertWorker = new Worker(
         thresholdValue: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
         direction: rule.direction,
         minCompetitorPrice,
+        userThresholdPct: rule.user.alertThresholdPct,
       });
 
       if (shouldAlert) {

@@ -12,6 +12,7 @@ const base: AlertEvalContext = {
   thresholdValue: null,
   direction: null,
   minCompetitorPrice: null,
+  userThresholdPct: 0,
 };
 
 describe("evaluateAlertRule", () => {
@@ -138,6 +139,92 @@ describe("evaluateAlertRule", () => {
           minCompetitorPrice: 50,
         }),
       ).toBe(false);
+    });
+  });
+
+  describe("user alertThresholdPct floor", () => {
+    it("suppresses a PRICE_DROP whose abs % change is below the user threshold", () => {
+      const ctx = {
+        ...base,
+        isPriceEvent: true,
+        priceChange: -2,
+        priceChangePct: -2,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("PRICE_DROP", ctx)).toBe(false);
+    });
+
+    it("fires a PRICE_DROP whose abs % change meets the user threshold", () => {
+      const ctx = {
+        ...base,
+        isPriceEvent: true,
+        priceChange: -6,
+        priceChangePct: -6,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("PRICE_DROP", ctx)).toBe(true);
+    });
+
+    it("suppresses a PRICE_INCREASE below the user threshold", () => {
+      const ctx = {
+        ...base,
+        isPriceEvent: true,
+        priceChange: 3,
+        priceChangePct: 3,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("PRICE_INCREASE", ctx)).toBe(false);
+    });
+
+    it("requires a PERCENTAGE_CHANGE to clear both the rule and the user threshold", () => {
+      // Rule threshold (3) is met but the user floor (5) is not → suppressed.
+      const blocked = {
+        ...base,
+        isPriceEvent: true,
+        priceChangePct: 4,
+        thresholdValue: 3,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("PERCENTAGE_CHANGE", blocked)).toBe(false);
+
+      // Clears both → fires.
+      expect(evaluateAlertRule("PERCENTAGE_CHANGE", { ...blocked, priceChangePct: 6 })).toBe(true);
+    });
+
+    it("does not apply the user floor to PRICE_THRESHOLD (explicit target price)", () => {
+      const ctx = {
+        ...base,
+        isPriceEvent: true,
+        currentPrice: 90,
+        priceChangePct: -1,
+        thresholdValue: 100,
+        direction: "below",
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("PRICE_THRESHOLD", ctx)).toBe(true);
+    });
+
+    it("does not apply the user floor to COMPETITOR_CHEAPER", () => {
+      const ctx = {
+        ...base,
+        currentPrice: 100,
+        minCompetitorPrice: 80,
+        priceChangePct: -1,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("COMPETITOR_CHEAPER", ctx)).toBe(true);
+    });
+
+    it("does not apply the user floor to stock rules", () => {
+      const ctx = {
+        ...base,
+        isStockEvent: true,
+        previousStockState: true,
+        inStock: false,
+        priceChangePct: -1,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("OUT_OF_STOCK", ctx)).toBe(true);
     });
   });
 

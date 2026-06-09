@@ -382,6 +382,13 @@ async function sendEmailAlert(
   data: AlertData,
   ruleType: string,
 ): Promise<DeliveryOutcome> {
+  // Kullanıcı tercihi: e-posta uyarıları kapalıysa SADECE e-posta gönderimini
+  // atla. Telegram/in-app çekirdek kanallardır ve etkilenmez; sendAlerts bu
+  // SKIPPED sonucuyla bildirim satırını yine de yazar.
+  if (user?.emailAlertsEnabled === false) {
+    return { status: "SKIPPED", error: "E-posta uyarıları kapalı" };
+  }
+
   const resend = getResend();
   if (!resend) return { status: "SKIPPED", error: "RESEND_API_KEY tanımlı değil" };
   if (!user?.email) {

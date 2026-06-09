@@ -2,7 +2,6 @@ import "dotenv/config";
 import { createHash } from "node:crypto";
 
 import { Worker, Queue } from "bullmq";
-import { Client } from "pg";
 import { setGlobalDispatcher, ProxyAgent } from "undici";
 
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
@@ -55,113 +54,6 @@ async function registerTelegramBot(): Promise<TelegramRegistrationResult> {
   } catch (err) {
     logger.error({ err }, "Telegram bot registration failed");
     return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-// === TEMP DIAGNOSTIC (remove in Phase 2) ===
-// One-shot boot diagnostic for the notification/alert delivery pipeline. Prints
-// counts/summaries ONLY (never row values) so that, from Railway logs alone, we
-// can tell whether notifications are being written, whether Telegram is linked,
-// how scrape intervals are distributed, and whether scraping is starving. Every
-// query is isolated in try/catch so a diagnostic failure can never down the worker.
-async function runBootDiagnostics(telegram: TelegramRegistrationResult): Promise<void> {
-  console.log("=== BILDIRIM TEŞHİSİ ===");
-
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  try {
-    await client.connect();
-  } catch (err) {
-    console.error("[diagnostic] DB bağlantısı kurulamadı:", err);
-    return;
-  }
-
-  try {
-    // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-    // notifications tablosu var mı + toplam satır sayısı
-    try {
-      const reg = await client.query(
-        `SELECT to_regclass('public.notifications') IS NOT NULL AS exists`,
-      );
-      if (reg.rows[0]?.exists) {
-        const count = await client.query(`SELECT COUNT(*)::int AS n FROM notifications`);
-        console.log(`notifications tablosu: VAR — toplam satır = ${count.rows[0].n}`);
-      } else {
-        console.log("notifications tablosu: YOK");
-      }
-    } catch (err) {
-      console.error("[diagnostic] notifications kontrolü başarısız:", err);
-    }
-
-    // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-    // Telegram bağlı kullanıcı sayısı
-    try {
-      const r = await client.query(
-        `SELECT COUNT(*)::int AS n FROM users WHERE telegram_chat_id IS NOT NULL`,
-      );
-      console.log(`Telegram bağlı kullanıcı sayısı = ${r.rows[0].n}`);
-    } catch (err) {
-      console.error("[diagnostic] telegram kullanıcı sayımı başarısız:", err);
-    }
-
-    // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-    // Aktif AlertRule sayısı (alert_rules.is_active)
-    try {
-      const r = await client.query(
-        `SELECT COUNT(*)::int AS n FROM alert_rules WHERE is_active = true`,
-      );
-      console.log(`Aktif AlertRule sayısı = ${r.rows[0].n}`);
-    } catch (err) {
-      console.error("[diagnostic] alert_rules sayımı başarısız:", err);
-    }
-
-    // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-    // tracked_products: DISTINCT scrape_interval değerleri + adetleri
-    try {
-      const r = await client.query(
-        `SELECT scrape_interval, COUNT(*)::int AS n
-           FROM tracked_products
-           GROUP BY scrape_interval
-           ORDER BY scrape_interval`,
-      );
-      const summary =
-        r.rows.map((row) => `${row.scrape_interval}dk=${row.n}`).join(", ") || "(kayıt yok)";
-      console.log(`tracked_products scrape_interval dağılımı: ${summary}`);
-    } catch (err) {
-      console.error("[diagnostic] scrape_interval dağılımı başarısız:", err);
-    }
-
-    // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-    // En eski last_scraped_at kaç dk önce (starvation göstergesi)
-    try {
-      const r = await client.query(
-        `SELECT MAX(EXTRACT(EPOCH FROM (now() - last_scraped_at)) / 60)::int AS max_minutes
-           FROM tracked_products`,
-      );
-      const m = r.rows[0]?.max_minutes;
-      console.log(
-        m === null || m === undefined
-          ? "En eski last_scraped_at: henüz scrape edilmiş ürün yok"
-          : `En eski last_scraped_at = ${m} dk önce (starvation göstergesi)`,
-      );
-    } catch (err) {
-      console.error("[diagnostic] starvation kontrolü başarısız:", err);
-    }
-
-    // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-    // registerTelegramBot sonucu
-    if (telegram.status === "registered") {
-      console.log(`✅ webhook registered: ${telegram.webhookUrl}`);
-    } else if (telegram.status === "skipped") {
-      console.log(`⚠️ skipped: ${telegram.reason}`);
-    } else {
-      console.log(`❌ failed: ${telegram.reason}`);
-    }
-  } finally {
-    try {
-      await client.end();
-    } catch {
-      // bağlantı kapatma hatasını yut — teşhis worker'ı düşürmemeli
-    }
   }
 }
 
@@ -283,14 +175,7 @@ async function start() {
     logger.error({ err }, "Schema reconciliation (runMigrations) failed — continuing");
   }
 
-  const telegramResult = await registerTelegramBot();
-
-  // === TEMP DIAGNOSTIC (remove in Phase 2) ===
-  try {
-    await runBootDiagnostics(telegramResult);
-  } catch (err) {
-    console.error("[diagnostic] beklenmeyen hata:", err);
-  }
+  await registerTelegramBot();
 
   // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri kuyruğa ekle
   setInterval(async () => {

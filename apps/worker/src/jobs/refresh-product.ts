@@ -8,6 +8,7 @@ import { urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { getScraper } from "../scrapers";
 import { verifyProductMatch, MatchResult } from "../matcher";
+import { maybeEnqueueAlerts } from "./processor";
 import { Marketplace } from "@prisma/client";
 
 interface RefreshJobData {
@@ -64,6 +65,12 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
 
   console.log(`🔄 Fiyat yenileniyor: ${product.productName} (${productId})`);
   await updateTrackedProductRefresh(productId, { refreshStatus: "processing" });
+
+  // Faz 2: alert tetikleme için refresh ÖNCESİ saklı fiyat/stok durumunu yakala.
+  // `product` in-memory nesnesi prisma.update çağrılarıyla değişmediğinden bu
+  // değerler güncelleme sonrasında da "önceki" değeri verir.
+  const previousOwnPrice = product.currentPrice ? Number(product.currentPrice) : null;
+  const previousOwnInStock = product.status !== "OUT_OF_STOCK";
 
   try {
     const now = new Date();
@@ -465,6 +472,27 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
           );
         }
       }
+    }
+
+    // Faz 2: fiyat/competitor güncellemesi bitti — refresh ÖNCESİ saklı fiyata
+    // karşı bir değişiklik oluştuysa alert kontrolünü kuyruğa al. Scheduled
+    // scrape ile ortak yardımcı; rule cooldown'ları çift bildirimi engeller.
+    try {
+      const refreshed = await prisma.trackedProduct.findUnique({
+        where: { id: productId },
+        select: { currentPrice: true, status: true },
+      });
+      if (refreshed?.currentPrice != null) {
+        await maybeEnqueueAlerts({
+          productId,
+          previousPrice: previousOwnPrice,
+          currentPrice: Number(refreshed.currentPrice),
+          previousInStock: previousOwnInStock,
+          inStock: refreshed.status !== "OUT_OF_STOCK",
+        });
+      }
+    } catch (alertError) {
+      console.error(`⚠️ Alert kuyruğa alma hatası (refresh): ${productId}`, alertError);
     }
 
     await updateTrackedProductRefresh(productId, {

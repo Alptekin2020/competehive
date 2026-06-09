@@ -23,7 +23,20 @@ export interface AlertEvalContext {
   direction: string | null;
   /** Cheapest in-stock competitor price for the product, or null when none. */
   minCompetitorPrice: number | null;
+  /**
+   * User-level global noise floor (User.alertThresholdPct). A price-movement
+   * alert whose absolute % change is below this is suppressed. 0 disables it.
+   */
+  userThresholdPct: number;
 }
+
+// Rule types driven purely by the magnitude/direction of a price move. The
+// user-level alertThresholdPct acts as a global noise floor on exactly these:
+// a move smaller than the user's threshold produces no alert. Deliberately
+// excluded — PRICE_THRESHOLD (an explicit target price; a small move across the
+// target still matters), COMPETITOR_CHEAPER (driven by a competitor's price,
+// not our own delta) and the stock rules (no price delta at all).
+const PRICE_MOVEMENT_RULE_TYPES = new Set(["PRICE_DROP", "PRICE_INCREASE", "PERCENTAGE_CHANGE"]);
 
 /**
  * Decide whether a single alert rule should fire for the given context.
@@ -31,6 +44,17 @@ export interface AlertEvalContext {
  * notification delivery stay in the worker.
  */
 export function evaluateAlertRule(ruleType: string, ctx: AlertEvalContext): boolean {
+  // Global user noise floor: suppress sub-threshold price moves before the
+  // per-rule logic runs. Orthogonal to each rule's own thresholdValue — a change
+  // must clear both the rule threshold and this user floor to fire.
+  if (
+    PRICE_MOVEMENT_RULE_TYPES.has(ruleType) &&
+    ctx.priceChangePct !== null &&
+    Math.abs(ctx.priceChangePct) < ctx.userThresholdPct
+  ) {
+    return false;
+  }
+
   switch (ruleType) {
     case "PRICE_DROP":
       return ctx.isPriceEvent && ctx.priceChange !== null && ctx.priceChange < 0;
