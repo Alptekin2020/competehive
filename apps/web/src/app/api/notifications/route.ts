@@ -70,6 +70,10 @@ export async function GET(req: NextRequest) {
       hasMore: offset + limit < total,
     });
   } catch (error) {
+    // Surface the real failure (message + stack) in Vercel function logs so a
+    // lingering 500 after the schema reconcile can be diagnosed. The client
+    // response stays the generic "Sunucu hatası" produced by serverError().
+    console.error("[notifications] GET failed:", error);
     return serverError(error, "GET /api/notifications");
   }
 }

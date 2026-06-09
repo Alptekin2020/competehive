@@ -285,6 +285,78 @@ export async function runMigrations() {
 
     console.log("✅ Phase 9 migration: plan limit enforcement fields added");
 
+    // Phase 10: Notification + alert-flow schema reconciliation.
+    // GET /api/notifications 500s when the live `notifications` table is missing
+    // columns the Prisma schema (model Notification) declares — most often
+    // `status`/`error` (added by 202606010001) on a DB that hasn't redeployed.
+    // The statements below idempotently force-align the live schema with
+    // packages/database/prisma/schema.prisma, independent of Prisma's migration
+    // state. Types/defaults mirror 0001_initial_baseline +
+    // 202606010001_add_notification_delivery_status + 202605300001_add_email_alert_pref_columns.
+
+    // (a) Full table — safety net if `notifications` is entirely missing.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "notifications" (
+        "id"            TEXT NOT NULL,
+        "user_id"       TEXT NOT NULL,
+        "alert_rule_id" TEXT,
+        "channel"       "NotifyChannel" NOT NULL,
+        "title"         TEXT NOT NULL,
+        "message"       TEXT NOT NULL,
+        "metadata"      JSONB,
+        "status"        TEXT NOT NULL DEFAULT 'SENT',
+        "error"         TEXT,
+        "is_read"       BOOLEAN NOT NULL DEFAULT false,
+        "sent_at"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "notifications_pkey" PRIMARY KEY ("id")
+      )
+    `);
+
+    // (b) Per-column backfill — table exists but a column is missing. Each ADD is
+    // crash-safe on a non-empty table: defaulted columns carry their default, the
+    // rest are added nullable (the canonical NOT NULLs live in the CREATE TABLE).
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "id" TEXT`);
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "user_id" TEXT`);
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "alert_rule_id" TEXT`);
+    await client.query(
+      `ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "channel" "NotifyChannel"`,
+    );
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "title" TEXT`);
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "message" TEXT`);
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "metadata" JSONB`);
+    await client.query(
+      `ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'SENT'`,
+    );
+    await client.query(`ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "error" TEXT`);
+    await client.query(
+      `ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "is_read" BOOLEAN NOT NULL DEFAULT false`,
+    );
+    await client.query(
+      `ALTER TABLE "notifications" ADD COLUMN IF NOT EXISTS "sent_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+    );
+
+    // (c) users columns the notification/alert flow reads (model User).
+    await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_chat_id" TEXT`);
+    await client.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "telegram_status" TEXT`);
+    await client.query(
+      `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email_alerts_enabled" BOOLEAN NOT NULL DEFAULT true`,
+    );
+    await client.query(
+      `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "alert_threshold_pct" DOUBLE PRECISION NOT NULL DEFAULT 5`,
+    );
+
+    // (d) Lookup indexes. NOTE: model Notification has no `created_at` — its
+    // timestamp column is `sent_at` (the route's orderBy), so the time index
+    // targets sent_at; indexing a non-existent created_at would abort migration.
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS "idx_notifications_user_id" ON "notifications"("user_id")`,
+    );
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS "idx_notifications_sent_at" ON "notifications"("sent_at")`,
+    );
+
+    console.log("✅ Phase 10 migration: notification schema reconciled");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
