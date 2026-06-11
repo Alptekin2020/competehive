@@ -203,18 +203,22 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
     }
 
     try {
-      await prisma.competitor.update({
-        where: { id: competitor.id },
-        data: { currentPrice: recoveredPrice, lastScrapedAt: new Date() },
-      });
-      await prisma.competitorPrice.create({
-        data: {
-          competitorId: competitor.id,
-          price: recoveredPrice,
-          currency: "TRY",
-          inStock: true,
-        },
-      });
+      // Güncel fiyat ile geçmiş kaydı atomik yazılır — biri başarısız olursa
+      // yarım durum (fiyat güncel ama geçmişte izi yok) oluşmaz.
+      await prisma.$transaction([
+        prisma.competitor.update({
+          where: { id: competitor.id },
+          data: { currentPrice: recoveredPrice, lastScrapedAt: new Date() },
+        }),
+        prisma.competitorPrice.create({
+          data: {
+            competitorId: competitor.id,
+            price: recoveredPrice,
+            currency: "TRY",
+            inStock: true,
+          },
+        }),
+      ]);
 
       const priceChanged =
         previousPrice === null || Math.abs(recoveredPrice - previousPrice) > 0.009;

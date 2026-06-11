@@ -62,6 +62,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return badRequest("Bu kural türü için eşik değeri zorunludur.");
     }
 
+    // Yön gerektiren kural türünde yön silinemez — direction=null, alert
+    // worker'da sessizce "above" davranışına düşerdi.
+    if (
+      rule.ruleType === "PRICE_THRESHOLD" &&
+      "direction" in parsed.data &&
+      parsed.data.direction == null
+    ) {
+      return badRequest("Bu kural türü için yön seçimi zorunludur.");
+    }
+
     // Kanal değişikliği plan kapısından geçer (POST ile aynı kural).
     if (parsed.data.notifyVia) {
       const features = getPlanFeatures(user.plan);
