@@ -186,6 +186,7 @@ export default function AlertsPage() {
   const [activeFilter, setActiveFilter] = useState<AlertFilter>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [modalPrefill, setModalPrefill] = useState<AlertModalPrefill | null>(null);
+  const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
   const [showFirstAlertSuccess, setShowFirstAlertSuccess] = useState(false);
 
   const fetchRules = useCallback(async () => {
@@ -306,7 +307,14 @@ export default function AlertsPage() {
   }, [rules, activeFilter, searchTerm]);
 
   const openCreateModal = (prefill?: AlertModalPrefill) => {
+    setEditingRule(null);
     setModalPrefill(prefill ?? null);
+    setShowCreateModal(true);
+  };
+
+  const openEditModal = (rule: AlertRule) => {
+    setModalPrefill(null);
+    setEditingRule(rule);
     setShowCreateModal(true);
   };
 
@@ -640,6 +648,25 @@ export default function AlertsPage() {
                     </button>
 
                     <button
+                      onClick={() => openEditModal(rule)}
+                      className="p-2 text-dark-600 hover:text-hive-400 rounded-lg hover:bg-hive-500/10 transition"
+                      title="Düzenle"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                    </button>
+
+                    <button
                       onClick={() => setDeleteConfirmId(rule.id)}
                       className="p-2 text-dark-600 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
                       title="Sil"
@@ -699,11 +726,16 @@ export default function AlertsPage() {
           products={products}
           planFeatures={planFeatures}
           initialValues={modalPrefill}
-          onClose={() => setShowCreateModal(false)}
+          editingRule={editingRule}
+          onClose={() => {
+            setShowCreateModal(false);
+            setEditingRule(null);
+          }}
           onCreated={() => {
-            const wasFirstAlert = rules.length === 0;
+            const wasFirstAlert = rules.length === 0 && !editingRule;
             setShowCreateModal(false);
             setModalPrefill(null);
+            setEditingRule(null);
             if (wasFirstAlert) setShowFirstAlertSuccess(true);
             fetchRules();
           }}
@@ -717,21 +749,38 @@ function CreateAlertModal({
   products,
   planFeatures,
   initialValues,
+  editingRule,
   onClose,
   onCreated,
 }: {
   products: Product[];
   planFeatures: PlanFeaturesData | null;
   initialValues: AlertModalPrefill | null;
+  editingRule: AlertRule | null;
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [selectedProduct, setSelectedProduct] = useState("");
-  const [ruleType, setRuleType] = useState(initialValues?.ruleType || "PRICE_DROP");
-  const [thresholdValue, setThresholdValue] = useState(initialValues?.thresholdValue || "");
-  const [direction, setDirection] = useState(initialValues?.direction || "below");
-  const [notifyVia, setNotifyVia] = useState<string[]>(["EMAIL"]);
-  const [cooldownMinutes, setCooldownMinutes] = useState(initialValues?.cooldownMinutes || "60");
+  // Düzenleme modunda kapsam ve kural türü kilitlidir: tür/kapsam değişikliği
+  // aslında yeni bir kuraldır ve genel-kural ezme davranışını sessizce bozardı.
+  const isEdit = Boolean(editingRule);
+  const [selectedProduct, setSelectedProduct] = useState(editingRule?.trackedProductId ?? "");
+  const [ruleType, setRuleType] = useState(
+    editingRule?.ruleType || initialValues?.ruleType || "PRICE_DROP",
+  );
+  const [thresholdValue, setThresholdValue] = useState(
+    editingRule?.thresholdValue != null
+      ? String(editingRule.thresholdValue)
+      : initialValues?.thresholdValue || "",
+  );
+  const [direction, setDirection] = useState(
+    editingRule?.direction || initialValues?.direction || "below",
+  );
+  const [notifyVia, setNotifyVia] = useState<string[]>(
+    editingRule?.notifyVia?.length ? editingRule.notifyVia : ["EMAIL"],
+  );
+  const [cooldownMinutes, setCooldownMinutes] = useState(
+    editingRule ? String(editingRule.cooldownMinutes) : initialValues?.cooldownMinutes || "60",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -767,24 +816,40 @@ function CreateAlertModal({
     setSubmitting(true);
 
     try {
-      // Boş seçim = genel kural (tüm ürünler): trackedProductId gönderilmez.
-      const body: Record<string, unknown> = {
-        ...(selectedProduct ? { trackedProductId: selectedProduct } : {}),
-        ruleType,
-        notifyVia,
-        cooldownMinutes: parseInt(cooldownMinutes) || 60,
-      };
+      let body: Record<string, unknown>;
+      let url: string;
+      let method: string;
 
-      if (ruleConfig.needsThreshold) {
-        body.thresholdValue = parseFloat(thresholdValue);
+      if (isEdit && editingRule) {
+        // Düzenleme: yalnızca davranış alanları gönderilir (tür/kapsam kilitli).
+        url = `/api/alerts/${editingRule.id}`;
+        method = "PATCH";
+        body = {
+          notifyVia,
+          cooldownMinutes: parseInt(cooldownMinutes) || 60,
+          ...(ruleConfig.needsThreshold ? { thresholdValue: parseFloat(thresholdValue) } : {}),
+          ...(ruleConfig.needsDirection ? { direction } : {}),
+        };
+      } else {
+        // Boş seçim = genel kural (tüm ürünler): trackedProductId gönderilmez.
+        url = "/api/alerts";
+        method = "POST";
+        body = {
+          ...(selectedProduct ? { trackedProductId: selectedProduct } : {}),
+          ruleType,
+          notifyVia,
+          cooldownMinutes: parseInt(cooldownMinutes) || 60,
+        };
+        if (ruleConfig.needsThreshold) {
+          body.thresholdValue = parseFloat(thresholdValue);
+        }
+        if (ruleConfig.needsDirection) {
+          body.direction = direction;
+        }
       }
 
-      if (ruleConfig.needsDirection) {
-        body.direction = direction;
-      }
-
-      const res = await fetch("/api/alerts", {
-        method: "POST",
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -796,7 +861,7 @@ function CreateAlertModal({
             `${data.error} Daha fazla kural/kanal ile kritik değişimleri daha hızlı yakalamak için Ayarlar > Plan sayfasından yükseltebilirsiniz.`,
           );
         } else {
-          setError(data.error || "Uyarı oluşturulamadı");
+          setError(data.error || (isEdit ? "Uyarı güncellenemedi" : "Uyarı oluşturulamadı"));
         }
         return;
       }
@@ -815,9 +880,13 @@ function CreateAlertModal({
       <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-2xl relative z-10 max-h-[90vh] overflow-y-auto safe-bottom">
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h2 className="text-lg font-bold text-white">Yeni Uyarı Kuralı</h2>
+            <h2 className="text-lg font-bold text-white">
+              {isEdit ? "Uyarıyı Düzenle" : "Yeni Uyarı Kuralı"}
+            </h2>
             <p className="text-xs text-dark-500 mt-1">
-              Doğru kurgu ile daha az bildirim, daha net aksiyon.
+              {isEdit
+                ? "Eşik, kanal ve bekleme süresini güncelleyin. Tür ve kapsam değişikliği için yeni kural oluşturun."
+                : "Doğru kurgu ile daha az bildirim, daha net aksiyon."}
             </p>
           </div>
           <button onClick={onClose} className="text-dark-500 hover:text-white transition p-2 -m-1">
@@ -856,7 +925,8 @@ function CreateAlertModal({
               <select
                 value={selectedProduct}
                 onChange={(e) => setSelectedProduct(e.target.value)}
-                className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-hive-500/50 transition appearance-none"
+                disabled={isEdit}
+                className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-hive-500/50 transition appearance-none disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <option value="">🌐 Tüm ürünler (genel kural)</option>
                 {products.map((p) => (
@@ -879,11 +949,14 @@ function CreateAlertModal({
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setRuleType(key)}
+                    onClick={() => !isEdit && setRuleType(key)}
+                    disabled={isEdit && ruleType !== key}
                     className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm text-left transition border ${
                       ruleType === key
                         ? "border-hive-500/50 bg-hive-500/10 text-white"
-                        : "border-dark-800 text-dark-400 hover:border-dark-700 hover:text-white"
+                        : isEdit
+                          ? "border-dark-800 text-dark-600 opacity-40 cursor-not-allowed"
+                          : "border-dark-800 text-dark-400 hover:border-dark-700 hover:text-white"
                     }`}
                   >
                     <span>{config.icon}</span>
@@ -1031,7 +1104,13 @@ function CreateAlertModal({
               disabled={submitting}
               className="flex-1 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 py-2.5 rounded-xl text-sm font-semibold transition"
             >
-              {submitting ? "Oluşturuluyor..." : "Uyarı Oluştur"}
+              {submitting
+                ? isEdit
+                  ? "Kaydediliyor..."
+                  : "Oluşturuluyor..."
+                : isEdit
+                  ? "Kaydet"
+                  : "Uyarı Oluştur"}
             </button>
           </div>
         </form>

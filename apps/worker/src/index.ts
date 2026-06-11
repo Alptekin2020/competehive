@@ -7,6 +7,7 @@ import { setGlobalDispatcher, ProxyAgent } from "undici";
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
 import { cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
+import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
 import { prisma } from "./db";
@@ -237,6 +238,26 @@ async function start() {
       }
     },
     6 * 60 * 60 * 1000,
+  );
+
+  // Bayat rakip fiyatı tazeleme: bilinen rakip URL'lerini hafif HTTP ile
+  // yeniden doğrular (Serper/AI maliyeti yok). 30 dakikada bir; açılıştan
+  // 2 dk sonra ilk tur (deploy anında dış sitelere yüklenmemek için).
+  setInterval(
+    () => {
+      refreshStaleCompetitorPrices().catch((err) => {
+        logger.error({ err }, "Competitor price refresh scheduler error");
+      });
+    },
+    30 * 60 * 1000,
+  );
+  setTimeout(
+    () => {
+      refreshStaleCompetitorPrices().catch((err) => {
+        logger.error({ err }, "Initial competitor price refresh error");
+      });
+    },
+    2 * 60 * 1000,
   );
 
   // Start health check HTTP server (Railway uses this for health checks)

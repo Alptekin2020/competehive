@@ -586,13 +586,10 @@ export async function scrapeTrendyol(
       return product;
     }
 
-    // Geçici tanılama logu — başarısız parse durumunda HTML formatını incelemek için.
-    // TODO: Tanı bittikten sonra silinecek.
+    // Parse başarısızlığında format-marker raporu: sayfada hangi veri
+    // kaynaklarının bulunduğunu tek satırda loglar. Ham HTML dökümü üretim
+    // log hacmini şişirdiği için kaldırıldı; markerlar tanı için yeterli.
     if (!product || !product.name || !product.price) {
-      // İlk 5000 karakteri logla — JSON-LD, __NEXT_DATA__, meta tag formatlarını arayabilelim
-      const dumpSnippet = html.slice(0, 5000).replace(/\s+/g, " ").trim();
-
-      // Spesifik marker'ları arayıp varlık raporu çıkar
       const hasJsonLd = html.includes("application/ld+json");
       const hasNextData = html.includes("__NEXT_DATA__");
       const hasInitialState = html.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
@@ -601,12 +598,9 @@ export async function scrapeTrendyol(
       const hasItemprop = html.includes('itemprop="price"');
       const hasInlineWindow = html.includes("window.__") || html.includes("window['__");
 
-      // 8000 char limit aşmamak için 3 ayrı log satırı
       logger.warn(
         `Trendyol PARSE-FAIL markers: jsonLd=${hasJsonLd} nextData=${hasNextData} initialState=${hasInitialState} ogPrice=${hasOgPrice} itemprop=${hasItemprop} inlineWindow=${hasInlineWindow}`,
       );
-      logger.warn(`Trendyol PARSE-FAIL dump-1 (0-2500): ${dumpSnippet.slice(0, 2500)}`);
-      logger.warn(`Trendyol PARSE-FAIL dump-2 (2500-5000): ${dumpSnippet.slice(2500, 5000)}`);
     }
 
     logger.warn("Trendyol HTML fetch returned no product data, trying Puppeteer");
@@ -1198,7 +1192,6 @@ export async function scrapeHepsiburada(
     }
 
     if (!product || !product.name || product.price === 0) {
-      const dumpSnippet = html.slice(0, 5000).replace(/\s+/g, " ").trim();
       const hasJsonLd = html.includes("application/ld+json");
       const hasNextData = html.includes("__NEXT_DATA__");
       const hasOgPrice =
@@ -1207,8 +1200,6 @@ export async function scrapeHepsiburada(
       logger.warn(
         `Hepsiburada PARSE-FAIL markers: jsonLd=${hasJsonLd} nextData=${hasNextData} ogPrice=${hasOgPrice} itemprop=${hasItemprop}`,
       );
-      logger.warn(`Hepsiburada PARSE-FAIL dump-1 (0-2500): ${dumpSnippet.slice(0, 2500)}`);
-      logger.warn(`Hepsiburada PARSE-FAIL dump-2 (2500-5000): ${dumpSnippet.slice(2500, 5000)}`);
     }
 
     logger.warn("Hepsiburada HTML returned no product data, trying Puppeteer");
