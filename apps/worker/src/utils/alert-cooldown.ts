@@ -19,7 +19,12 @@ let redis: IORedis | null = null;
 function getRedis(): IORedis {
   if (!redis) {
     redis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
-      maxRetriesPerRequest: null,
+      // BullMQ bağlantılarının aksine bu istemci HIZLI HATA vermeli:
+      // maxRetriesPerRequest: null olsaydı Redis koptuğunda komutlar sonsuza
+      // dek bekler, lastTriggered fallback'i hiç devreye giremez ve
+      // alertWorker kilitlenirdi.
+      maxRetriesPerRequest: 2,
+      connectTimeout: 5000,
       lazyConnect: true,
     });
   }

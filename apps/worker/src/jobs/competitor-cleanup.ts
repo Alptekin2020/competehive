@@ -101,7 +101,10 @@ export async function cleanupJunkCompetitors(): Promise<{
       trackedProduct: { productName: string; currentPrice: unknown } | null;
     }> = await prisma.competitor.findMany({
       take: PAGE_SIZE,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      // Keyset sayfalama (id > cursor): Prisma `cursor` sayfalaması cursor
+      // kaydının var olmasını gerektirir — sayfanın son kaydı bu döngüde
+      // silinmiş olabileceği için cursor tabanlı sayfalama çöker/yarım kalır.
+      where: cursor ? { id: { gt: cursor } } : {},
       orderBy: { id: "asc" },
       select: {
         id: true,
