@@ -203,12 +203,14 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
     }
 
     try {
-      // Güncel fiyat ile geçmiş kaydı atomik yazılır — biri başarısız olursa
-      // yarım durum (fiyat güncel ama geçmişte izi yok) oluşmaz.
+      // Güncel fiyat ile geçmiş kaydı atomik ve AYNI zaman damgasıyla yazılır —
+      // biri başarısız olursa yarım durum oluşmaz, lastScrapedAt/scrapedAt
+      // birbirinden sapmaz.
+      const refreshedAt = new Date();
       await prisma.$transaction([
         prisma.competitor.update({
           where: { id: competitor.id },
-          data: { currentPrice: recoveredPrice, lastScrapedAt: new Date() },
+          data: { currentPrice: recoveredPrice, lastScrapedAt: refreshedAt },
         }),
         prisma.competitorPrice.create({
           data: {
@@ -216,6 +218,7 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
             price: recoveredPrice,
             currency: "TRY",
             inStock: true,
+            scrapedAt: refreshedAt,
           },
         }),
       ]);

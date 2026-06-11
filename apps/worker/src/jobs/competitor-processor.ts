@@ -7,6 +7,7 @@ import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
+import { urlMatchKey } from "../utils/url-match";
 import { alertQueue } from "./processor";
 
 interface OnboardJobData {
@@ -132,10 +133,13 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
     const seenUrls = new Set<string>();
+    // Kendi ürün URL'siyle normalize karşılaştırma (www/sondaki "/"/query
+    // farkları ham string eşitliğini kaçırıp ürünü kendi rakibi yapabiliyordu).
+    const ownUrlKey = url ? urlMatchKey(url) : null;
 
     const processResults = async (batch: SerperShoppingResult[]) => {
       for (const result of batch) {
-        if (result.link === url) continue;
+        if (ownUrlKey && urlMatchKey(result.link) === ownUrlKey) continue;
 
         // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
         if (isPackagingListing(result.title, product.productName)) {

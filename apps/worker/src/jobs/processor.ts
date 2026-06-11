@@ -1,5 +1,6 @@
 import { Queue, Worker, Job } from "bullmq";
 import { PrismaClient } from "@prisma/client";
+import { extractRetailer } from "../serper";
 import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
@@ -267,6 +268,10 @@ export const scrapeWorker = new Worker(
             : null;
           if (recoveredPrice && isPlausiblePriceChange(previousPrice, recoveredPrice)) {
             const previousInStock = failedProduct.status !== "OUT_OF_STOCK";
+            // sellerName grafikte "kendi fiyat" ayrımı için kullanılır — boş
+            // kalırsa kayıt "Bilinmeyen" satıcıya (rakip) sınıflanır.
+            const ownRetailer = extractRetailer(failedProduct.productUrl);
+            const ownSellerName = ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm";
             await prisma.priceHistory.create({
               data: {
                 trackedProductId: productId,
@@ -279,6 +284,7 @@ export const scrapeWorker = new Worker(
                     ? ((recoveredPrice - previousPrice) / previousPrice) * 100
                     : null,
                 inStock: true,
+                sellerName: ownSellerName,
               },
             });
             await prisma.trackedProduct.update({

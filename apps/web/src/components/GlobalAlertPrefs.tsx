@@ -185,22 +185,25 @@ export default function GlobalAlertPrefs({
     setChannelsBusy(true);
     setError(null);
     try {
-      for (const rule of globalRules) {
-        const res = await fetch(`/api/alerts/${rule.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ notifyVia: nextChannels }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => null);
-          showError(data?.error || "Kanallar güncellenemedi.");
-          onChanged();
-          return;
-        }
+      // Paralel güncelleme: ardışık istekler ağ gecikmesinde UI'ı yavaşlatıyordu.
+      const responses = await Promise.all(
+        globalRules.map((rule) =>
+          fetch(`/api/alerts/${rule.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ notifyVia: nextChannels }),
+          }),
+        ),
+      );
+      const failed = responses.find((res) => !res.ok);
+      if (failed) {
+        const data = await failed.json().catch(() => null);
+        showError(data?.error || "Kanallar güncellenemedi.");
       }
       onChanged();
     } catch {
       showError("Bağlantı hatası — kanallar güncellenemedi.");
+      onChanged();
     } finally {
       setChannelsBusy(false);
     }
