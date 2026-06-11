@@ -20,6 +20,7 @@ import {
   type CompetitorAssessment,
 } from "@competehive/shared";
 import RefreshButton from "@/components/RefreshButton";
+import InfoTip from "@/components/ui/InfoTip";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -690,7 +691,13 @@ export default function ProductDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
         <div className="bg-gradient-to-br from-[#151518] to-[#101012] border border-[#2A2A2F] rounded-2xl p-5 sm:p-6 lg:col-span-2">
           <div className="flex items-start justify-between gap-3 mb-4">
-            <h2 className="text-white font-semibold text-lg">Piyasa Pozisyonu</h2>
+            <h2 className="text-white font-semibold text-lg inline-flex items-center gap-2">
+              Piyasa Pozisyonu
+              <InfoTip
+                align="left"
+                text="Fark ve sıralama yalnızca 'karara uygun' rakiplerle hesaplanır: geçerli fiyatı olan, eşleşme güveni yeterli, fiyatı sizin fiyatınızın 0.3x–3x bandında ve son 72 saat içinde doğrulanmış rakipler."
+              />
+            </h2>
             {positionBadge && (
               <span
                 className={`rounded-full border px-3 py-1 text-xs font-medium ${
@@ -737,7 +744,13 @@ export default function ProductDetailPage() {
           )}
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-5">
-          <h3 className="text-white font-semibold mb-3">Veri Kalitesi / Güven</h3>
+          <h3 className="text-white font-semibold mb-3 inline-flex items-center gap-2">
+            Veri Kalitesi / Güven
+            <InfoTip
+              align="right"
+              text="Fiyat kararı vermeden önce rakip verisinin ne kadar güvenilir olduğunu özetler. 'Aksiyon için güçlü' rozetini görmeden agresif fiyat değişikliği önermeyiz."
+            />
+          </h3>
           <ul className="space-y-2 text-sm">
             <li className="flex justify-between text-gray-300">
               <span>Son yenileme</span>
@@ -752,19 +765,33 @@ export default function ProductDetailPage() {
               <span className="text-white">{competitors.length}</span>
             </li>
             <li className="flex justify-between text-gray-300">
-              <span title="Fiyatı olan, eşleşme güveni yeterli, fiyat bandında ve 72 saatten taze rakipler">
+              <span className="inline-flex items-center gap-1.5">
                 Karara uygun rakip
+                <InfoTip
+                  align="right"
+                  text="Dört kalite kontrolünden geçen rakipler: geçerli fiyat, yeterli eşleşme güveni, fiyat bandında (0.3x–3x) ve son 72 saatte doğrulanmış. Piyasa pozisyonu ve fiyat önerisi yalnızca bunlarla hesaplanır."
+                />
               </span>
               <span className="text-white">{validCompetitors.length}</span>
             </li>
             <li className="flex justify-between text-gray-300">
-              <span title="Düşük eşleşme güveni veya fiyatı sizinkiyle kıyaslanamayacak kadar farklı">
+              <span className="inline-flex items-center gap-1.5">
                 Şüpheli eşleşme
+                <InfoTip
+                  align="right"
+                  text="Eşleşme güveni düşük veya fiyatı sizinkiyle kıyaslanamayacak kadar farklı kayıtlar. Listede görünür ama hesaplamalara girmez. 'Şüpheli olanlar' filtresiyle inceleyebilirsiniz."
+                />
               </span>
               <span className="text-white">{suspiciousCompetitors.length}</span>
             </li>
             <li className="flex justify-between text-gray-300">
-              <span>Eski / eksik rakip verisi</span>
+              <span className="inline-flex items-center gap-1.5">
+                Eski / eksik rakip verisi
+                <InfoTip
+                  align="right"
+                  text="Fiyatı 72 saatten önce alınmış veya hiç alınamamış rakipler. Güncel olmayabilecekleri için hesaplamalara dahil edilmezler — 'Fiyatları Yenile' ile tazeleyin."
+                />
+              </span>
               <span className="text-white">{staleCompetitors.length}</span>
             </li>
             <li className="pt-2 border-t border-[#1F1F23]">
@@ -794,7 +821,13 @@ export default function ProductDetailPage() {
       </div>
 
       <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6">
-        <h3 className="text-white font-semibold mb-2">Önerilen Fiyat</h3>
+        <h3 className="text-white font-semibold mb-2 inline-flex items-center gap-2">
+          Önerilen Fiyat
+          <InfoTip
+            align="left"
+            text="Öneriler yalnızca karara uygun rakip fiyatlarından üretilir; şüpheli veya eski kayıtlar dahil edilmez. Nihai karar sizindir — kâr marjınızı ve stok durumunuzu da hesaba katın."
+          />
+        </h3>
         {validCompetitors.length === 0 ? (
           <p className="text-sm text-gray-400">Öneri üretmek için yeterli rakip verisi yok.</p>
         ) : (
@@ -1036,11 +1069,15 @@ export default function ProductDetailPage() {
           ) : (
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6">
               <div className="mb-4">
-                <h2 className="text-base font-semibold text-white">
+                <h2 className="text-base font-semibold text-white inline-flex items-center gap-2 flex-wrap">
                   Rakip Fiyatları
-                  <span className="text-gray-500 font-normal text-sm ml-2">
+                  <span className="text-gray-500 font-normal text-sm">
                     ({competitors.length} rakip)
                   </span>
+                  <InfoTip
+                    align="left"
+                    text="🎯 rozeti yapay zekânın eşleşme güvenini (0–100) gösterir. 'Eski' = fiyat 72 saatten önce alındı; 'Bant dışı' = fiyat sizinkiyle kıyaslanamayacak kadar farklı. Bu kayıtlar listede görünür ama hesaplamalara girmez."
+                  />
                 </h2>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <select

@@ -668,7 +668,10 @@ export default function ProductsPage() {
                         {pricePositionHint}
                       </span>
                       {minCompetitorPrice !== null && (
-                        <span className="text-gray-500">
+                        <span
+                          className="text-gray-500"
+                          title="Karara uygun (güvenilir eşleşme, fiyat bandında, taze) rakipler içindeki en düşük fiyat"
+                        >
                           En düşük rakip: ₺{minCompetitorPrice.toLocaleString("tr-TR")}
                         </span>
                       )}

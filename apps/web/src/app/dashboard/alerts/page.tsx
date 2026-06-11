@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
+import InfoTip from "@/components/ui/InfoTip";
 
 interface AlertRule {
   id: string;
@@ -375,7 +377,13 @@ export default function AlertsPage() {
                 her ürün için geçerlidir — 100 ürün için 100 ayrı kural kurmanıza gerek yok. Belirli
                 bir üründe farklı davranış isterseniz o ürüne aynı türde özel bir kural ekleyin:
                 ürün kuralı, o üründe genel kuralın yerine geçer (pasif ürün kuralı o ürünü sessize
-                alır).
+                alır).{" "}
+                <Link
+                  href="/dashboard/yardim#bildirimler"
+                  className="text-hive-400 hover:text-hive-300 underline underline-offset-2"
+                >
+                  Detaylı rehber →
+                </Link>
               </p>
             </div>
           </div>
@@ -533,8 +541,12 @@ export default function AlertsPage() {
                           {rule.isActive ? "Aktif" : "Pasif"}
                         </span>
                         {rule.trackedProductId === null && (
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/25">
+                          <span className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/25">
                             🌐 Genel — tüm ürünler
+                            <InfoTip
+                              align="left"
+                              text="Bu kural tüm ürünlerinize uygulanır. Bir ürüne aynı türde özel kural eklerseniz o üründe bu kuralın yerine geçer; özel kuralı pasif bırakırsanız o ürün bu bildirim türü için sessize alınır."
+                            />
                           </span>
                         )}
                       </div>
@@ -576,7 +588,13 @@ export default function AlertsPage() {
                           </p>
                         </div>
                         <div className="rounded-lg bg-dark-950 border border-dark-800 p-2">
-                          <p className="text-dark-600">Bekleme Süresi</p>
+                          <p className="text-dark-600 inline-flex items-center gap-1.5">
+                            Bekleme Süresi
+                            <InfoTip
+                              align="left"
+                              text="Bu kural bir ürün için tetiklendikten sonra, aynı ürün için bu süre dolmadan tekrar bildirim gönderilmez. Diğer ürünleriniz etkilenmez."
+                            />
+                          </p>
                           <p className="text-dark-300 mt-0.5">{rule.cooldownMinutes} dakika</p>
                         </div>
                         <div className="rounded-lg bg-dark-950 border border-dark-800 p-2">
