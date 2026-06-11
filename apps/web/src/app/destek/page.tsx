@@ -47,6 +47,13 @@ export default function DestekPage() {
             <p className="text-xs text-dark-500 mt-2">
               Yanıt süresi: ortalama 24 saat (iş günleri)
             </p>
+            <p className="text-xs text-dark-500 mt-2">
+              Adım adım kullanım rehberi için panel içindeki{" "}
+              <Link href="/dashboard/yardim" className="text-hive-500 hover:underline">
+                Yardım sayfasına
+              </Link>{" "}
+              bakın.
+            </p>
           </div>
 
           <h2 className="text-xl font-semibold text-white mb-4">Sıkça Sorulan Sorular</h2>
