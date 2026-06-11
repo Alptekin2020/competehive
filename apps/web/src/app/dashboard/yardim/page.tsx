@@ -69,10 +69,13 @@ export default function YardimPage() {
   const dedicatedMarketplaces = SUPPORTED_SCRAPER_MARKETPLACES.map(
     (key) => MARKETPLACES[key]?.name ?? key,
   );
-  const planRows = (["FREE", "STARTER", "PRO", "ENTERPRISE"] as const).map((plan) => ({
-    plan,
-    limits: PLAN_LIMITS[plan],
-  }));
+  // PLAN_LIMITS'te tanımı olmayan bir plan (ileride yapı değişirse) tabloyu
+  // çökertmesin — eksik satırlar sessizce atlanır.
+  const planRows = (["FREE", "STARTER", "PRO", "ENTERPRISE"] as const)
+    .map((plan) => ({ plan, limits: PLAN_LIMITS[plan] }))
+    .filter((row): row is { plan: typeof row.plan; limits: NonNullable<typeof row.limits> } =>
+      Boolean(row.limits),
+    );
 
   return (
     <div className="max-w-4xl mx-auto">
