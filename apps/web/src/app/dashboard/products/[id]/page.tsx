@@ -212,6 +212,10 @@ export default function ProductDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [showAddCompetitor, setShowAddCompetitor] = useState(false);
+  const [competitorUrlInput, setCompetitorUrlInput] = useState("");
+  const [addCompetitorLoading, setAddCompetitorLoading] = useState(false);
+  const [addCompetitorError, setAddCompetitorError] = useState<string | null>(null);
 
   const fetchProduct = useCallback(async () => {
     setLoading(true);
@@ -301,6 +305,32 @@ export default function ProductDetailPage() {
       setCompareError("Rakip taraması sırasında bağlantı hatası oluştu");
     } finally {
       setIsComparing(false);
+    }
+  };
+
+  const handleAddCompetitor = async () => {
+    if (!product || addCompetitorLoading) return;
+    setAddCompetitorError(null);
+    setAddCompetitorLoading(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}/competitors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ competitorUrl: competitorUrlInput.trim() }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setAddCompetitorError(data?.error || "Rakip eklenemedi. Lütfen tekrar deneyin.");
+        return;
+      }
+      setShowAddCompetitor(false);
+      setCompetitorUrlInput("");
+      setCompareStatus(data?.message || "Rakip eklendi.");
+      await fetchProduct();
+    } catch {
+      setAddCompetitorError("Bağlantı hatası — lütfen tekrar deneyin.");
+    } finally {
+      setAddCompetitorLoading(false);
     }
   };
 
@@ -659,6 +689,28 @@ export default function ProductDetailPage() {
                   </svg>
                 )}
                 {isComparing ? "Rakipler Taranıyor..." : "Rakipleri Tara"}
+              </button>
+              <button
+                onClick={() => {
+                  setAddCompetitorError(null);
+                  setShowAddCompetitor(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-dark-700 text-gray-300 hover:text-white hover:border-hive-500/40 text-sm font-medium transition"
+                title="Bildiğiniz bir rakibin linkini elle ekleyin"
+              >
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Rakip Ekle
               </button>
               {compareStatus && (
                 <span className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md">
@@ -1055,16 +1107,28 @@ export default function ProductDetailPage() {
               </div>
               <h3 className="text-white font-semibold mb-1">Rakip bulunamadı</h3>
               <p className="text-gray-500 text-sm mb-4">
-                İlk değerli analiz için bu üründe en az bir rakip gerekli. Taramayı başlatıp eşleşme
-                sonuçlarını birkaç saniye içinde burada görebilirsiniz.
+                Otomatik tarama birebir aynı ürünü satan rakip bulamadı — niş veya markasız
+                ürünlerde bu normaldir. Bildiğiniz bir rakibin linkini elle ekleyebilir veya
+                taramayı yeniden başlatabilirsiniz.
               </p>
-              <button
-                onClick={handleCompare}
-                disabled={isComparing}
-                className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition"
-              >
-                {isComparing ? "Taranıyor..." : "Rakip Taramasını Başlat"}
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    setAddCompetitorError(null);
+                    setShowAddCompetitor(true);
+                  }}
+                  className="inline-flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-dark-1000 px-4 py-2 rounded-lg text-sm font-semibold transition"
+                >
+                  Rakip Linki Ekle
+                </button>
+                <button
+                  onClick={handleCompare}
+                  disabled={isComparing}
+                  className="inline-flex items-center justify-center gap-2 border border-dark-700 hover:border-amber-500/40 disabled:opacity-60 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm font-medium transition"
+                >
+                  {isComparing ? "Taranıyor..." : "Taramayı Yeniden Başlat"}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6">
@@ -1241,6 +1305,51 @@ export default function ProductDetailPage() {
           )}
         </div>
       </div>
+
+      {showAddCompetitor && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (!addCompetitorLoading) setShowAddCompetitor(false);
+            }}
+          />
+          <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-md relative z-10 safe-bottom">
+            <h2 className="text-lg font-bold text-white mb-1">Rakip Ekle</h2>
+            <p className="text-dark-500 text-sm mb-4">
+              Rakip ürünün marketplace linkini yapıştırın. Fiyatı hemen alınamazsa en geç 30 dakika
+              içinde otomatik güncellenir.
+            </p>
+            <input
+              type="url"
+              value={competitorUrlInput}
+              onChange={(e) => setCompetitorUrlInput(e.target.value)}
+              placeholder="https://www.trendyol.com/..."
+              autoFocus
+              className="w-full bg-dark-950 border border-dark-800 rounded-xl px-4 py-3 text-white text-sm placeholder:text-dark-600 focus:outline-none focus:border-hive-500/50 transition mb-3"
+            />
+            {addCompetitorError && (
+              <p className="text-sm text-red-300 mb-3">{addCompetitorError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowAddCompetitor(false)}
+                disabled={addCompetitorLoading}
+                className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 disabled:opacity-60 transition"
+              >
+                İptal
+              </button>
+              <button
+                onClick={handleAddCompetitor}
+                disabled={addCompetitorLoading || !competitorUrlInput.trim()}
+                className="flex-1 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 py-2.5 rounded-xl text-sm font-semibold transition"
+              >
+                {addCompetitorLoading ? "Ekleniyor..." : "Ekle"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">

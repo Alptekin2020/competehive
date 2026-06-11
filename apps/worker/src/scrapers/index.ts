@@ -1776,7 +1776,8 @@ export function getScraper(marketplace: string) {
       return scrapeN11;
     case "TEKNOSA":
     case "VATAN":
-    case "DECATHLON":
+    case "DECATHLON": // legacy kayıtlar için; yeni Decathlon eklemeleri kapalı
+    case "PAZARAMA":
       return scrapeGeneric;
     case "MEDIAMARKT":
       return scrapeMediaMarkt;

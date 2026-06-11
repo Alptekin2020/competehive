@@ -23,6 +23,7 @@ function retailerToMarketplace(retailerName: string): Marketplace {
     Hepsiburada: "HEPSIBURADA",
     "Amazon TR": "AMAZON_TR",
     N11: "N11",
+    Pazarama: "PAZARAMA",
     MediaMarkt: "MEDIAMARKT",
     Teknosa: "TEKNOSA",
     Vatan: "VATAN",

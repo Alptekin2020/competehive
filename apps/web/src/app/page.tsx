@@ -203,21 +203,68 @@ export default async function Home() {
 
       {/* What is CompeteHive */}
       <section className="py-12 sm:py-20 px-4 sm:px-6 border-t border-dark-900/60">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl font-bold text-white mb-6">CompeteHive Nedir?</h2>
-          <div className="space-y-4 text-dark-300 leading-relaxed">
-            <p>
-              CompeteHive, e-ticaret satıcıları ve markalar için geliştirilmiş bir rakip fiyat
-              takibi ve fiyat istihbaratı platformudur.
-            </p>
-            <p>
-              Marketplace&apos;lerdeki rakip ürünleri ve fiyat değişimlerini otomatik olarak izler,
-              geçmiş veriyi kaydeder ve kritik hareketleri tek panelde görünür hale getirir.
-            </p>
-            <p>
-              Böylece ekipler manuel kontrol süreçlerinden çıkar; daha hızlı, daha tutarlı ve veriye
-              dayalı fiyatlandırma kararları alır.
-            </p>
+        <div className="max-w-6xl mx-auto">
+          <div className="grid gap-8 lg:gap-12 lg:grid-cols-2 items-center">
+            <div>
+              <h2 className="text-3xl font-bold text-white mb-6">CompeteHive Nedir?</h2>
+              <div className="space-y-4 text-dark-300 leading-relaxed">
+                <p>
+                  CompeteHive, e-ticaret satıcıları ve markalar için geliştirilmiş bir{" "}
+                  <span className="text-white font-medium">
+                    rakip fiyat takibi ve fiyat istihbaratı platformudur
+                  </span>
+                  . Ürün linkinizi yapıştırırsınız; gerisini sistem üstlenir.
+                </p>
+                <p>
+                  Yapay zekâ, aynı ürünü satan rakipleri web genelinde bulur ve her adaya bir{" "}
+                  <span className="text-white font-medium">eşleşme güveni skoru</span> verir —
+                  aksesuar, farklı model veya alakasız ürünler otomatik elenir. Fiyatlar 7/24
+                  izlenir, geçmiş veriler grafiklerle saklanır.
+                </p>
+                <p>
+                  Sonuç: manuel sekme açıp fiyat kontrol etmek yerine, &quot;rakibim benden ucuza
+                  düştü&quot; bilgisi e-posta veya Telegram&apos;la cebinize gelir; kararınızı
+                  veriyle, dakikalar içinde verirsiniz.
+                </p>
+              </div>
+            </div>
+            <div className="bg-dark-900 border border-dark-800 rounded-3xl p-6 sm:p-8">
+              <p className="text-xs uppercase tracking-[0.2em] text-hive-400/90 mb-4">
+                Bizi farklı kılan
+              </p>
+              <ul className="space-y-4">
+                {[
+                  {
+                    icon: "🎯",
+                    title: "AI destekli ürün eşleştirme",
+                    desc: "Her rakip adayı yapay zekâ ile doğrulanır ve 0-100 güven skoru alır. Yanlış ürünle kıyaslama yapmazsınız.",
+                  },
+                  {
+                    icon: "🛡️",
+                    title: "Veri kalitesi korumaları",
+                    desc: "Fiyat bandı, tazelik ve eşleşme kontrolünden geçemeyen veriler karar hesaplarına asla girmez.",
+                  },
+                  {
+                    icon: "🇹🇷",
+                    title: "Türkiye pazarına özel",
+                    desc: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama ve daha fazlası için optimize edilmiş takip.",
+                  },
+                  {
+                    icon: "🔔",
+                    title: "Akıllı, sade bildirim",
+                    desc: "Tek kurulumla tüm ürünleriniz kapsanır; küçük oynamalar elenir, yalnızca önemli hareketler bildirilir.",
+                  },
+                ].map((item) => (
+                  <li key={item.title} className="flex gap-3">
+                    <span className="text-xl leading-none mt-0.5">{item.icon}</span>
+                    <div>
+                      <p className="text-white font-medium text-sm">{item.title}</p>
+                      <p className="text-dark-400 text-xs leading-relaxed mt-0.5">{item.desc}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </div>
       </section>
@@ -227,39 +274,54 @@ export default async function Home() {
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-white text-center mb-4">Nasıl Çalışır?</h2>
           <p className="text-dark-400 text-center mb-12 max-w-2xl mx-auto">
-            Dakikalar içinde kurulum yapın, rakip hareketlerini otomatik izleyin ve fiyat
-            değişimlerine zaman kaybetmeden aksiyon verin.
+            Kurulum 2 dakika sürer; ilk değerli içgörüyü genellikle ilk taramada görürsünüz.
           </p>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
               {
                 step: "1",
-                title: "Ürünlerinizi ekleyin",
-                desc: "Takip etmek istediğiniz ürünleri ve rakip ürün linklerini panele ekleyin.",
+                icon: "🔗",
+                title: "Ürün linkinizi yapıştırın",
+                desc: "Trendyol, Hepsiburada, Amazon TR, N11 veya Pazarama'daki ürününüzün linkini ekleyin. Fiyat, görsel ve satıcı bilgisi otomatik çekilir.",
               },
               {
                 step: "2",
-                title: "CompeteHive otomatik izlesin",
-                desc: "Sistem seçtiğiniz marketplace&apos;leri düzenli aralıklarla tarayarak fiyat değişimlerini toplar.",
+                icon: "🤖",
+                title: "Yapay zekâ rakipleri bulsun",
+                desc: "Sistem ürününüzü web genelinde arar; her adayı sizinkiyle karşılaştırıp eşleşme skoru verir. Alakasız ürünler otomatik elenir.",
               },
               {
                 step: "3",
-                title: "Uyarı alın ve aksiyon verin",
-                desc: "Fiyat değiştiğinde anında bildirim alın, stratejinizi hızlıca güncelleyin.",
+                icon: "📡",
+                title: "7/24 otomatik izleme",
+                desc: "Hem kendi fiyatınız hem rakip fiyatları düzenli taranır ve tazelenir; geçmiş hareketler grafiklerde birikir.",
+              },
+              {
+                step: "4",
+                icon: "⚡",
+                title: "Anında haberdar olun",
+                desc: "Fiyat düşüşü, rakip ucuzlaması veya stok değişiminde e-posta, Telegram ya da webhook ile bildirim alın ve aksiyonu hemen verin.",
               },
             ].map((item) => (
               <div
                 key={item.step}
-                className="bg-dark-900 border border-dark-800 rounded-2xl p-6 hover:border-hive-500/30 transition"
+                className="relative bg-dark-900 border border-dark-800 rounded-2xl p-6 hover:border-hive-500/30 transition"
               >
-                <div className="w-8 h-8 rounded-full bg-hive-500/15 border border-hive-500/30 text-hive-400 text-sm font-semibold flex items-center justify-center mb-4">
-                  {item.step}
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-hive-500/15 border border-hive-500/30 text-hive-400 text-sm font-semibold flex items-center justify-center">
+                    {item.step}
+                  </div>
+                  <span className="text-2xl">{item.icon}</span>
                 </div>
                 <h3 className="text-white font-semibold mb-2">{item.title}</h3>
                 <p className="text-dark-400 text-sm leading-relaxed">{item.desc}</p>
               </div>
             ))}
           </div>
+          <p className="text-center text-xs text-dark-500 mt-8">
+            Otomatik tarama bulamadıysa rakip linkini elle de ekleyebilirsiniz — niş ürünlerde
+            satıcı rakibini en iyi kendisi bilir.
+          </p>
         </div>
       </section>
 
@@ -330,7 +392,7 @@ export default async function Home() {
               {
                 icon: "🏪",
                 title: "Çoklu Marketplace",
-                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon ve MediaMarkt&apos;ı tek panelden yönetin.",
+                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, Teknosa, Vatan ve MediaMarkt&apos;ı tek panelden yönetin.",
               },
             ].map((f, i) => (
               <div
@@ -462,6 +524,57 @@ export default async function Home() {
                   Başla
                 </Link>
               </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="py-12 sm:py-20 px-4 sm:px-6 border-t border-dark-900/60">
+        <div className="max-w-3xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-4">Sıkça Sorulan Sorular</h2>
+          <p className="text-dark-400 text-center mb-10">
+            Aklınızdaki diğer sorular için{" "}
+            <Link href="/destek" className="text-hive-400 hover:underline">
+              destek sayfamıza
+            </Link>{" "}
+            göz atın.
+          </p>
+          <div className="space-y-3">
+            {[
+              {
+                q: "Hangi pazaryerlerini destekliyorsunuz?",
+                a: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, Teknosa, Vatan, MediaMarkt ve PTT AVM için optimize edilmiş takip sunuyoruz. Rakip keşfi ise web genelinde çalışır — rakibiniz başka bir sitede satıyorsa onu da bulur.",
+              },
+              {
+                q: "Rakipleri nasıl buluyorsunuz, yanlış ürünle kıyaslamaz mısınız?",
+                a: "Her rakip adayı yapay zekâ ile ürününüzle karşılaştırılır ve 0-100 eşleşme skoru alır. Aksesuar, farklı model, ambalaj gibi alakasız sonuçlar otomatik elenir; düşük güvenli kayıtlar listede görünse bile fiyat kararı hesaplarına girmez.",
+              },
+              {
+                q: "Fiyatlar ne sıklıkta güncellenir?",
+                a: "Planınıza göre 6-24 saatte bir otomatik taranır; dilediğiniz an tek tıkla elle yenileyebilirsiniz. Rakip fiyatları ayrıca arka planda sürekli tazelenir.",
+              },
+              {
+                q: "Bildirim kurmak zor mu? Her ürün için ayrı ayar mı gerekiyor?",
+                a: "Hayır. Tek kurulumla hesap geneli kurallar tüm ürünlerinizi (sonradan ekleyecekleriniz dahil) kapsar. İsterseniz tek bir ürüne özel davranış tanımlayabilir veya sessize alabilirsiniz.",
+              },
+              {
+                q: "Kredi kartı olmadan deneyebilir miyim?",
+                a: "Evet. Ücretsiz planla 5 ürünü kart bilgisi girmeden takip edebilirsiniz; üst planlara dilediğiniz zaman geçersiniz.",
+              },
+            ].map((item) => (
+              <details
+                key={item.q}
+                className="group bg-dark-900 border border-dark-800 rounded-2xl p-5 hover:border-dark-700 transition"
+              >
+                <summary className="cursor-pointer text-white font-medium flex items-center justify-between gap-3 list-none">
+                  {item.q}
+                  <span className="text-hive-500 transition-transform group-open:rotate-45 text-lg leading-none">
+                    +
+                  </span>
+                </summary>
+                <p className="text-dark-400 text-sm leading-relaxed mt-3">{item.a}</p>
+              </details>
             ))}
           </div>
         </div>

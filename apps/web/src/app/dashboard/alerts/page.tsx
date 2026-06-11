@@ -6,6 +6,7 @@ import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
 import InfoTip from "@/components/ui/InfoTip";
+import GlobalAlertPrefs from "@/components/GlobalAlertPrefs";
 
 interface AlertRule {
   id: string;
@@ -112,6 +113,7 @@ const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
   HEPSIBURADA: { name: "Hepsiburada", color: "#FF6000" },
   AMAZON_TR: { name: "Amazon TR", color: "#FF9900" },
   N11: { name: "N11", color: "#7B2D8E" },
+  PAZARAMA: { name: "Pazarama", color: "#00C4B3" },
   TEKNOSA: { name: "Teknosa", color: "#005CA9" },
   VATAN: { name: "Vatan", color: "#E30613" },
   DECATHLON: { name: "Decathlon", color: "#0082C3" },
@@ -140,38 +142,6 @@ interface AlertModalPrefill {
   thresholdValue?: string;
   cooldownMinutes?: string;
 }
-
-const QUICK_CREATE_SUGGESTIONS: Array<{
-  title: string;
-  description: string;
-  prefill: AlertModalPrefill;
-}> = [
-  {
-    title: "Rakip benden ucuzsa bildir",
-    description: "Fiyat yarışını kaçırmamak için ideal.",
-    prefill: { ruleType: "COMPETITOR_CHEAPER", cooldownMinutes: "30" },
-  },
-  {
-    title: "%5 fiyat düşüşünde bildir",
-    description: "Ani indirimleri hızlı fark edin.",
-    prefill: { ruleType: "PERCENTAGE_CHANGE", thresholdValue: "5", cooldownMinutes: "60" },
-  },
-  {
-    title: "Stoğa girince bildir",
-    description: "Stok dönüşlerini kaçırmayın.",
-    prefill: { ruleType: "BACK_IN_STOCK", cooldownMinutes: "15" },
-  },
-  {
-    title: "Fiyat ₺500 altına düşünce bildir",
-    description: "Hedef fiyatı yakaladığında aksiyon alın.",
-    prefill: {
-      ruleType: "PRICE_THRESHOLD",
-      direction: "below",
-      thresholdValue: "500",
-      cooldownMinutes: "60",
-    },
-  },
-];
 
 export default function AlertsPage() {
   const [rules, setRules] = useState<AlertRule[]>([]);
@@ -396,32 +366,13 @@ export default function AlertsPage() {
             </div>
           </div>
 
-          <div className="bg-dark-900 border border-dark-800 rounded-2xl p-4">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <h2 className="text-white font-semibold text-sm sm:text-base">Hızlı Kurulum</h2>
-                <p className="text-dark-500 text-xs sm:text-sm">
-                  Popüler senaryolardan başlayın, detayları modal içinde düzenleyin.
-                </p>
-              </div>
-              <span className="text-[11px] px-2 py-1 rounded-full bg-hive-500/10 text-hive-400">
-                Hızlı başlangıç
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {QUICK_CREATE_SUGGESTIONS.map((item) => (
-                <button
-                  key={item.title}
-                  type="button"
-                  onClick={() => openCreateModal(item.prefill)}
-                  className="text-left p-3 rounded-xl border border-dark-800 bg-dark-950 hover:border-hive-500/40 hover:bg-hive-500/5 transition"
-                >
-                  <p className="text-sm text-white font-medium">{item.title}</p>
-                  <p className="text-xs text-dark-500 mt-1">{item.description}</p>
-                </button>
-              ))}
-            </div>
-          </div>
+          <GlobalAlertPrefs
+            rules={rules}
+            allowedChannels={
+              (planFeatures?.features?.allowedChannels as string[] | undefined) ?? ["EMAIL"]
+            }
+            onChanged={fetchRules}
+          />
 
           <div className="bg-dark-900 border border-dark-800 rounded-2xl p-3 sm:p-4">
             <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">

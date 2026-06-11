@@ -219,6 +219,13 @@ export const MARKETPLACES: Record<string, MarketplaceInfo> = {
     icon: "🛍️",
     color: "#96BF48",
   },
+  PAZARAMA: {
+    id: "PAZARAMA",
+    name: "Pazarama",
+    domain: "pazarama.com",
+    icon: "🛒",
+    color: "#00C4B3",
+  },
   CUSTOM: { id: "CUSTOM", name: "Diğer", domain: "", icon: "🌐", color: "#9CA3AF" },
 };
 
@@ -247,14 +254,17 @@ export function getRetailerInfoFromDomain(domain: string): {
   };
 }
 
+// Yeni ürün eklemeye açık pazaryerleri. DECATHLON bilinçli olarak listede değil:
+// kıyaslanabilir rakip havuzu yok (kendi markalarını satıyor) — mevcut kayıtlar
+// görüntülenmeye devam eder ama yeni ekleme kabul edilmez.
 export const SUPPORTED_SCRAPER_MARKETPLACES = [
   "TRENDYOL",
   "HEPSIBURADA",
   "AMAZON_TR",
   "N11",
+  "PAZARAMA",
   "TEKNOSA",
   "VATAN",
-  "DECATHLON",
   "MEDIAMARKT",
   "PTTAVM",
 ] as const;
