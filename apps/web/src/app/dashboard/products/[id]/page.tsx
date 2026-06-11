@@ -13,7 +13,12 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { MIN_MATCH_SCORE, getMarketplaceInfo } from "@competehive/shared";
+import {
+  MIN_MATCH_SCORE,
+  getMarketplaceInfo,
+  assessCompetitor,
+  type CompetitorAssessment,
+} from "@competehive/shared";
 import RefreshButton from "@/components/RefreshButton";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
@@ -409,7 +414,29 @@ export default function ProductDetailPage() {
   const chartData = prepareChartData(filteredHistory, ownSellerHints);
   const retailers = [...new Set(filteredHistory.map((h) => h.sellerName || "Bilinmeyen"))];
 
-  const competitorPrices = competitors
+  // Merkezi kalite politikası (packages/shared/competitor-quality): fiyat var mı,
+  // AI skoru yeterli mi, fiyat kendi fiyatımızın 0.3x–3x bandında mı, veri 72 saatten
+  // taze mi? Politikadan geçemeyen rakipler listede görünmeye devam eder ama piyasa
+  // pozisyonu, sıralama ve fiyat önerisi hesaplarına GİRMEZ — ₺11'lik bir koli kaydı
+  // ₺2.500'lük ürünün "en düşük rakibi" olamaz.
+  const competitorAssessments = new Map<string, CompetitorAssessment>();
+  for (const c of competitors) {
+    competitorAssessments.set(
+      c.id,
+      assessCompetitor(
+        {
+          price: safePrice(c.currentPrice),
+          matchScore: c.matchScore ?? null,
+          lastScrapedAt: c.lastScrapedAt,
+        },
+        { ownPrice, now },
+      ),
+    );
+  }
+  const validCompetitors = competitors.filter(
+    (c) => competitorAssessments.get(c.id)?.usable === true,
+  );
+  const competitorPrices = validCompetitors
     .map((c) => safePrice(c.currentPrice))
     .filter((p): p is number => p !== null);
   const allPrices = [...(ownPrice && ownPrice > 0 ? [ownPrice] : []), ...competitorPrices];
@@ -417,13 +444,6 @@ export default function ProductDetailPage() {
   const highestPrice = allPrices.length > 0 ? Math.max(...allPrices) : null;
   const avgPrice =
     allPrices.length > 0 ? allPrices.reduce((a, b) => a + b, 0) / allPrices.length : null;
-  // matchScore null/undefined → manuel eklenen rakipler (AI matcher'dan geçmiyorlar). Bunları
-  // geçerli sayıyoruz çünkü kullanıcı bilerek ekledi; AI skoru olanlar için MIN_MATCH_SCORE eşiği uygulanır.
-  const validCompetitors = competitors.filter(
-    (c) =>
-      safePrice(c.currentPrice) !== null &&
-      (c.matchScore === null || c.matchScore === undefined || c.matchScore >= MIN_MATCH_SCORE),
-  );
   const hasOwnPrice = ownPrice !== null;
   const positionBadge: { text: string; tone: "amber" | "rose" } | null =
     validCompetitors.length === 0
@@ -458,15 +478,15 @@ export default function ProductDetailPage() {
         ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
         : `${validCompetitors.length} rakibe göre`;
 
-  const weakCompetitors = competitors.filter(
-    (c) => c.matchScore !== null && c.matchScore < MIN_MATCH_SCORE,
-  );
-  const staleCompetitors = competitors.filter((c) => {
-    if (!c.lastScrapedAt) return true;
-    const ageHours = (now.getTime() - new Date(c.lastScrapedAt).getTime()) / (1000 * 60 * 60);
-    return ageHours > 72;
+  // Şüpheli = düşük AI skoru VEYA fiyat bandı dışı (skorsuz legacy koliler dahil).
+  const suspiciousCompetitors = competitors.filter((c) => {
+    const issues = competitorAssessments.get(c.id)?.issues ?? [];
+    return issues.includes("low-score") || issues.includes("out-of-band");
   });
-  const hasSuspiciousSignal = weakCompetitors.length > 0;
+  const staleCompetitors = competitors.filter((c) =>
+    (competitorAssessments.get(c.id)?.issues ?? []).includes("stale"),
+  );
+  const hasSuspiciousSignal = suspiciousCompetitors.length > 0;
   const freshnessBaseDate = product.refreshCompletedAt || product.lastScrapedAt;
   const freshnessHours = freshnessBaseDate
     ? (now.getTime() - new Date(freshnessBaseDate).getTime()) / (1000 * 60 * 60)
@@ -493,20 +513,25 @@ export default function ProductDetailPage() {
       : null;
 
   const qualityRatio = competitors.length > 0 ? validCompetitors.length / competitors.length : 0;
+  const staleRatio = competitors.length > 0 ? staleCompetitors.length / competitors.length : 0;
   const qualityLabel =
     competitors.length === 0
       ? "Rakip verisi bekleniyor"
-      : qualityRatio >= 0.8 && isFresh
-        ? "Aksiyon için güçlü"
-        : qualityRatio >= 0.5
-          ? "Temkinli değerlendir"
-          : "Düşük güven";
+      : validCompetitors.length === 0
+        ? "Düşük güven"
+        : qualityRatio >= 0.8 && isFresh && staleRatio <= 0.5
+          ? "Aksiyon için güçlü"
+          : qualityRatio >= 0.5
+            ? "Temkinli değerlendir"
+            : "Düşük güven";
 
   const filteredCompetitors = competitors
     .filter((competitor) => {
       if (competitorFilter === "priced") return safePrice(competitor.currentPrice) !== null;
-      if (competitorFilter === "suspicious")
-        return competitor.matchScore !== null && competitor.matchScore < MIN_MATCH_SCORE;
+      if (competitorFilter === "suspicious") {
+        const issues = competitorAssessments.get(competitor.id)?.issues ?? [];
+        return issues.includes("low-score") || issues.includes("out-of-band");
+      }
       return true;
     })
     .sort((a, b) => {
@@ -727,12 +752,16 @@ export default function ProductDetailPage() {
               <span className="text-white">{competitors.length}</span>
             </li>
             <li className="flex justify-between text-gray-300">
-              <span>Geçerli fiyatı olan</span>
+              <span title="Fiyatı olan, eşleşme güveni yeterli, fiyat bandında ve 72 saatten taze rakipler">
+                Karara uygun rakip
+              </span>
               <span className="text-white">{validCompetitors.length}</span>
             </li>
             <li className="flex justify-between text-gray-300">
-              <span>Şüpheli eşleşme</span>
-              <span className="text-white">{weakCompetitors.length}</span>
+              <span title="Düşük eşleşme güveni veya fiyatı sizinkiyle kıyaslanamayacak kadar farklı">
+                Şüpheli eşleşme
+              </span>
+              <span className="text-white">{suspiciousCompetitors.length}</span>
             </li>
             <li className="flex justify-between text-gray-300">
               <span>Eski / eksik rakip verisi</span>
@@ -1079,6 +1108,16 @@ export default function ProductDetailPage() {
                           {competitor.marketplace}
                         </span>
                         <MatchScoreBadge score={competitor.matchScore} />
+                        {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
+                          "out-of-band",
+                        ) && (
+                          <span
+                            className="text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 px-1.5 py-0.5 rounded"
+                            title="Fiyatı sizin fiyatınızın 0.3x–3x bandının dışında — büyük olasılıkla farklı ürün; hesaplara dahil edilmez"
+                          >
+                            Bant dışı
+                          </span>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <a

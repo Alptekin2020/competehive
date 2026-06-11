@@ -274,6 +274,10 @@ export default function AlertsPage() {
   const filteredRules = useMemo(() => {
     const text = searchTerm.trim().toLocaleLowerCase("tr-TR");
     const sorted = [...rules].sort((a, b) => {
+      // Genel kurallar (tüm ürünleri kapsayanlar) her zaman üstte.
+      const aGlobal = a.trackedProductId === null ? 0 : 1;
+      const bGlobal = b.trackedProductId === null ? 0 : 1;
+      if (aGlobal !== bGlobal) return aGlobal - bGlobal;
       const aTime = a.lastTriggered ? new Date(a.lastTriggered).getTime() : 0;
       const bTime = b.lastTriggered ? new Date(b.lastTriggered).getTime() : 0;
       return bTime - aTime;
@@ -289,6 +293,7 @@ export default function AlertsPage() {
         RULE_TYPE_LABELS[rule.ruleType]?.label,
         rule.trackedProduct?.productName,
         MARKETPLACE_LABELS[rule.trackedProduct?.marketplace || ""]?.name,
+        rule.trackedProductId === null ? "genel tüm ürünler" : undefined,
       ]
         .filter(Boolean)
         .join(" ")
@@ -360,15 +365,17 @@ export default function AlertsPage() {
           )}
 
           <div className="flex items-start gap-3 rounded-xl border border-hive-500/20 bg-hive-500/5 px-4 py-3">
-            <span className="text-base leading-none mt-0.5">🔔</span>
+            <span className="text-base leading-none mt-0.5">🌐</span>
             <div className="min-w-0">
               <p className="text-sm text-hive-300 font-medium">
-                Her yeni ürün için bildirimler otomatik açılır
+                Genel kurallar tüm ürünlerinizi tek seferde kapsar
               </p>
               <p className="text-xs text-dark-400 mt-1 leading-relaxed">
-                Ürün eklediğinizde fiyat düşüşü, fiyat artışı, rakip ucuzladığında, stok değişimi ve
-                yüzde değişim kuralları planınıza uygun kanallarla aktif edilir. İstemediklerinizi
-                aşağıdaki listeden kapatın veya silin.
+                &quot;Tüm ürünler&quot; seçili bir kural, sahip olduğunuz ve sonradan ekleyeceğiniz
+                her ürün için geçerlidir — 100 ürün için 100 ayrı kural kurmanıza gerek yok. Belirli
+                bir üründe farklı davranış isterseniz o ürüne aynı türde özel bir kural ekleyin:
+                ürün kuralı, o üründe genel kuralın yerine geçer (pasif ürün kuralı o ürünü sessize
+                alır).
               </p>
             </div>
           </div>
@@ -525,6 +532,11 @@ export default function AlertsPage() {
                         >
                           {rule.isActive ? "Aktif" : "Pasif"}
                         </span>
+                        {rule.trackedProductId === null && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/25">
+                            🌐 Genel — tüm ürünler
+                          </span>
+                        )}
                       </div>
 
                       <p className="text-sm text-dark-400 truncate">
@@ -724,11 +736,6 @@ function CreateAlertModal({
     e.preventDefault();
     setError("");
 
-    if (!selectedProduct) {
-      setError("Lütfen bir ürün seçin.");
-      return;
-    }
-
     if (notifyVia.length === 0) {
       setError("En az bir bildirim kanalı seçin.");
       return;
@@ -742,8 +749,9 @@ function CreateAlertModal({
     setSubmitting(true);
 
     try {
+      // Boş seçim = genel kural (tüm ürünler): trackedProductId gönderilmez.
       const body: Record<string, unknown> = {
-        trackedProductId: selectedProduct,
+        ...(selectedProduct ? { trackedProductId: selectedProduct } : {}),
         ruleType,
         notifyVia,
         cooldownMinutes: parseInt(cooldownMinutes) || 60,
@@ -826,23 +834,24 @@ function CreateAlertModal({
           <section className="rounded-xl border border-dark-800 bg-dark-950 p-4 space-y-3">
             <h3 className="text-sm font-semibold text-white">1) Ürün ve Kural</h3>
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-2">Ürün</label>
-              {products.length === 0 ? (
-                <p className="text-dark-500 text-sm">Önce bir ürün takibe alın.</p>
-              ) : (
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-hive-500/50 transition appearance-none"
-                >
-                  <option value="">Ürün seçin...</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.product_name} ({MARKETPLACE_LABELS[p.marketplace]?.name || p.marketplace})
-                    </option>
-                  ))}
-                </select>
-              )}
+              <label className="block text-sm font-medium text-dark-300 mb-2">Kapsam</label>
+              <select
+                value={selectedProduct}
+                onChange={(e) => setSelectedProduct(e.target.value)}
+                className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-hive-500/50 transition appearance-none"
+              >
+                <option value="">🌐 Tüm ürünler (genel kural)</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.product_name} ({MARKETPLACE_LABELS[p.marketplace]?.name || p.marketplace})
+                  </option>
+                ))}
+              </select>
+              <p className="text-dark-600 text-xs mt-1">
+                Genel kural mevcut ve gelecekte ekleyeceğiniz tüm ürünlere uygulanır; belirli bir
+                ürün seçerseniz kural yalnızca o ürün için geçerli olur ve aynı türdeki genel kuralı
+                o üründe devre dışı bırakır.
+              </p>
             </div>
 
             <div>
@@ -1001,7 +1010,7 @@ function CreateAlertModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || products.length === 0}
+              disabled={submitting}
               className="flex-1 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 py-2.5 rounded-xl text-sm font-semibold transition"
             >
               {submitting ? "Oluşturuluyor..." : "Uyarı Oluştur"}

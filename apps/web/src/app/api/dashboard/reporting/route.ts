@@ -1,3 +1,4 @@
+import { isUsableCompetitor } from "@competehive/shared";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, serverError } from "@/lib/api-response";
@@ -48,6 +49,8 @@ export async function GET(req: Request) {
         competitors: {
           select: {
             currentPrice: true,
+            matchScore: true,
+            lastScrapedAt: true,
           },
         },
         priceHistory: {
@@ -74,6 +77,22 @@ export async function GET(req: Request) {
 
     const marketplaces = Array.from(new Set(products.map((p) => p.marketplace))).sort();
     const now = Date.now();
+
+    // Kalite politikasından (skor, fiyat bandı, bayatlık) geçen rakip fiyatları —
+    // "rakip baskısı" sinyalleri ham rakip verisiyle hesaplanırsa alakasız/eski
+    // kayıtlar (ör. ambalaj ürünleri) sürekli sahte baskı üretir.
+    const usableCompetitorPrices = (product: (typeof products)[number]): number[] => {
+      const myPrice = toNumber(product.currentPrice);
+      return product.competitors
+        .map((competitor) => ({
+          price: toNumber(competitor.currentPrice),
+          matchScore: competitor.matchScore,
+          lastScrapedAt: competitor.lastScrapedAt,
+        }))
+        .filter((competitor) => isUsableCompetitor(competitor, { ownPrice: myPrice }))
+        .map((competitor) => competitor.price)
+        .filter((value): value is number => value !== null);
+    };
 
     const periods = PERIODS.reduce(
       (acc, period) => {
@@ -103,12 +122,9 @@ export async function GET(req: Request) {
           const myPrice = toNumber(product.currentPrice);
           if (myPrice === null) return false;
 
-          const cheaperCompetitorCount = product.competitors.filter((competitor) => {
-            const competitorPrice = toNumber(competitor.currentPrice);
-            return competitorPrice !== null && competitorPrice < myPrice;
-          }).length;
-
-          return cheaperCompetitorCount > 0;
+          return usableCompetitorPrices(product).some(
+            (competitorPrice) => competitorPrice < myPrice,
+          );
         }).length;
 
         acc[period.key] = {
@@ -163,9 +179,7 @@ export async function GET(req: Request) {
     const mostPressure = products
       .map((product) => {
         const myPrice = toNumber(product.currentPrice);
-        const competitorPrices = product.competitors
-          .map((competitor) => toNumber(competitor.currentPrice))
-          .filter((value): value is number => value !== null);
+        const competitorPrices = usableCompetitorPrices(product);
         const cheaperCount =
           myPrice === null
             ? 0

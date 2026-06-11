@@ -4,6 +4,22 @@
 
 export { validateWebEnv, validateWorkerEnv, webEnvSchema, workerEnvSchema } from "./env";
 export { normalizeProductImage } from "./normalize-product-image";
+export {
+  MIN_MATCH_SCORE,
+  PRICE_BAND_MIN_RATIO,
+  PRICE_BAND_MAX_RATIO,
+  COMPETITOR_STALE_HOURS,
+  withinPriceBand,
+  isPackagingListing,
+  assessCompetitor,
+  isUsableCompetitor,
+} from "./competitor-quality";
+export type {
+  CompetitorIssue,
+  CompetitorAssessment,
+  CompetitorAssessmentInput,
+  CompetitorAssessmentOptions,
+} from "./competitor-quality";
 export type { WebEnv, WorkerEnv } from "./env";
 export type {
   TrackedProductRow,
@@ -244,7 +260,3 @@ export const SUPPORTED_SCRAPER_MARKETPLACES = [
 ] as const;
 
 export type SupportedScraperMarketplace = (typeof SUPPORTED_SCRAPER_MARKETPLACES)[number];
-
-// Minimum AI match confidence (0-100) for treating a candidate as the same product.
-// Shared between worker matcher and web competitor filtering so the threshold stays in sync.
-export const MIN_MATCH_SCORE = 70;

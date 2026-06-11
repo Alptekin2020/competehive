@@ -5,7 +5,9 @@ import { sendAlerts } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { evaluateAlertRule } from "./alert-rules";
+import { isUsableCompetitor } from "../utils/competitor-quality";
+import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
+import { evaluateAlertRule, resolveApplicableRules } from "./alert-rules";
 
 const prisma = new PrismaClient();
 
@@ -301,6 +303,17 @@ export const alertWorker = new Worker(
 
     logger.info({ productId, priceChange, isPriceEvent, isStockEvent }, "Checking alerts");
 
+    // Ürünü bir kez çek — genel (hesap geneli) kuralların bildirim içeriği ve
+    // kullanıcının kural kümesi için gerekli.
+    const product = await prisma.trackedProduct.findUnique({
+      where: { id: productId },
+      select: { userId: true, productName: true, marketplace: true, productUrl: true },
+    });
+    if (!product) {
+      logger.warn({ productId }, "Alert check skipped — product no longer exists");
+      return;
+    }
+
     let previousStockState: boolean | null =
       typeof previousInStock === "boolean" ? previousInStock : null;
 
@@ -317,33 +330,48 @@ export const alertWorker = new Worker(
       }
     }
 
-    // Bu ürün için aktif kuralları al
-    const rules = await prisma.alertRule.findMany({
+    // Ürün kuralları + kullanıcının genel kuralları. Pasif kurallar da çekilir:
+    // aynı türde bir ürün kuralı (pasif bile olsa) genel kuralı ezer, böylece
+    // kullanıcı genel kural açıkken tek bir ürünü sessize alabilir.
+    const candidateRules = await prisma.alertRule.findMany({
       where: {
-        trackedProductId: productId,
-        isActive: true,
+        OR: [{ trackedProductId: productId }, { trackedProductId: null, userId: product.userId }],
       },
       include: {
         user: true,
         trackedProduct: true,
       },
     });
+    const rules = resolveApplicableRules(candidateRules, productId);
 
-    // COMPETITOR_CHEAPER kuralları için en ucuz rakip fiyatını bir kez yükle.
+    // COMPETITOR_CHEAPER kuralları için en ucuz GEÇERLİ rakip fiyatını yükle.
+    // Kalite politikası (skor, fiyat bandı, bayatlık) uygulanır — yoksa ₺11'lik
+    // bir koli kaydı ₺2.500'lük ürüne sürekli sahte "rakip daha ucuz" alarmı üretir.
     let minCompetitorPrice: number | null = null;
     if (rules.some((r) => r.ruleType === "COMPETITOR_CHEAPER")) {
-      // Let the DB compute the cheapest competitor instead of pulling every row.
-      const aggregate = await prisma.competitor.aggregate({
+      const competitors = await prisma.competitor.findMany({
         where: { trackedProductId: productId, currentPrice: { gt: 0 } },
-        _min: { currentPrice: true },
+        select: { currentPrice: true, matchScore: true, lastScrapedAt: true },
       });
-      minCompetitorPrice =
-        aggregate._min.currentPrice != null ? Number(aggregate._min.currentPrice) : null;
+      const ownPrice = Number(currentPrice);
+      const usablePrices = competitors
+        .map((c) => ({
+          price: Number(c.currentPrice),
+          matchScore: c.matchScore,
+          lastScrapedAt: c.lastScrapedAt,
+        }))
+        .filter((c) => isUsableCompetitor(c, { ownPrice }))
+        .map((c) => c.price);
+      minCompetitorPrice = usablePrices.length > 0 ? Math.min(...usablePrices) : null;
     }
 
     for (const rule of rules) {
-      // Cooldown kontrolü
-      if (rule.lastTriggered) {
+      // Cooldown (kural, ürün) bazlıdır: genel bir kuralın A ürünündeki
+      // tetiklenmesi B ürününün bildirimini bastırmamalı. Redis erişilemezse
+      // kural bazlı lastTriggered'a geri düşülür.
+      const onCooldown = await isOnCooldown(rule.id, productId);
+      if (onCooldown === true) continue;
+      if (onCooldown === null && rule.lastTriggered) {
         const cooldownMs = rule.cooldownMinutes * 60 * 1000;
         if (Date.now() - rule.lastTriggered.getTime() < cooldownMs) {
           continue;
@@ -366,22 +394,27 @@ export const alertWorker = new Worker(
 
       if (shouldAlert) {
         await sendAlerts(rule, {
-          productName: rule.trackedProduct!.productName,
+          productName: product.productName,
           currentPrice,
           previousPrice,
           priceChange,
           priceChangePct,
-          marketplace: rule.trackedProduct!.marketplace,
-          productUrl: rule.trackedProduct!.productUrl,
+          marketplace: product.marketplace,
+          productUrl: product.productUrl,
         });
 
-        // Last triggered güncelle
+        await markCooldown(rule.id, productId, rule.cooldownMinutes);
+
+        // Last triggered güncelle (UI'da "Son Tetiklenme" + Redis yokken fallback)
         await prisma.alertRule.update({
           where: { id: rule.id },
           data: { lastTriggered: new Date() },
         });
 
-        logger.info({ ruleId: rule.id, ruleType: rule.ruleType }, "Alert triggered");
+        logger.info(
+          { ruleId: rule.id, ruleType: rule.ruleType, global: rule.trackedProductId === null },
+          "Alert triggered",
+        );
       }
     }
   },

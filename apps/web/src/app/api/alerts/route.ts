@@ -35,7 +35,9 @@ export async function GET() {
 // ============================================
 
 const createAlertSchema = z.object({
-  trackedProductId: z.string().uuid(),
+  // null/undefined → hesap geneli (genel) kural: kullanıcının TÜM ürünlerine
+  // uygulanır. Aynı türde ürün bazlı kural, o üründe genel kuralı ezer.
+  trackedProductId: z.string().uuid().nullable().optional(),
   ruleType: z.enum([
     "PRICE_DROP",
     "PRICE_INCREASE",
@@ -102,16 +104,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const product = await prisma.trackedProduct.findFirst({
-      where: { id: parsed.data.trackedProductId, userId: user.id },
-    });
+    const trackedProductId = parsed.data.trackedProductId ?? null;
 
-    if (!product) return notFound("Ürün bulunamadı");
+    if (trackedProductId) {
+      const product = await prisma.trackedProduct.findFirst({
+        where: { id: trackedProductId, userId: user.id },
+      });
+      if (!product) return notFound("Ürün bulunamadı");
+    } else {
+      // Aynı türde ikinci bir genel kural kafa karıştırır (hangisi geçerli?);
+      // kullanıcıyı mevcut kuralı düzenlemeye/silmeye yönlendir.
+      const existingGlobal = await prisma.alertRule.findFirst({
+        where: { userId: user.id, trackedProductId: null, ruleType: parsed.data.ruleType },
+      });
+      if (existingGlobal) {
+        return badRequest(
+          "Bu türde bir genel kural zaten var. Önce mevcut genel kuralı silin veya düzenleyin.",
+        );
+      }
+    }
 
     const rule = await prisma.alertRule.create({
       data: {
         userId: user.id,
-        trackedProductId: parsed.data.trackedProductId,
+        trackedProductId,
         ruleType: parsed.data.ruleType,
         thresholdValue: parsed.data.thresholdValue,
         direction: parsed.data.direction,

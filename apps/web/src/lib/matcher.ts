@@ -1,6 +1,16 @@
 import OpenAI from "openai";
-import { MIN_MATCH_SCORE } from "@competehive/shared";
+import {
+  MIN_MATCH_SCORE,
+  PRICE_BAND_MIN_RATIO,
+  PRICE_BAND_MAX_RATIO,
+  withinPriceBand,
+  isPackagingListing,
+} from "@competehive/shared";
 import { logger } from "./logger";
+
+// Fiyat bandı politikası packages/shared/src/competitor-quality.ts'e taşındı;
+// mevcut import yollarını kırmamak için buradan yeniden export ediliyor.
+export { PRICE_BAND_MIN_RATIO, PRICE_BAND_MAX_RATIO, withinPriceBand };
 
 let openai: OpenAI | null = null;
 
@@ -112,9 +122,23 @@ function unreliableResult(reason: string): MatchResult {
 }
 
 // String benzerlik fallback'i — apps/worker/src/matcher.ts içindeki `fallbackMatch`
-// ile aynı algoritma. OPENAI_API_KEY yapılandırılmamışsa kullanıyoruz ki worker
-// ile compare endpoint aynı kararı versin.
-function fallbackMatchByText(sourceTitle: string, candidateTitle: string): MatchResult {
+// ile aynı algoritma. AI kullanılamadığında (key yok veya çağrı "unreliable"
+// döndü) deterministik karar vermek için kullanılır; compare route'u bu sayede
+// hiçbir zaman skorsuz rakip kaydetmez.
+export function deterministicFallbackMatch(
+  sourceTitle: string,
+  candidateTitle: string,
+): MatchResult {
+  if (isPackagingListing(candidateTitle, sourceTitle)) {
+    return {
+      outcome: "reject",
+      isMatch: false,
+      score: 0,
+      reason: "Ambalaj/koli ürünü — otomatik red",
+      attributes: emptyAttributes("Aday başlığı paketleme/lojistik malzemesi içeriyor"),
+    };
+  }
+
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const src = normalize(sourceTitle);
   const cnd = normalize(candidateTitle);
@@ -132,8 +156,20 @@ export async function verifyProductMatch(
   source: ProductInfo,
   candidate: ProductInfo,
 ): Promise<MatchResult> {
+  // Deterministik emniyet kemeri (AI'dan bağımsız): ambalaj/koli/lojistik
+  // ürünü bir tüketici ürünüyle asla eşleşmez. AI çağrısından önce çalışır.
+  if (isPackagingListing(candidate.title, source.title)) {
+    return {
+      outcome: "reject",
+      isMatch: false,
+      score: 0,
+      reason: "Ambalaj/koli ürünü — otomatik red",
+      attributes: emptyAttributes("Aday başlığı paketleme/lojistik malzemesi içeriyor"),
+    };
+  }
+
   const client = getOpenAIClient();
-  if (!client) return fallbackMatchByText(source.title, candidate.title);
+  if (!client) return deterministicFallbackMatch(source.title, candidate.title);
 
   try {
     const response = await client.chat.completions.create({
@@ -199,17 +235,4 @@ export async function verifyProductMatch(
     // (fiyat bandını geçmiş) aday ürünü AI skoru olmadan saklayabilir.
     return unreliableResult("AI hatası");
   }
-}
-
-// Worker tarafıyla aynı band (0.3x — 3x). Bu eşik matcher prompt'undaki "%300 farkı"
-// kuralıyla senkron tutuluyor.
-export const PRICE_BAND_MIN_RATIO = 0.3;
-export const PRICE_BAND_MAX_RATIO = 3.0;
-
-export function withinPriceBand(sourcePrice: number, candidatePrice: number): boolean {
-  if (!Number.isFinite(sourcePrice) || sourcePrice <= 0) return true;
-  if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) return false;
-  const min = sourcePrice * PRICE_BAND_MIN_RATIO;
-  const max = sourcePrice * PRICE_BAND_MAX_RATIO;
-  return candidatePrice >= min && candidatePrice <= max;
 }

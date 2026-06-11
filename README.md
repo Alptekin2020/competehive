@@ -83,10 +83,13 @@ npm run dev:worker
 
 ## Desteklenen Marketplace'ler
 
-- ✅ Trendyol
-- ✅ Hepsiburada
-- 🔜 Amazon TR
-- 🔜 N11
+- ✅ Trendyol (özel scraper: API + HTML + Puppeteer)
+- ✅ Hepsiburada (özel scraper: Akamai tespiti + Puppeteer)
+- ✅ Amazon TR
+- ✅ N11
+- ✅ MediaMarkt, PTT AVM (özel scraper)
+- ✅ Teknosa, Vatan, Decathlon (generic JSON-LD scraper)
+- 🌐 Diğer marketplaceler generic scraper'a düşer (JSON-LD + OG meta)
 
 ## Veritabanı Disiplini
 

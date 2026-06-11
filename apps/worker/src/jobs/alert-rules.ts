@@ -91,3 +91,43 @@ export function evaluateAlertRule(ruleType: string, ctx: AlertEvalContext): bool
       return false;
   }
 }
+
+// ============================================
+// Global (hesap geneli) kural çözümleme
+// ============================================
+
+export interface ResolvableRule {
+  trackedProductId: string | null;
+  ruleType: string;
+  isActive: boolean;
+}
+
+/**
+ * Bir ürün için değerlendirilecek kural kümesini çözer.
+ *
+ * Kurallar iki seviyede yaşar:
+ *   - Ürün kuralı  (trackedProductId = ürün): yalnızca o ürün için geçerli.
+ *   - Genel kural  (trackedProductId = null): kullanıcının TÜM ürünleri için
+ *     geçerli — 100 ürünü olan satıcı 100 ayrı kural kurmak zorunda kalmaz.
+ *
+ * Öncelik: aynı ruleType için ürün kuralı genel kuralı EZER. Ürün kuralı
+ * pasifse bile ezer — böylece kullanıcı tek ürünü "sessize alabilir"
+ * (genel kural açıkken o üründe o tür bildirimi kapatmak için pasif bir
+ * ürün kuralı yeterlidir).
+ *
+ * Dönen liste yalnızca aktif kuralları içerir.
+ */
+export function resolveApplicableRules<T extends ResolvableRule>(
+  rules: T[],
+  productId: string,
+): T[] {
+  const productRules = rules.filter((r) => r.trackedProductId === productId);
+  const overriddenTypes = new Set(productRules.map((r) => r.ruleType));
+
+  return [
+    ...productRules.filter((r) => r.isActive),
+    ...rules.filter(
+      (r) => r.trackedProductId === null && r.isActive && !overriddenTypes.has(r.ruleType),
+    ),
+  ];
+}
