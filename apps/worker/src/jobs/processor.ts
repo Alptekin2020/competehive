@@ -7,6 +7,7 @@ import { normalizeProductImage } from "../utils/normalize-product-image";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { isUsableCompetitor } from "../utils/competitor-quality";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
+import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
 import { evaluateAlertRule, resolveApplicableRules } from "./alert-rules";
 
 const prisma = new PrismaClient();
@@ -241,6 +242,70 @@ export const scrapeWorker = new Worker(
 
       if (shouldRetry) {
         throw scraperError;
+      }
+
+      // Son çare: kendi fiyatı Serper'dan kurtar (Akamai vb. bot korumalı
+      // sitelerde scraper'ın tüm yöntemleri başarısız olabiliyor; Google
+      // Shopping feed'i satıcı beslemesinden geldiği için engellenmiyor).
+      // Manuel "Yenile" akışı bunu zaten yapıyordu — zamanlanmış tarama da yapar.
+      try {
+        const failedProduct = await prisma.trackedProduct.findUnique({
+          where: { id: productId },
+          select: {
+            productUrl: true,
+            productName: true,
+            metadata: true,
+            currency: true,
+            currentPrice: true,
+            status: true,
+          },
+        });
+        if (failedProduct) {
+          const recoveredPrice = await recoverOwnPriceViaSerper(failedProduct);
+          const previousPrice = failedProduct.currentPrice
+            ? Number(failedProduct.currentPrice)
+            : null;
+          if (recoveredPrice && isPlausiblePriceChange(previousPrice, recoveredPrice)) {
+            const previousInStock = failedProduct.status !== "OUT_OF_STOCK";
+            await prisma.priceHistory.create({
+              data: {
+                trackedProductId: productId,
+                price: recoveredPrice,
+                previousPrice,
+                currency: failedProduct.currency,
+                priceChange: previousPrice !== null ? recoveredPrice - previousPrice : null,
+                priceChangePct:
+                  previousPrice && previousPrice > 0
+                    ? ((recoveredPrice - previousPrice) / previousPrice) * 100
+                    : null,
+                inStock: true,
+              },
+            });
+            await prisma.trackedProduct.update({
+              where: { id: productId },
+              data: {
+                currentPrice: recoveredPrice,
+                lastScrapedAt: new Date(),
+                status: "ACTIVE",
+              },
+            });
+            await maybeEnqueueAlerts({
+              productId,
+              previousPrice,
+              currentPrice: recoveredPrice,
+              previousInStock,
+              inStock: true,
+            });
+
+            logger.info(
+              { productId, recoveredPrice, scraperCode: scraperError.code },
+              "Own price recovered via Serper after scrape failure",
+            );
+            return { success: true, price: recoveredPrice, recoveredViaSerper: true };
+          }
+        }
+      } catch (recoveryError) {
+        logger.warn({ productId, err: recoveryError }, "Own-price Serper recovery failed");
       }
 
       await prisma.trackedProduct.update({

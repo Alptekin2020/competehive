@@ -104,6 +104,7 @@ export async function runMigrations() {
     await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'VATAN'`);
     await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'DECATHLON'`);
     await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'MEDIAMARKT'`);
+    await client.query(`ALTER TYPE "Marketplace" ADD VALUE IF NOT EXISTS 'PAZARAMA'`);
 
     console.log("✅ Step 3.1 migration: new marketplace enum values added");
 

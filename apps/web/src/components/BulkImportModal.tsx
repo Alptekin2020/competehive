@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getMarketplaceInfo } from "@competehive/shared";
+import { SUPPORTED_MARKETPLACE_LABEL } from "@/lib/marketplaces";
 
 interface BulkResult {
   url: string;
@@ -27,6 +28,7 @@ const DOMAIN_TO_MARKETPLACE: Record<string, string> = {
   "hepsiburada.com": "HEPSIBURADA",
   "amazon.com.tr": "AMAZON_TR",
   "n11.com": "N11",
+  "pazarama.com": "PAZARAMA",
   "teknosa.com": "TEKNOSA",
   "vatanbilgisayar.com": "VATAN",
   "decathlon.com": "DECATHLON",
@@ -233,8 +235,7 @@ export default function BulkImportModal({ onClose, onComplete }: BulkImportModal
                 placeholder={`Her satıra bir URL yapıştırın:\n\nhttps://www.trendyol.com/urun-1\nhttps://www.hepsiburada.com/urun-2\nhttps://www.amazon.com.tr/urun-3`}
               />
               <p className="text-gray-600 text-xs mt-1.5">
-                Her satıra bir URL. En fazla 20 URL. Desteklenen: Trendyol, Hepsiburada, Amazon TR,
-                N11, Teknosa, Vatan, Decathlon, MediaMarkt.
+                Her satıra bir URL. En fazla 20 URL. Desteklenen: {SUPPORTED_MARKETPLACE_LABEL}.
               </p>
             </div>
 

@@ -104,6 +104,7 @@ enum Marketplace {
   VATAN
   ITOPYA
   SHOPIFY
+  PAZARAMA
   CUSTOM
 }
 

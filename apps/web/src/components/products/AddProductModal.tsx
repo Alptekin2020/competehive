@@ -1,3 +1,5 @@
+import { SUPPORTED_MARKETPLACE_LABEL } from "@/lib/marketplaces";
+
 interface AddProductModalProps {
   url: string;
   onUrlChange: (url: string) => void;
@@ -59,8 +61,7 @@ export function AddProductModal({
             disabled={loading}
           />
           <p className="text-dark-600 text-xs mb-4">
-            Trendyol, Hepsiburada, Amazon TR, N11, Teknosa, Vatan, Decathlon veya MediaMarkt ürün
-            linkini yapıştırın.
+            {SUPPORTED_MARKETPLACE_LABEL} ürün linkini yapıştırın.
           </p>
 
           <div className="bg-hive-500/5 border border-hive-500/20 rounded-xl px-3.5 py-3 mb-6">

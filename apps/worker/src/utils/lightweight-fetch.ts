@@ -21,6 +21,7 @@ const FETCHABLE_DOMAINS = [
   "epey.com",
   "n11.com",
   "amazon.com.tr",
+  "pazarama.com",
   "mediamarkt.com.tr",
   "teknosa.com",
   "vatanbilgisayar.com",

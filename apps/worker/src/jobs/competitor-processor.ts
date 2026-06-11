@@ -24,6 +24,7 @@ function retailerToMarketplace(retailerName: string): Marketplace {
     Hepsiburada: "HEPSIBURADA",
     "Amazon TR": "AMAZON_TR",
     N11: "N11",
+    Pazarama: "PAZARAMA",
     MediaMarkt: "MEDIAMARKT",
     Teknosa: "TEKNOSA",
     Vatan: "VATAN",
@@ -58,49 +59,27 @@ function extractSearchKeywords(metadata: unknown): string[] {
 }
 
 /**
- * Birden fazla keyword ile Serper araması yap, URL bazında dedup uygula.
+ * Tek keyword ile Serper araması yapar; daha önce görülen URL'leri eler ve
+ * yalnızca YENİ sonuçları döner. seenUrls çağrılar arasında paylaşılır.
  */
-async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingResult[]> {
-  const seenUrls = new Set<string>();
-  const allResults: SerperShoppingResult[] = [];
-
-  const primary = keywords[0];
-  console.log(`🔎 Primary search: "${primary}"`);
+async function searchSingleKeyword(
+  keyword: string,
+  seenUrls: Set<string>,
+): Promise<SerperShoppingResult[]> {
+  const fresh: SerperShoppingResult[] = [];
   try {
-    const primaryResults = await searchProduct(primary);
-    for (const r of primaryResults) {
+    const results = await searchProduct(keyword);
+    for (const r of results) {
       const normalizedUrl = (r.link || "").replace(/\/$/, "").toLowerCase();
       if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
         seenUrls.add(normalizedUrl);
-        allResults.push(r);
+        fresh.push(r);
       }
     }
   } catch (err) {
-    console.error(`Primary search hatası ("${primary}"):`, err);
+    console.error(`Serper arama hatası ("${keyword}"):`, err);
   }
-
-  if (allResults.length < 5 && keywords.length > 1) {
-    for (let i = 1; i < Math.min(keywords.length, 3); i++) {
-      const fallback = keywords[i];
-      console.log(`🔎 Fallback search [${i}]: "${fallback}"`);
-      try {
-        const fallbackResults = await searchProduct(fallback);
-        for (const r of fallbackResults) {
-          const normalizedUrl = (r.link || "").replace(/\/$/, "").toLowerCase();
-          if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
-            seenUrls.add(normalizedUrl);
-            allResults.push(r);
-          }
-        }
-      } catch (err) {
-        console.error(`Fallback search hatası ("${fallback}"):`, err);
-      }
-      if (allResults.length >= 15) break;
-    }
-  }
-
-  console.log(`📦 Toplam unique Serper sonucu: ${allResults.length}`);
-  return allResults;
+  return fresh;
 }
 
 const RAW_TITLE_MAX_WORDS = 6;
@@ -143,18 +122,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       }: ${JSON.stringify(queries)}`,
     );
 
-    const results = await searchWithKeywords(queries);
-
-    if (!results || results.length === 0) {
-      console.log(`⚠️ Sonuç bulunamadı: ${title}`);
-      await updateTrackedProductRefresh(productId, {
-        refreshStatus: "completed",
-        refreshCompletedAt: new Date(),
-        refreshError: null,
-      });
-      return { found: 0 };
-    }
-
     const now = new Date();
     let savedCount = 0;
     let priceFilteredCount = 0;
@@ -164,173 +131,204 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let priceUnrecoverableCount = 0;
 
     const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
+    const seenUrls = new Set<string>();
 
-    for (const result of results) {
-      if (result.link === url) continue;
+    const processResults = async (batch: SerperShoppingResult[]) => {
+      for (const result of batch) {
+        if (result.link === url) continue;
 
-      // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
-      if (isPackagingListing(result.title, product.productName)) {
-        packagingFilteredCount++;
-        console.log(`📦 Ambalaj/koli sonucu elendi: ${result.title.slice(0, 60)}`);
-        continue;
-      }
-
-      const retailer = extractRetailer(result.link);
-      const isScraperBacked = isScraperBackedRetailer(retailer.name);
-
-      let price = parsePrice(result.price);
-
-      // ============================================
-      // Audit P0-1: Fiyat boş geldiğinde recovery dene
-      // ============================================
-      // Eski davranış: fiyat null → sessizce drop. Hepsiburada en sık kurbandı çünkü
-      // Akamai Google'a price feed vermiyor. Yeni davranış: scraper destekli retailer'larda
-      // önce AI title match'i (ucuz), sonra fiyat kurtarma (HTTP only — Puppeteer DEĞİL).
-      let priceRecovered = false;
-      // Kurtarma yolunda da eşleşme skoru SAKLANMALI — aksi halde rakip kaydı
-      // matchScore=null ile yaratılıp UI'da "güvenilir" muamelesi görüyor.
-      let recoveryMatch: MatchResult | null = null;
-      const needsRecovery = (!price || price <= 0) && isScraperBacked;
-      if (needsRecovery) {
-        // AI matcher'ı price olmadan da çalıştırabiliriz; price filtresi recovery sonrası
-        // uygulanır. AI title-only match gate'i: skor >= MIN_MATCH_SCORE.
-        let preMatch: MatchResult;
-        try {
-          preMatch = await verifyProductMatch(
-            { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
-            { title: result.title, url: result.link, marketplace: retailer.name },
-          );
-        } catch {
+        // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
+        if (isPackagingListing(result.title, product.productName)) {
+          packagingFilteredCount++;
+          console.log(`📦 Ambalaj/koli sonucu elendi: ${result.title.slice(0, 60)}`);
           continue;
         }
 
-        if (!preMatch.isMatch) {
-          aiRejectedCount++;
-          console.log(
-            `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
-          );
-          continue;
-        }
+        const retailer = extractRetailer(result.link);
+        const isScraperBacked = isScraperBackedRetailer(retailer.name);
 
-        // Title eşleşti → lightweight HTTP fallback ile fiyat çek
-        recoveryMatch = preMatch;
-        try {
-          const recovered = await recoverPriceLightweight(result.link);
-          if (recovered.price && recovered.price > 0) {
-            price = recovered.price;
-            priceRecovered = true;
-            priceRecoveredCount++;
-            console.log(
-              `🛟 Fiyat kurtarıldı (${recovered.source}, ${retailer.name}): ${price} ₺ — ${result.title.slice(0, 50)}`,
+        let price = parsePrice(result.price);
+
+        // ============================================
+        // Audit P0-1: Fiyat boş geldiğinde recovery dene
+        // ============================================
+        // Eski davranış: fiyat null → sessizce drop. Hepsiburada en sık kurbandı çünkü
+        // Akamai Google'a price feed vermiyor. Yeni davranış: scraper destekli retailer'larda
+        // önce AI title match'i (ucuz), sonra fiyat kurtarma (HTTP only — Puppeteer DEĞİL).
+        let priceRecovered = false;
+        // Kurtarma yolunda da eşleşme skoru SAKLANMALI — aksi halde rakip kaydı
+        // matchScore=null ile yaratılıp UI'da "güvenilir" muamelesi görüyor.
+        let recoveryMatch: MatchResult | null = null;
+        const needsRecovery = (!price || price <= 0) && isScraperBacked;
+        if (needsRecovery) {
+          // AI matcher'ı price olmadan da çalıştırabiliriz; price filtresi recovery sonrası
+          // uygulanır. AI title-only match gate'i: skor >= MIN_MATCH_SCORE.
+          let preMatch: MatchResult;
+          try {
+            preMatch = await verifyProductMatch(
+              { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+              { title: result.title, url: result.link, marketplace: retailer.name },
             );
-          } else {
-            priceUnrecoverableCount++;
+          } catch {
+            continue;
+          }
+
+          if (!preMatch.isMatch) {
+            aiRejectedCount++;
             console.log(
-              `⚠️ Fiyat kurtarılamadı (${recovered.source}, ${retailer.name}): ${result.title.slice(0, 50)} — drop`,
+              `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
             );
             continue;
           }
-        } catch (err) {
-          priceUnrecoverableCount++;
-          console.error(`Recovery hatası (${result.link}):`, err);
-          continue;
+
+          // Title eşleşti → lightweight HTTP fallback ile fiyat çek
+          recoveryMatch = preMatch;
+          try {
+            const recovered = await recoverPriceLightweight(result.link);
+            if (recovered.price && recovered.price > 0) {
+              price = recovered.price;
+              priceRecovered = true;
+              priceRecoveredCount++;
+              console.log(
+                `🛟 Fiyat kurtarıldı (${recovered.source}, ${retailer.name}): ${price} ₺ — ${result.title.slice(0, 50)}`,
+              );
+            } else {
+              priceUnrecoverableCount++;
+              console.log(
+                `⚠️ Fiyat kurtarılamadı (${recovered.source}, ${retailer.name}): ${result.title.slice(0, 50)} — drop`,
+              );
+              continue;
+            }
+          } catch (err) {
+            priceUnrecoverableCount++;
+            console.error(`Recovery hatası (${result.link}):`, err);
+            continue;
+          }
         }
-      }
 
-      if (!price || price <= 0) {
-        // Hâlâ fiyat yok → drop. Burayı sayaca eklemiyoruz; eskiden tüm flow buydu.
-        continue;
-      }
-
-      // Price band filter
-      if (!isInPriceBand(price, sourcePrice)) {
-        priceFilteredCount++;
-        console.log(
-          `⏭️  Fiyat bandı dışı (${price.toFixed(2)} ₺, kaynak ${sourcePrice?.toFixed(2)} ₺): ${result.title.slice(0, 60)}`,
-        );
-        continue;
-      }
-
-      // AI matcher — recovery yaptıysak yeniden çalıştırma (zaten title-only match
-      // yapıldı; preMatch sonucu matchResult olarak saklanır). Recovery
-      // YAPMADIYSAK normal AI match akışı.
-      let matchResult: MatchResult | null = recoveryMatch;
-      if (!priceRecovered) {
-        try {
-          matchResult = await verifyProductMatch(
-            { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
-            { title: result.title, url: result.link, price, marketplace: retailer.name },
-          );
-        } catch {
+        if (!price || price <= 0) {
+          // Hâlâ fiyat yok → drop. Burayı sayaca eklemiyoruz; eskiden tüm flow buydu.
           continue;
         }
 
-        if (!matchResult.isMatch) {
-          aiRejectedCount++;
+        // Price band filter
+        if (!isInPriceBand(price, sourcePrice)) {
+          priceFilteredCount++;
           console.log(
-            `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
+            `⏭️  Fiyat bandı dışı (${price.toFixed(2)} ₺, kaynak ${sourcePrice?.toFixed(2)} ₺): ${result.title.slice(0, 60)}`,
           );
           continue;
         }
-      }
 
-      const marketplace = retailerToMarketplace(retailer.name);
+        // AI matcher — recovery yaptıysak yeniden çalıştırma (zaten title-only match
+        // yapıldı; preMatch sonucu matchResult olarak saklanır). Recovery
+        // YAPMADIYSAK normal AI match akışı.
+        let matchResult: MatchResult | null = recoveryMatch;
+        if (!priceRecovered) {
+          try {
+            matchResult = await verifyProductMatch(
+              { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+              { title: result.title, url: result.link, price, marketplace: retailer.name },
+            );
+          } catch {
+            continue;
+          }
 
-      try {
-        const competitor = await prisma.competitor.upsert({
-          where: {
-            trackedProductId_competitorUrl: {
+          if (!matchResult.isMatch) {
+            aiRejectedCount++;
+            console.log(
+              `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
+            );
+            continue;
+          }
+        }
+
+        const marketplace = retailerToMarketplace(retailer.name);
+
+        try {
+          const competitor = await prisma.competitor.upsert({
+            where: {
+              trackedProductId_competitorUrl: {
+                trackedProductId: productId,
+                competitorUrl: result.link,
+              },
+            },
+            update: {
+              competitorName: result.title,
+              currentPrice: price,
+              marketplace,
+              lastScrapedAt: now,
+              matchScore: matchResult?.score,
+              matchReason: matchResult?.reason,
+              matchAttributes: matchResult?.attributes,
+            },
+            create: {
               trackedProductId: productId,
               competitorUrl: result.link,
+              competitorName: result.title,
+              marketplace,
+              currentPrice: price,
+              lastScrapedAt: now,
+              matchScore: matchResult?.score,
+              matchReason: matchResult?.reason,
+              matchAttributes: matchResult?.attributes,
             },
-          },
-          update: {
-            competitorName: result.title,
-            currentPrice: price,
-            marketplace,
-            lastScrapedAt: now,
-            matchScore: matchResult?.score,
-            matchReason: matchResult?.reason,
-            matchAttributes: matchResult?.attributes,
-          },
-          create: {
-            trackedProductId: productId,
-            competitorUrl: result.link,
-            competitorName: result.title,
-            marketplace,
-            currentPrice: price,
-            lastScrapedAt: now,
-            matchScore: matchResult?.score,
-            matchReason: matchResult?.reason,
-            matchAttributes: matchResult?.attributes,
-          },
-        });
+          });
 
-        await prisma.competitorPrice.create({
-          data: {
-            competitorId: competitor.id,
-            price,
-            currency: "TRY",
-            inStock: true,
-            scrapedAt: now,
-          },
-        });
+          await prisma.competitorPrice.create({
+            data: {
+              competitorId: competitor.id,
+              price,
+              currency: "TRY",
+              inStock: true,
+              scrapedAt: now,
+            },
+          });
 
-        await prisma.priceHistory.create({
-          data: {
-            trackedProductId: productId,
-            price,
-            currency: "TRY",
-            inStock: true,
-            sellerName: retailer.name,
-            scrapedAt: now,
-          },
-        });
+          await prisma.priceHistory.create({
+            data: {
+              trackedProductId: productId,
+              price,
+              currency: "TRY",
+              inStock: true,
+              sellerName: retailer.name,
+              scrapedAt: now,
+            },
+          });
 
-        savedCount++;
-      } catch (err) {
-        console.error(`Competitor kaydetme hatası (${result.link}):`, err);
+          savedCount++;
+        } catch (err) {
+          console.error(`Competitor kaydetme hatası (${result.link}):`, err);
+        }
       }
+    };
+
+    // Kademeli arama: önce birincil anahtar kelime. Niş/markasız ürünlerde
+    // birincil arama bol sonuç döndürse bile AI matcher hepsini reddedebilir
+    // ("birebir aynı ürün" piyasada olmayabilir) — bu yüzden yedek kelimeler
+    // HAM sonuç sayısına değil, KAYDEDİLEN rakip sayısına göre devreye girer.
+    const MIN_SAVED_BEFORE_FALLBACK = 3;
+    const primaryResults = await searchSingleKeyword(queries[0], seenUrls);
+    console.log(`🔎 Primary "${queries[0]}": ${primaryResults.length} yeni sonuç`);
+    await processResults(primaryResults);
+
+    if (savedCount < MIN_SAVED_BEFORE_FALLBACK && queries.length > 1) {
+      for (let i = 1; i < Math.min(queries.length, 3); i++) {
+        console.log(`🔎 Fallback [${i}] "${queries[i]}" deneniyor (kaydedilen: ${savedCount})`);
+        const fallbackResults = await searchSingleKeyword(queries[i], seenUrls);
+        await processResults(fallbackResults);
+        if (savedCount >= MIN_SAVED_BEFORE_FALLBACK) break;
+      }
+    }
+
+    if (seenUrls.size === 0) {
+      console.log(`⚠️ Sonuç bulunamadı: ${title}`);
+      await updateTrackedProductRefresh(productId, {
+        refreshStatus: "completed",
+        refreshCompletedAt: new Date(),
+        refreshError: null,
+      });
+      return { found: 0 };
     }
 
     if (sourcePrice && sourcePrice > 0) {

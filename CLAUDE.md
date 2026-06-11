@@ -144,7 +144,8 @@ Located in `apps/web/src/app/api/`:
 - Single source of truth: `packages/shared/src/index.ts` (`MARKETPLACES` object)
 - 23 supported Turkish marketplaces with id, name, domain, icon (emoji), color (hex)
 - Helper functions: `getMarketplaceInfo(key)`, `getRetailerInfoFromDomain(domain)`
-- Dedicated scrapers: TRENDYOL, HEPSIBURADA, AMAZON_TR, N11, MEDIAMARKT, PTTAVM; TEKNOSA/VATAN/DECATHLON use the generic JSON-LD scraper; unknown marketplaces fall back to `scrapeGeneric`
+- Dedicated scrapers: TRENDYOL, HEPSIBURADA, AMAZON_TR, N11, MEDIAMARKT, PTTAVM; PAZARAMA/TEKNOSA/VATAN use the generic JSON-LD scraper; unknown marketplaces fall back to `scrapeGeneric`
+- DECATHLON is intentionally NOT in `SUPPORTED_SCRAPER_MARKETPLACES` (no comparable competitor pool) — legacy rows still render, new adds are rejected
 - Never duplicate marketplace labels/colors in component files
 
 ### Plan Limits
