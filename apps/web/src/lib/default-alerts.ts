@@ -15,8 +15,8 @@ function buildDefaultRules(alertThresholdPct: number): DefaultAlertRuleSpec[] {
   return [
     { ruleType: RuleType.PRICE_DROP, cooldownMinutes: 60 },
     { ruleType: RuleType.COMPETITOR_CHEAPER, cooldownMinutes: 30 },
-    { ruleType: RuleType.BACK_IN_STOCK, cooldownMinutes: 15 },
     { ruleType: RuleType.OUT_OF_STOCK, cooldownMinutes: 120 },
+    { ruleType: RuleType.BACK_IN_STOCK, cooldownMinutes: 15 },
     { ruleType: RuleType.PRICE_INCREASE, cooldownMinutes: 60 },
     {
       ruleType: RuleType.PERCENTAGE_CHANGE,
@@ -26,22 +26,35 @@ function buildDefaultRules(alertThresholdPct: number): DefaultAlertRuleSpec[] {
   ];
 }
 
-export interface CreateDefaultAlertsParams {
+export interface EnsureDefaultAlertsParams {
   userId: string;
-  trackedProductId: string;
   plan: string;
   alertThresholdPct?: number;
 }
 
-export interface CreateDefaultAlertsResult {
+export interface EnsureDefaultAlertsResult {
   created: number;
   skipped: number;
 }
 
-export async function createDefaultAlertRules(
-  params: CreateDefaultAlertsParams,
-): Promise<CreateDefaultAlertsResult> {
-  const { userId, trackedProductId, plan, alertThresholdPct = 5 } = params;
+/**
+ * Kullanıcı için HESAP GENELİ (trackedProductId = null) varsayılan uyarı
+ * kurallarını bir kez oluşturur. Genel kurallar kullanıcının TÜM ürünlerine
+ * uygulanır; aynı türde ürün bazlı bir kural varsa o üründe genel kuralı ezer.
+ *
+ * Eski davranış ürün başına 6 kural oluşturuyordu; plan kotaları toplam
+ * sayıldığı için (FREE: 3, STARTER: 20) ilk birkaç üründen sonrası SESSİZCE
+ * kuralsız kalıyordu. Genel kurallar bu sorunu kökten çözer: 6 slot, sınırsız
+ * ürünü kapsar.
+ *
+ * Idempotent: kullanıcının halihazırda HERHANGİ bir kuralı varsa (genel veya
+ * ürün bazlı) hiçbir şey oluşturmaz — mevcut kullanıcıların bildirim hacmini
+ * habersiz değiştirmemek için.
+ */
+export async function ensureDefaultGlobalAlertRules(
+  params: EnsureDefaultAlertsParams,
+): Promise<EnsureDefaultAlertsResult> {
+  const { userId, plan, alertThresholdPct = 5 } = params;
   const candidates = buildDefaultRules(alertThresholdPct);
 
   try {
@@ -52,11 +65,12 @@ export async function createDefaultAlertRules(
       return { created: 0, skipped: candidates.length };
     }
 
-    const currentCount = await prisma.alertRule.count({
-      where: { userId, isActive: true },
-    });
+    const existingCount = await prisma.alertRule.count({ where: { userId } });
+    if (existingCount > 0) {
+      return { created: 0, skipped: candidates.length };
+    }
 
-    const availableSlots = Math.max(0, features.maxAlertRules - currentCount);
+    const availableSlots = Math.max(0, features.maxAlertRules);
     if (availableSlots === 0) {
       return { created: 0, skipped: candidates.length };
     }
@@ -66,7 +80,7 @@ export async function createDefaultAlertRules(
     const result = await prisma.alertRule.createMany({
       data: toInsert.map((r) => ({
         userId,
-        trackedProductId,
+        trackedProductId: null,
         ruleType: r.ruleType,
         thresholdValue: r.thresholdValue,
         notifyVia: channels,
@@ -77,10 +91,7 @@ export async function createDefaultAlertRules(
 
     return { created: result.count, skipped: candidates.length - result.count };
   } catch (error) {
-    logger.error(
-      { err: error, userId, trackedProductId, plan },
-      "Failed to create default alert rules",
-    );
+    logger.error({ err: error, userId, plan }, "Failed to create default global alert rules");
     return { created: 0, skipped: candidates.length };
   }
 }

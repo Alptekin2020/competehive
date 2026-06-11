@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { isUsableCompetitor } from "@competehive/shared";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
@@ -40,6 +41,8 @@ interface CompetitorItem {
   competitor_name: string | null;
   current_price: string | null;
   competitor_url: string;
+  match_score?: number | null;
+  last_scraped_at?: string | null;
 }
 
 interface TrendData {
@@ -198,9 +201,21 @@ export default function ProductsPage() {
       .map((p) => {
         const myPrice = p.current_price ? Number(p.current_price) : null;
         const competitorCount = p.competitorCount ?? p.competitors?.length ?? 0;
+        // "En düşük rakip" yalnızca kalite politikasından (skor, fiyat bandı,
+        // bayatlık) geçen rakiplerden hesaplanır — detay sayfasıyla tutarlı.
         const competitorPrices = (p.competitors ?? [])
-          .map((c) => (c.current_price ? Number(c.current_price) : null))
-          .filter((price): price is number => price !== null && Number.isFinite(price));
+          .filter((c) =>
+            isUsableCompetitor(
+              {
+                price: c.current_price ? Number(c.current_price) : null,
+                matchScore: c.match_score ?? null,
+                lastScrapedAt: c.last_scraped_at ?? null,
+              },
+              { ownPrice: myPrice },
+            ),
+          )
+          .map((c) => Number(c.current_price))
+          .filter((price): price is number => Number.isFinite(price));
         const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
         const stale = isStale(p.last_scraped_at);
         const priceChange = p.trend?.priceChange ?? null;

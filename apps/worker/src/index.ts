@@ -6,6 +6,7 @@ import { setGlobalDispatcher, ProxyAgent } from "undici";
 
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
+import { cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
 import { prisma } from "./db";
@@ -173,6 +174,15 @@ async function start() {
     await runMigrations();
   } catch (err) {
     logger.error({ err }, "Schema reconciliation (runMigrations) failed — continuing");
+  }
+
+  // Eski keşif turlarından kalan bariz çöp rakipleri (ambalaj/koli ürünleri,
+  // aşırı fiyat sapması olan skorsuz kayıtlar) temizle. Idempotent; bir hata
+  // worker'ı düşürmemeli.
+  try {
+    await cleanupJunkCompetitors();
+  } catch (err) {
+    logger.error({ err }, "Junk-competitor cleanup failed — continuing");
   }
 
   await registerTelegramBot();

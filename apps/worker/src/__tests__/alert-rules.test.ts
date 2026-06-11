@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { evaluateAlertRule, type AlertEvalContext } from "../jobs/alert-rules";
+import {
+  evaluateAlertRule,
+  resolveApplicableRules,
+  type AlertEvalContext,
+  type ResolvableRule,
+} from "../jobs/alert-rules";
 
 const base: AlertEvalContext = {
   currentPrice: 100,
@@ -232,5 +237,66 @@ describe("evaluateAlertRule", () => {
     expect(evaluateAlertRule("NONSENSE", { ...base, isPriceEvent: true, priceChange: -1 })).toBe(
       false,
     );
+  });
+});
+
+// ============================================
+// resolveApplicableRules — genel/ürün kural çözümleme
+// ============================================
+
+interface TestRule extends ResolvableRule {
+  id: string;
+}
+
+function rule(
+  id: string,
+  trackedProductId: string | null,
+  ruleType: string,
+  isActive = true,
+): TestRule {
+  return { id, trackedProductId, ruleType, isActive };
+}
+
+describe("resolveApplicableRules", () => {
+  const P1 = "product-1";
+
+  it("returns active global rules when the product has no own rules", () => {
+    const rules = [rule("g1", null, "PRICE_DROP"), rule("g2", null, "COMPETITOR_CHEAPER")];
+    expect(resolveApplicableRules(rules, P1).map((r) => r.id)).toEqual(["g1", "g2"]);
+  });
+
+  it("returns active product rules alongside non-conflicting global rules", () => {
+    const rules = [
+      rule("p1", P1, "PRICE_THRESHOLD"),
+      rule("g1", null, "PRICE_DROP"),
+      rule("g2", null, "COMPETITOR_CHEAPER"),
+    ];
+    expect(resolveApplicableRules(rules, P1).map((r) => r.id)).toEqual(["p1", "g1", "g2"]);
+  });
+
+  it("lets a product rule override the global rule of the same type", () => {
+    const rules = [rule("p1", P1, "PRICE_DROP"), rule("g1", null, "PRICE_DROP")];
+    expect(resolveApplicableRules(rules, P1).map((r) => r.id)).toEqual(["p1"]);
+  });
+
+  it("mutes the global rule when the overriding product rule is inactive", () => {
+    // Pasif ürün kuralı = o üründe o tür bildirim sessize alınmış demektir;
+    // genel kural devreye GİRMEMELİ.
+    const rules = [rule("p1", P1, "PRICE_DROP", false), rule("g1", null, "PRICE_DROP")];
+    expect(resolveApplicableRules(rules, P1)).toEqual([]);
+  });
+
+  it("excludes inactive global rules", () => {
+    const rules = [rule("g1", null, "PRICE_DROP", false), rule("g2", null, "OUT_OF_STOCK")];
+    expect(resolveApplicableRules(rules, P1).map((r) => r.id)).toEqual(["g2"]);
+  });
+
+  it("ignores rules that belong to other products", () => {
+    const rules = [rule("px", "product-2", "PRICE_DROP"), rule("g1", null, "PRICE_DROP")];
+    expect(resolveApplicableRules(rules, P1).map((r) => r.id)).toEqual(["g1"]);
+  });
+
+  it("returns an empty list when nothing applies", () => {
+    expect(resolveApplicableRules([], P1)).toEqual([]);
   });
 });

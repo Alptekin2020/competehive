@@ -144,7 +144,7 @@ Located in `apps/web/src/app/api/`:
 - Single source of truth: `packages/shared/src/index.ts` (`MARKETPLACES` object)
 - 23 supported Turkish marketplaces with id, name, domain, icon (emoji), color (hex)
 - Helper functions: `getMarketplaceInfo(key)`, `getRetailerInfoFromDomain(domain)`
-- Only 4 scrapers currently implemented: TRENDYOL, HEPSIBURADA, AMAZON_TR, N11
+- Dedicated scrapers: TRENDYOL, HEPSIBURADA, AMAZON_TR, N11, MEDIAMARKT, PTTAVM; TEKNOSA/VATAN/DECATHLON use the generic JSON-LD scraper; unknown marketplaces fall back to `scrapeGeneric`
 - Never duplicate marketplace labels/colors in component files
 
 ### Plan Limits
@@ -163,7 +163,7 @@ Defined in `packages/shared/src/index.ts` (`PLAN_LIMITS`):
 Entry point: `apps/worker/src/index.ts`
 
 - **Scrape queue**: 5 concurrency, rate limited (10 requests/10s), 3 attempts with exponential backoff
-- **Alert queue**: 10 concurrency, 3 retries
+- **Alert queue**: 10 concurrency, 3 retries. Rules resolve per product via `resolveApplicableRules`: account-wide global rules (`trackedProductId = null`) apply to every product; a product-specific rule of the same type overrides the global one for that product (an inactive product rule mutes it). Cooldowns are per (rule, product) in Redis (`alert-cooldown:*`), falling back to `lastTriggered` when Redis is unavailable
 - **Schedule loop**: Runs every 60 seconds, selects products due for scraping based on `scrapeInterval`
 - Structured logging with Pino
 - Custom `ScraperError` class with `code`, `retryable`, `softFail` fields
@@ -174,12 +174,22 @@ Entry point: `apps/worker/src/index.ts`
 
 Located in `apps/worker/src/scrapers/`:
 
-- **scrapeTrendyol**: JSON-LD primary, HTML fallback, script tag state extraction
-- **scrapeHepsiburada**: JSON-LD + HTML parsing
+- **scrapeTrendyol**: public API primary, HTML fallback, Puppeteer last resort
+- **scrapeHepsiburada**: Akamai-block detection, JSON-LD + `__NEXT_DATA__` + OG meta, Puppeteer fallback
 - **scrapeAmazonTR**: JSON-LD with offer array handling
 - **scrapeN11**: JSON-LD + HTML with "stokta yok" detection
-- `getScraper()` factory returns appropriate scraper or throws unsupported error
+- **scrapeMediaMarkt**, **scrapePTTAVM**: JSON-LD + marketplace-specific selectors
+- **scrapeGeneric**: JSON-LD + OG meta fallback (TEKNOSA, VATAN, DECATHLON, unknown)
+- `getScraper()` factory returns appropriate scraper (generic fallback for unknown)
 - `fetchWithRetry()`: 3 attempts with exponential backoff, 15s timeout
+
+### Competitor Data Quality
+
+- Central policy: `packages/shared/src/competitor-quality.ts` (worker mirror: `apps/worker/src/utils/competitor-quality.ts` — keep in sync; the worker's Docker build context cannot import the shared package)
+- A competitor only enters decision calculations (market position, price suggestion, COMPETITOR_CHEAPER alert) if it passes: valid price, `matchScore` null-or-≥ `MIN_MATCH_SCORE`, price within 0.3x–3x band of own price, scraped within 72h
+- `isPackagingListing()` deterministically rejects packaging/logistics listings (koli, ambalaj, …) before any AI call
+- Automated pipelines must always persist a `matchScore` — null score is reserved for manual/legacy rows
+- Worker boot runs `cleanupJunkCompetitors()` to purge obvious legacy junk (packaging names, extreme price deviation on unscored rows)
 
 ### Notifications
 

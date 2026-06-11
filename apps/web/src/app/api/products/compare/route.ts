@@ -9,7 +9,12 @@ import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
 import { compareSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { verifyProductMatch, withinPriceBand, type MatchAttributes } from "@/lib/matcher";
+import {
+  verifyProductMatch,
+  deterministicFallbackMatch,
+  withinPriceBand,
+  type MatchAttributes,
+} from "@/lib/matcher";
 
 export const maxDuration = 60;
 
@@ -88,14 +93,18 @@ export async function POST(req: NextRequest) {
 
     // Worker tarafıyla aynı kalite filtreleri uygulanıyor:
     //   1) Fiyat bandı: kaynak fiyatın 0.3x–3x'i dışındakileri reddet.
-    //   2) AI matcher (worker matcher.ts ile aynı prompt + threshold):
+    //   2) AI matcher (worker matcher.ts ile aynı prompt + threshold + deterministik
+    //      ambalaj/koli ön filtresi):
     //      - outcome="match"      → matchScore + matchReason + matchAttributes ile kaydet
     //      - outcome="reject"     → adayı skip et (alakasız ürün)
-    //      - outcome="unreliable" → AI teknik olarak çalışmadı; fiyat bandını zaten
-    //                               geçtiği için adayı AI alanları boş şekilde kaydet
-    //                               (kullanıcıyı OpenAI outage'ında cezalandırma)
-    // Bu sayede "Rakipleri Tara" da kolikutugelsin / kitap / aksesuar gibi alakasız
-    // ürünlerle DB'yi kirletmiyor, ama OpenAI down olduğunda da çalışmaya devam ediyor.
+    //      - outcome="unreliable" → AI teknik olarak çalışmadı; deterministik metin
+    //                               fallback'i ile karar ver. Rakipler HİÇBİR ZAMAN
+    //                               skorsuz kaydedilmez — skorsuz kayıtlar UI'da
+    //                               "güvenilir" muamelesi görüp piyasa pozisyonunu
+    //                               bozuyordu (koli vs terlik vakası).
+    //   3) Kaynak fiyat bilinmiyorsa fiyat bandı çalışamaz; bu durumda yalnızca
+    //      güçlü skor (>= MIN_MATCH_SCORE) kaydedilir — fallback'in 50 puanlık
+    //      "muhtemel" eşleşmeleri tek başına yeterince güvenilir değildir.
     const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
     const sourceTitle = product.productName;
 
@@ -133,13 +142,9 @@ export async function POST(req: NextRequest) {
         ? `${normalizedResult.storeName} — ${normalizedResult.productName}`.substring(0, 200)
         : normalizedResult.productName.substring(0, 200);
 
-      // 2) AI matcher. OpenAI yapılandırılmamışsa matcher kendi içinde string-similarity
-      //    fallback'i kullanıyor (worker davranışıyla aynı).
-      let matchScore: number | null = null;
-      let matchReason: string | null = null;
-      let matchAttributes: MatchAttributes | null = null;
-
-      const matchResult = await verifyProductMatch(
+      // 2) AI matcher. OpenAI yapılandırılmamışsa matcher kendi içinde deterministik
+      //    fallback kullanıyor (worker davranışıyla aynı).
+      let matchResult = await verifyProductMatch(
         {
           title: sourceTitle,
           price: sourcePrice ?? undefined,
@@ -153,20 +158,27 @@ export async function POST(req: NextRequest) {
         },
       );
 
+      if (matchResult.outcome === "unreliable") {
+        // AI teknik hata verdi — deterministik fallback ile karar ver; skorsuz
+        // kayıt asla yazılmaz.
+        aiUnreliableCount += 1;
+        matchResult = deterministicFallbackMatch(sourceTitle, normalizedResult.productName);
+      }
+
       if (matchResult.outcome === "reject") {
         aiRejectedCount += 1;
         continue;
       }
 
-      if (matchResult.outcome === "unreliable") {
-        // Teknik hata — adayı tut ama AI alanlarını yazma.
-        aiUnreliableCount += 1;
-      } else {
-        // outcome === "match"
-        matchScore = matchResult.score;
-        matchReason = matchResult.reason;
-        matchAttributes = matchResult.attributes;
+      // Kaynak fiyat yokken fiyat bandı denetlenemiyor — yalnızca güçlü skor kabul et.
+      if ((!sourcePrice || sourcePrice <= 0) && matchResult.score < MIN_MATCH_SCORE) {
+        aiRejectedCount += 1;
+        continue;
       }
+
+      const matchScore: number = matchResult.score;
+      const matchReason: string = matchResult.reason;
+      const matchAttributes: MatchAttributes = matchResult.attributes;
 
       try {
         const comp = await prisma.competitor.upsert({
@@ -181,13 +193,9 @@ export async function POST(req: NextRequest) {
             marketplace: mp as Marketplace,
             currentPrice: candidatePrice,
             lastScrapedAt: new Date(),
-            ...(matchScore !== null
-              ? {
-                  matchScore,
-                  matchReason,
-                  matchAttributes: matchAttributes as unknown as Prisma.InputJsonValue,
-                }
-              : {}),
+            matchScore,
+            matchReason,
+            matchAttributes: matchAttributes as unknown as Prisma.InputJsonValue,
           },
           create: {
             trackedProductId: productId,
@@ -196,13 +204,9 @@ export async function POST(req: NextRequest) {
             marketplace: mp as Marketplace,
             currentPrice: candidatePrice,
             lastScrapedAt: new Date(),
-            ...(matchScore !== null
-              ? {
-                  matchScore,
-                  matchReason,
-                  matchAttributes: matchAttributes as unknown as Prisma.InputJsonValue,
-                }
-              : {}),
+            matchScore,
+            matchReason,
+            matchAttributes: matchAttributes as unknown as Prisma.InputJsonValue,
           },
         });
 

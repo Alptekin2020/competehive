@@ -6,6 +6,7 @@ import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
+import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
 import { alertQueue } from "./processor";
 
 interface OnboardJobData {
@@ -102,10 +103,6 @@ async function searchWithKeywords(keywords: string[]): Promise<SerperShoppingRes
   return allResults;
 }
 
-// Price pre-filter sabitleri — matcher.ts'in "%300 fiyat farkı" kuralı ile uyumlu
-const PRICE_BAND_MIN_RATIO = 0.3;
-const PRICE_BAND_MAX_RATIO = 3.0;
-
 const RAW_TITLE_MAX_WORDS = 6;
 function truncateRawTitleForSearch(title: string): string {
   const words = title.trim().split(/\s+/);
@@ -115,7 +112,7 @@ function truncateRawTitleForSearch(title: string): string {
 
 function isInPriceBand(price: number, sourcePrice: number | null): boolean {
   if (!sourcePrice || sourcePrice <= 0) return true;
-  return price >= sourcePrice * PRICE_BAND_MIN_RATIO && price <= sourcePrice * PRICE_BAND_MAX_RATIO;
+  return withinPriceBand(sourcePrice, price);
 }
 
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
@@ -162,6 +159,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let savedCount = 0;
     let priceFilteredCount = 0;
     let aiRejectedCount = 0;
+    let packagingFilteredCount = 0;
     let priceRecoveredCount = 0;
     let priceUnrecoverableCount = 0;
 
@@ -169,6 +167,13 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     for (const result of results) {
       if (result.link === url) continue;
+
+      // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
+      if (isPackagingListing(result.title, product.productName)) {
+        packagingFilteredCount++;
+        console.log(`📦 Ambalaj/koli sonucu elendi: ${result.title.slice(0, 60)}`);
+        continue;
+      }
 
       const retailer = extractRetailer(result.link);
       const isScraperBacked = isScraperBackedRetailer(retailer.name);
@@ -182,6 +187,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       // Akamai Google'a price feed vermiyor. Yeni davranış: scraper destekli retailer'larda
       // önce AI title match'i (ucuz), sonra fiyat kurtarma (HTTP only — Puppeteer DEĞİL).
       let priceRecovered = false;
+      // Kurtarma yolunda da eşleşme skoru SAKLANMALI — aksi halde rakip kaydı
+      // matchScore=null ile yaratılıp UI'da "güvenilir" muamelesi görüyor.
+      let recoveryMatch: MatchResult | null = null;
       const needsRecovery = (!price || price <= 0) && isScraperBacked;
       if (needsRecovery) {
         // AI matcher'ı price olmadan da çalıştırabiliriz; price filtresi recovery sonrası
@@ -205,6 +213,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         }
 
         // Title eşleşti → lightweight HTTP fallback ile fiyat çek
+        recoveryMatch = preMatch;
         try {
           const recovered = await recoverPriceLightweight(result.link);
           if (recovered.price && recovered.price > 0) {
@@ -242,9 +251,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         continue;
       }
 
-      // AI matcher — recovery yaptıysak yeniden çalıştırma (zaten title-only match yapıldı).
-      // Recovery YAPMADIYSAK normal AI match akışı.
-      let matchResult: MatchResult | null = null;
+      // AI matcher — recovery yaptıysak yeniden çalıştırma (zaten title-only match
+      // yapıldı; preMatch sonucu matchResult olarak saklanır). Recovery
+      // YAPMADIYSAK normal AI match akışı.
+      let matchResult: MatchResult | null = recoveryMatch;
       if (!priceRecovered) {
         try {
           matchResult = await verifyProductMatch(
@@ -364,12 +374,14 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     console.log(
       `✅ ${productId}: ${savedCount} competitor kaydedildi ` +
         `(price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount}, ` +
+        `packaging filtered: ${packagingFilteredCount}, ` +
         `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount})`,
     );
     return {
       found: savedCount,
       priceFiltered: priceFilteredCount,
       aiRejected: aiRejectedCount,
+      packagingFiltered: packagingFilteredCount,
       priceRecovered: priceRecoveredCount,
       priceUnrecoverable: priceUnrecoverableCount,
     };

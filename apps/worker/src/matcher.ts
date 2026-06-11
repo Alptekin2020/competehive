@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { logger } from "./utils/logger";
+import { MIN_MATCH_SCORE, isPackagingListing } from "./utils/competitor-quality";
 
 let openai: OpenAI | null = null;
 
@@ -38,15 +39,6 @@ export interface ProductInfo {
 }
 
 // ============================================
-// Minimum Score Threshold
-// ============================================
-
-// Worker'ın Docker build context'i sadece apps/worker/ dizini olduğu için
-// @competehive/shared paketi buradan erişilemiyor. Bu sabit packages/shared/src/index.ts
-// içindeki MIN_MATCH_SCORE ile aynı tutulmalı.
-const MIN_MATCH_SCORE = 70;
-
-// ============================================
 // Fallback string matcher (when OpenAI unavailable)
 // ============================================
 
@@ -77,6 +69,24 @@ export async function verifyProductMatch(
   sourceProduct: ProductInfo,
   candidate: ProductInfo,
 ): Promise<MatchResult> {
+  // Deterministik emniyet kemeri (AI'dan bağımsız): ambalaj/koli/lojistik
+  // ürünü bir tüketici ürünüyle asla eşleşmez. AI çağrısından ÖNCE çalışır —
+  // hem maliyeti düşürür hem AI hatası/yanılgısında bile koruma sağlar.
+  if (isPackagingListing(candidate.title, sourceProduct.title)) {
+    return {
+      isMatch: false,
+      score: 0,
+      reason: "Ambalaj/koli ürünü — otomatik red",
+      attributes: {
+        brandMatch: false,
+        modelMatch: false,
+        specMatch: false,
+        categoryMatch: false,
+        details: "Aday başlığı paketleme/lojistik malzemesi içeriyor",
+      },
+    };
+  }
+
   const client = getOpenAIClient();
   if (!client) {
     return fallbackMatch(sourceProduct.title, candidate.title);

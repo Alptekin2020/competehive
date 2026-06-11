@@ -18,7 +18,7 @@ import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 import { getPlanFeatures } from "@/lib/plan-gates";
 import { canAddProduct } from "@/lib/limits";
-import { createDefaultAlertRules } from "@/lib/default-alerts";
+import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
 import { normalizeProductImage } from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
@@ -54,6 +54,8 @@ export async function GET() {
             competitorName: true,
             currentPrice: true,
             competitorUrl: true,
+            matchScore: true,
+            lastScrapedAt: true,
           },
         },
         priceHistory: {
@@ -136,6 +138,8 @@ export async function GET() {
           competitor_name: c.competitorName,
           current_price: c.currentPrice,
           competitor_url: c.competitorUrl,
+          match_score: c.matchScore,
+          last_scraped_at: c.lastScrapedAt,
         })),
       };
     });
@@ -306,19 +310,20 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 6. Varsayilan bildirim kurallarini otomatik olustur
-    // Kullanici istemiyorsa uyarilar sayfasindan kaldirabilir.
+    // 6. Hesap geneli varsayilan bildirim kurallarini olustur (yalnizca ilk
+    // urunde; kullanicinin zaten kurali varsa no-op). Genel kurallar tum
+    // urunlere uygulanir — urun basina kural olusturmak plan kotasini ilk
+    // birkac urunde tuketiyordu ve sonraki urunler sessizce alarmsiz kaliyordu.
     try {
-      const { created, skipped } = await createDefaultAlertRules({
+      const { created, skipped } = await ensureDefaultGlobalAlertRules({
         userId: user.id,
-        trackedProductId: product.id,
         plan: user.plan,
         alertThresholdPct: user.alertThresholdPct,
       });
 
       logger.info(
         { userId: user.id, productId: product.id, created, skipped },
-        "Default alert rules provisioned",
+        "Default global alert rules ensured",
       );
     } catch (err) {
       logger.error({ err }, "Default alert rules error (non-fatal)");

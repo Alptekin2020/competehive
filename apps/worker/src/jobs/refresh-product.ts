@@ -8,6 +8,7 @@ import { urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { getScraper } from "../scrapers";
 import { verifyProductMatch, MatchResult } from "../matcher";
+import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
 import { maybeEnqueueAlerts } from "./processor";
 import { Marketplace } from "@prisma/client";
 
@@ -15,9 +16,6 @@ interface RefreshJobData {
   productId: string;
   isDeduped?: boolean;
 }
-
-const PRICE_BAND_MIN_RATIO = 0.3;
-const PRICE_BAND_MAX_RATIO = 3.0;
 
 function retailerToMarketplace(retailerName: string): Marketplace {
   const map: Record<string, Marketplace> = {
@@ -47,7 +45,7 @@ function retailerToMarketplace(retailerName: string): Marketplace {
 
 function isInPriceBand(price: number, sourcePrice: number | null): boolean {
   if (!sourcePrice || sourcePrice <= 0) return true;
-  return price >= sourcePrice * PRICE_BAND_MIN_RATIO && price <= sourcePrice * PRICE_BAND_MAX_RATIO;
+  return withinPriceBand(sourcePrice, price);
 }
 
 export async function processRefreshJob(job: Job<RefreshJobData>) {
@@ -233,6 +231,12 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     for (const result of results) {
       if (urlMatchKey(result.link) === urlMatchKey(product.productUrl)) continue;
 
+      // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
+      if (isPackagingListing(result.title, product.productName)) {
+        console.log(`📦 Refresh: ambalaj/koli sonucu elendi: ${result.title.slice(0, 60)}`);
+        continue;
+      }
+
       const retailer = extractRetailer(result.link);
       const isScraperBacked = isScraperBackedRetailer(retailer.name);
       const existingCompetitor = competitorByUrl.get(result.link);
@@ -241,6 +245,9 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
 
       // Audit P0-1 (refresh path): Fiyat boş gelirse Hepsiburada/Trendyol fallback
       let priceRecovered = false;
+      // Kurtarma yolundaki eşleşme skoru da SAKLANMALI — aksi halde yeni rakip
+      // matchScore=null ile yaratılıp kalite politikasının dışında kalıyor.
+      let recoveryMatch: MatchResult | null = null;
       if ((!serperPrice || serperPrice <= 0) && isScraperBacked) {
         // Yeni rakip için title-AI gate; existing için zaten kabul edilmiş
         if (!existingCompetitor) {
@@ -260,6 +267,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             if (!preMatch.isMatch) {
               continue;
             }
+            recoveryMatch = preMatch;
           } catch {
             continue;
           }
@@ -351,7 +359,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       // ============================================
       if (!isInPriceBand(serperPrice, sourcePrice)) continue;
 
-      let matchResult: MatchResult | null = null;
+      let matchResult: MatchResult | null = recoveryMatch;
       if (!priceRecovered) {
         // priceRecovered=true ise AI title-only gate zaten geçti
         try {
