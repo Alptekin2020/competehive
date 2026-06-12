@@ -452,6 +452,9 @@ export async function scrapeTrendyol(
         logger.warn(
           `Trendyol API fail attempt=${attempt}: code=${errCode} syscall=${errSyscall} hostname=${errHostname} msg="${errMsg}"`,
         );
+        // DNS çözülmüyorsa (Railway'de public.trendyol.com ENOTFOUND) retry
+        // boşuna — 2-4 sn bekleyip aynı hatayı almak yerine HTML yoluna geç.
+        if (errCode === "ENOTFOUND") break;
         if (attempt < apiRetries) {
           await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
         }
