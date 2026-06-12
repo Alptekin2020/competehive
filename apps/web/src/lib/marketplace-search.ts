@@ -563,7 +563,6 @@ async function searchSerperSingle(query: string, apiKey: string): Promise<Market
       const data = await shoppingRes.json();
       const items = data.shopping || [];
       console.log(`[CompeteHive] Serper Shopping results for "${query}":`, items.length);
-
       for (const item of items) {
         const { marketplace, storeName } = detectStore(
           item.link || "",
@@ -591,6 +590,16 @@ async function searchSerperSingle(query: string, apiKey: string): Promise<Market
           });
         }
       }
+    } else {
+      // Kota/auth hataları sessizce yutulmamalı — "neden 0 rakip?" sorusunun
+      // cevabı Vercel function loglarında tek satırda görünsün.
+      const body = await shoppingRes
+        .text()
+        .then((t) => t.slice(0, 200))
+        .catch(() => "");
+      console.error(
+        `[CompeteHive] 🚨 Serper Shopping HTTP ${shoppingRes.status} ("${query}"): ${body}`,
+      );
     }
   } catch (e) {
     console.error("[CompeteHive] Serper Shopping error:", e);
@@ -645,6 +654,9 @@ async function searchSerperSingle(query: string, apiKey: string): Promise<Market
 async function searchSerper(query: string): Promise<MarketplaceResult[]> {
   const apiKey = process.env.SERPER_API_KEY;
   if (!apiKey) {
+    console.error(
+      "[CompeteHive] 🚨 SERPER_API_KEY web ortamında (Vercel) tanımlı değil — 'Rakipleri Tara' ve ürün-ekleme sonrası otomatik tarama sonuç üretemez. Worker'ın anahtarı AYRI ortamdadır (Railway); bu anahtarın Vercel env'ine de eklenmesi gerekir.",
+    );
     return [];
   }
 

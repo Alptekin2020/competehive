@@ -274,7 +274,16 @@ export async function POST(req: NextRequest) {
 
     logger.info({ competitorCount: competitors.length }, "Compare complete");
 
-    return apiSuccess({ success: true, competitors, skippedCount, errorCount });
+    // Yapılandırma durumu yanıtla birlikte döner: web tarafında SERPER_API_KEY
+    // yoksa arama sessizce boş kalıyordu ve UI yanıltıcı "tamamlandı · 0"
+    // gösteriyordu. Admin (kullanıcı) gerçek sebebi ekranda görmeli.
+    const searchMeta = {
+      serperConfigured: Boolean(process.env.SERPER_API_KEY),
+      openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+      rawResults: allResults.length,
+    };
+
+    return apiSuccess({ success: true, competitors, skippedCount, errorCount, searchMeta });
   } catch (error) {
     return serverError(error, "POST /api/products/compare");
   }
