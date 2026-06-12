@@ -1144,6 +1144,10 @@ export default function ProductDetailPage() {
                 <p className="text-rose-300 text-sm mb-2 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
                   Son tarama hata aldı: {product.refreshError}
                 </p>
+              ) : product.refreshError ? (
+                <p className="text-amber-300 text-sm mb-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  {product.refreshError}
+                </p>
               ) : null}
               <p className="text-gray-500 text-sm mb-4">
                 {product.refreshStatus === "failed"
