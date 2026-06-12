@@ -1106,10 +1106,15 @@ export default function ProductDetailPage() {
                 </svg>
               </div>
               <h3 className="text-white font-semibold mb-1">Rakip bulunamadı</h3>
+              {product.refreshStatus === "failed" && product.refreshError ? (
+                <p className="text-rose-300 text-sm mb-2 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+                  Son tarama hata aldı: {product.refreshError}
+                </p>
+              ) : null}
               <p className="text-gray-500 text-sm mb-4">
-                Otomatik tarama birebir aynı ürünü satan rakip bulamadı — niş veya markasız
-                ürünlerde bu normaldir. Bildiğiniz bir rakibin linkini elle ekleyebilir veya
-                taramayı yeniden başlatabilirsiniz.
+                {product.refreshStatus === "failed"
+                  ? "Tarama servisi geçici olarak erişilemedi — birazdan yeniden deneyin veya bildiğiniz bir rakibin linkini elle ekleyin."
+                  : "Otomatik tarama birebir aynı ürünü satan rakip bulamadı — niş veya markasız ürünlerde bu normaldir. Bildiğiniz bir rakibin linkini elle ekleyebilir veya taramayı yeniden başlatabilirsiniz."}
               </p>
               <div className="flex flex-col gap-2">
                 <button

@@ -121,6 +121,8 @@ export async function GET() {
         current_price: p.currentPrice,
         last_scraped_at: p.lastScrapedAt,
         status: p.status,
+        refresh_status: p.refreshStatus,
+        refresh_error: p.refreshError,
         trend: latestHistory
           ? {
               priceChange: latestHistory.priceChange ? Number(latestHistory.priceChange) : null,
