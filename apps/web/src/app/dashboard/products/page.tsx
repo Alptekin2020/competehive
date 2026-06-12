@@ -60,6 +60,8 @@ interface ProductItem {
   current_price: string | null;
   last_scraped_at: string | null;
   status?: string;
+  refresh_status?: string | null;
+  refresh_error?: string | null;
   trend?: TrendData | null;
   competitorCount?: number;
   competitors?: CompetitorItem[];
@@ -607,8 +609,13 @@ export default function ProductsPage() {
           )}
           {filteredProducts.map(
             ({ product, myPrice, competitorCount, minCompetitorPrice, stale }) => {
-              const pricePositionHint =
-                competitorCount === 0
+              // Tarama servisi hata aldıysa bunu "Rakip yok" gibi göstermek
+              // yanıltıcıdır — kullanıcı gerçek sebebi (ör. arama servisi
+              // erişilemedi) görmeli ki yanlış teşhise gitmesin.
+              const searchFailed = competitorCount === 0 && product.refresh_status === "failed";
+              const pricePositionHint = searchFailed
+                ? "Tarama hatası"
+                : competitorCount === 0
                   ? "Rakip yok"
                   : myPrice === null || minCompetitorPrice === null
                     ? "Karşılaştırma yok"
@@ -663,7 +670,13 @@ export default function ProductsPage() {
                         </span>
                       )}
                       <span
-                        className={`px-2 py-0.5 rounded-full border ${pricePositionHint === "Piyasanın altında" ? "border-emerald-500/20 text-emerald-300 bg-emerald-500/10" : pricePositionHint === "Rakipten pahalı" ? "border-red-500/20 text-red-300 bg-red-500/10" : "border-[#323239] text-gray-400 bg-[#1A1A1E]"}`}
+                        className={`px-2 py-0.5 rounded-full border ${pricePositionHint === "Piyasanın altında" ? "border-emerald-500/20 text-emerald-300 bg-emerald-500/10" : pricePositionHint === "Rakipten pahalı" ? "border-red-500/20 text-red-300 bg-red-500/10" : pricePositionHint === "Tarama hatası" ? "border-rose-500/30 text-rose-300 bg-rose-500/10" : "border-[#323239] text-gray-400 bg-[#1A1A1E]"}`}
+                        title={
+                          pricePositionHint === "Tarama hatası"
+                            ? product.refresh_error ||
+                              "Rakip araması hata aldı — ürün detayından yeniden deneyin"
+                            : undefined
+                        }
                       >
                         {pricePositionHint}
                       </span>

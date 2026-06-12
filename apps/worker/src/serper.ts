@@ -184,7 +184,18 @@ export async function searchProduct(query: string): Promise<SerperShoppingResult
   });
 
   if (!res.ok) {
-    throw new Error(`Serper API hatası: ${res.status}`);
+    // Kota/auth hataları (401/403/429) tüm rakip keşfini sessizce öldürebilir —
+    // gövdedeki mesajı da yakala ki loglar "neden 0 rakip?" sorusunu cevaplasın.
+    const bodySnippet = await res
+      .text()
+      .then((t) => t.slice(0, 200))
+      .catch(() => "");
+    if (res.status === 401 || res.status === 403 || res.status === 429) {
+      console.error(
+        `🚨 SERPER AUTH/KOTA SORUNU: status=${res.status} body="${bodySnippet}" — rakip keşfi ve fiyat kurtarma çalışmayacak`,
+      );
+    }
+    throw new Error(`Serper API hatası: ${res.status}${bodySnippet ? ` — ${bodySnippet}` : ""}`);
   }
 
   const data = (await res.json()) as { shopping?: SerperShoppingResult[] };

@@ -59,14 +59,25 @@ function extractSearchKeywords(metadata: unknown): string[] {
   );
 }
 
+interface KeywordSearchOutcome {
+  results: SerperShoppingResult[];
+  /** Arama denendi ama servis hatası aldı (kota/auth/ağ). Boş sonuçtan FARKLI. */
+  errored: boolean;
+  errorMessage: string | null;
+}
+
 /**
  * Tek keyword ile Serper araması yapar; daha önce görülen URL'leri eler ve
  * yalnızca YENİ sonuçları döner. seenUrls çağrılar arasında paylaşılır.
+ *
+ * Hata YUTULMAZ, outcome olarak döner: "arama servisi çalışmadı" ile "gerçekten
+ * sonuç yok" aynı şey değildir — eski davranış ikisini de sessizce boş liste
+ * yapıp kullanıcıya yanıltıcı bir "Rakip yok" gösteriyordu.
  */
 async function searchSingleKeyword(
   keyword: string,
   seenUrls: Set<string>,
-): Promise<SerperShoppingResult[]> {
+): Promise<KeywordSearchOutcome> {
   const fresh: SerperShoppingResult[] = [];
   try {
     const results = await searchProduct(keyword);
@@ -77,10 +88,12 @@ async function searchSingleKeyword(
         fresh.push(r);
       }
     }
+    return { results: fresh, errored: false, errorMessage: null };
   } catch (err) {
-    console.error(`Serper arama hatası ("${keyword}"):`, err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Serper arama hatası ("${keyword}"): ${message}`);
+    return { results: fresh, errored: true, errorMessage: message };
   }
-  return fresh;
 }
 
 const RAW_TITLE_MAX_WORDS = 6;
@@ -312,17 +325,42 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // ("birebir aynı ürün" piyasada olmayabilir) — bu yüzden yedek kelimeler
     // HAM sonuç sayısına değil, KAYDEDİLEN rakip sayısına göre devreye girer.
     const MIN_SAVED_BEFORE_FALLBACK = 3;
-    const primaryResults = await searchSingleKeyword(queries[0], seenUrls);
-    console.log(`🔎 Primary "${queries[0]}": ${primaryResults.length} yeni sonuç`);
-    await processResults(primaryResults);
+    let searchErrorCount = 0;
+    let lastSearchError: string | null = null;
+
+    const primaryOutcome = await searchSingleKeyword(queries[0], seenUrls);
+    if (primaryOutcome.errored) {
+      searchErrorCount++;
+      lastSearchError = primaryOutcome.errorMessage;
+    }
+    console.log(`🔎 Primary "${queries[0]}": ${primaryOutcome.results.length} yeni sonuç`);
+    await processResults(primaryOutcome.results);
 
     if (savedCount < MIN_SAVED_BEFORE_FALLBACK && queries.length > 1) {
       for (let i = 1; i < Math.min(queries.length, 3); i++) {
         console.log(`🔎 Fallback [${i}] "${queries[i]}" deneniyor (kaydedilen: ${savedCount})`);
-        const fallbackResults = await searchSingleKeyword(queries[i], seenUrls);
-        await processResults(fallbackResults);
+        const fallbackOutcome = await searchSingleKeyword(queries[i], seenUrls);
+        if (fallbackOutcome.errored) {
+          searchErrorCount++;
+          lastSearchError = fallbackOutcome.errorMessage;
+        }
+        await processResults(fallbackOutcome.results);
         if (savedCount >= MIN_SAVED_BEFORE_FALLBACK) break;
       }
+    }
+
+    // Hiç sonuç yok VE en az bir arama servisi hatası varsa bu bir BAŞARISIZLIK,
+    // "rakip yok" değil — kullanıcıya yanıltıcı boş durum yerine tarama hatası
+    // gösterilsin (kota biten Serper, tüm ürünleri sessizce "rakipsiz" yapıyordu).
+    if (seenUrls.size === 0 && searchErrorCount > 0) {
+      const reason = `Rakip araması başarısız: ${(lastSearchError ?? "bilinmeyen hata").slice(0, 300)}`;
+      console.error(`❌ ${productId}: ${reason}`);
+      await updateTrackedProductRefresh(productId, {
+        refreshStatus: "failed",
+        refreshCompletedAt: new Date(),
+        refreshError: reason,
+      });
+      return { found: 0, searchFailed: true };
     }
 
     if (seenUrls.size === 0) {
