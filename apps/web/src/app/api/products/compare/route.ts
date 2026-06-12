@@ -281,6 +281,13 @@ export async function POST(req: NextRequest) {
       serperConfigured: Boolean(process.env.SERPER_API_KEY),
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       rawResults: allResults.length,
+      // Eleme hunisi — "0 rakip" durumunda adayların NEREDE öldüğünü UI'da
+      // göstermek için (loglara erişim gerektirmeden teşhis).
+      skippedNoPrice: skippedCount,
+      priceFiltered: priceFilteredCount,
+      aiRejected: aiRejectedCount,
+      aiUnreliable: aiUnreliableCount,
+      kept: competitors.length,
     };
 
     return apiSuccess({ success: true, competitors, skippedCount, errorCount, searchMeta });
