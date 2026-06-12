@@ -294,11 +294,28 @@ export default function ProductDetailPage() {
       }
 
       const foundCount = Array.isArray(data?.competitors) ? data.competitors.length : null;
-      setCompareStatus(
-        foundCount && foundCount > 0
-          ? `Rakip taraması tamamlandı · ${foundCount} rakip bulundu`
-          : "Rakip taraması tamamlandı",
-      );
+      const meta = data?.searchMeta as
+        | { serperConfigured?: boolean; rawResults?: number }
+        | undefined;
+
+      if ((!foundCount || foundCount === 0) && meta && meta.serperConfigured === false) {
+        // Sıfırın gerçek sebebi yapılandırma eksiği — "tamamlandı" deyip geçme.
+        setCompareStatus(null);
+        setCompareError(
+          "Arama servisi web ortamında yapılandırılmamış (SERPER_API_KEY, Vercel env). Worker'daki anahtarın Vercel'e de eklenmesi gerekiyor.",
+        );
+      } else if ((!foundCount || foundCount === 0) && meta && (meta.rawResults ?? 0) === 0) {
+        setCompareStatus(null);
+        setCompareError(
+          "Arama hiç sonuç döndürmedi — servis hatası olabilir. Birazdan tekrar deneyin; sorun sürerse Vercel function loglarına bakın.",
+        );
+      } else {
+        setCompareStatus(
+          foundCount && foundCount > 0
+            ? `Rakip taraması tamamlandı · ${foundCount} rakip bulundu`
+            : "Rakip taraması tamamlandı — eşleşen rakip bulunamadı",
+        );
+      }
       await fetchProduct();
     } catch {
       setCompareStatus(null);

@@ -153,6 +153,18 @@ async function start() {
   // first job (e.g. a missing DATABASE_URL surfacing as a deep Prisma error).
   validateWorkerEnv();
 
+  // Opsiyonel ama işlevsel olarak kritik anahtarlar: yoklukları worker'ı
+  // düşürmez ama keşif/eşleştirme kalitesini sessizce bitirir — boot'ta
+  // tek satırla görünür olsun.
+  if (!process.env.SERPER_API_KEY) {
+    logger.warn("SERPER_API_KEY tanımlı değil — rakip keşfi ve kendi-fiyat kurtarma ÇALIŞMAYACAK");
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    logger.warn(
+      "OPENAI_API_KEY tanımlı değil — AI eşleştirme yerine zayıf metin fallback'i kullanılacak (çoğu rakip elenecektir)",
+    );
+  }
+
   // Route all outbound fetch (scrapers, Serper, Telegram, webhook delivery)
   // through the configured proxy. DB (pg/Prisma) and Redis (ioredis) use their
   // own clients and are unaffected. No proxy env → fetch stays direct.
