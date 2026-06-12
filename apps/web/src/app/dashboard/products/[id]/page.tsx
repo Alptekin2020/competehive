@@ -295,7 +295,14 @@ export default function ProductDetailPage() {
 
       const foundCount = Array.isArray(data?.competitors) ? data.competitors.length : null;
       const meta = data?.searchMeta as
-        | { serperConfigured?: boolean; rawResults?: number }
+        | {
+            serperConfigured?: boolean;
+            rawResults?: number;
+            skippedNoPrice?: number;
+            priceFiltered?: number;
+            aiRejected?: number;
+            aiUnreliable?: number;
+          }
         | undefined;
 
       if ((!foundCount || foundCount === 0) && meta && meta.serperConfigured === false) {
@@ -308,6 +315,17 @@ export default function ProductDetailPage() {
         setCompareStatus(null);
         setCompareError(
           "Arama hiç sonuç döndürmedi — servis hatası olabilir. Birazdan tekrar deneyin; sorun sürerse Vercel function loglarına bakın.",
+        );
+      } else if ((!foundCount || foundCount === 0) && meta) {
+        // Eleme hunisi: adaylar bulundu ama hepsi elendi — NEREDE elendiklerini
+        // göster ki teşhis ekrandan yapılabilsin.
+        setCompareStatus(null);
+        setCompareError(
+          `Eşleşen rakip kalmadı — ${meta.rawResults ?? 0} aday bulundu: ` +
+            `${meta.skippedNoPrice ?? 0} fiyatsız, ${meta.priceFiltered ?? 0} fiyat bandı dışı, ` +
+            `${meta.aiRejected ?? 0} AI tarafından reddedildi` +
+            `${(meta.aiUnreliable ?? 0) > 0 ? `, ${meta.aiUnreliable} AI hatası` : ""}. ` +
+            `Çoğu AI reddiyse eşleştirme bu ürün için fazla katı olabilir — bu sayıları iletin.`,
         );
       } else {
         setCompareStatus(
