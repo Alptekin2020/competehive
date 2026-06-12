@@ -277,64 +277,63 @@ export default function ProductDetailPage() {
 
     setIsComparing(true);
     setCompareError(null);
-    setCompareStatus("Rakipler taranıyor...");
+    setCompareStatus("Rakip taraması başlatıldı...");
+
+    // Tarama WORKER'da çalışır (güçlü hat: kademeli arama + fiyat kurtarma +
+    // Puppeteer + ambalaj filtresi). Vercel'deki eski web hattı pazaryerlerinin
+    // datacenter-IP engellerine takıldığı için terk edildi. Worker, iş bitince
+    // refreshCompletedAt/refreshError yazar — onu yoklayarak sonucu gösteririz.
+    const startedAtMs = Date.now();
+    const competitorsBefore = product.competitors?.length ?? 0;
 
     try {
-      const res = await fetch("/api/products/compare", {
+      const res = await fetch(`/api/products/${product.id}/search-competitors`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: product.id }),
       });
-
-      const data = await res.json().catch(() => null);
       if (!res.ok) {
+        const data = await res.json().catch(() => null);
         setCompareStatus(null);
-        setCompareError(data?.error || "Rakip taraması başlatılamadı");
+        setCompareError(
+          res.status === 429
+            ? "Çok sık tarama denediniz — birkaç dakika sonra tekrar deneyin."
+            : data?.error || "Rakip taraması başlatılamadı",
+        );
         return;
       }
 
-      const foundCount = Array.isArray(data?.competitors) ? data.competitors.length : null;
-      const meta = data?.searchMeta as
-        | {
-            serperConfigured?: boolean;
-            rawResults?: number;
-            skippedNoPrice?: number;
-            priceFiltered?: number;
-            aiRejected?: number;
-            aiUnreliable?: number;
-          }
-        | undefined;
+      // 3 sn aralıkla, en fazla 90 sn yokla.
+      for (let attempt = 0; attempt < 30; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const productRes = await fetch(`/api/products/${product.id}`);
+        if (!productRes.ok) continue;
+        const productData = await productRes.json();
+        const fresh: ProductData = productData.product || productData;
 
-      if ((!foundCount || foundCount === 0) && meta && meta.serperConfigured === false) {
-        // Sıfırın gerçek sebebi yapılandırma eksiği — "tamamlandı" deyip geçme.
-        setCompareStatus(null);
-        setCompareError(
-          "Arama servisi web ortamında yapılandırılmamış (SERPER_API_KEY, Vercel env). Worker'daki anahtarın Vercel'e de eklenmesi gerekiyor.",
-        );
-      } else if ((!foundCount || foundCount === 0) && meta && (meta.rawResults ?? 0) === 0) {
-        setCompareStatus(null);
-        setCompareError(
-          "Arama hiç sonuç döndürmedi — servis hatası olabilir. Birazdan tekrar deneyin; sorun sürerse Vercel function loglarına bakın.",
-        );
-      } else if ((!foundCount || foundCount === 0) && meta) {
-        // Eleme hunisi: adaylar bulundu ama hepsi elendi — NEREDE elendiklerini
-        // göster ki teşhis ekrandan yapılabilsin.
-        setCompareStatus(null);
-        setCompareError(
-          `Eşleşen rakip kalmadı — ${meta.rawResults ?? 0} aday bulundu: ` +
-            `${meta.skippedNoPrice ?? 0} fiyatsız, ${meta.priceFiltered ?? 0} fiyat bandı dışı, ` +
-            `${meta.aiRejected ?? 0} AI tarafından reddedildi` +
-            `${(meta.aiUnreliable ?? 0) > 0 ? `, ${meta.aiUnreliable} AI hatası` : ""}. ` +
-            `Çoğu AI reddiyse eşleştirme bu ürün için fazla katı olabilir — bu sayıları iletin.`,
-        );
-      } else {
-        setCompareStatus(
-          foundCount && foundCount > 0
-            ? `Rakip taraması tamamlandı · ${foundCount} rakip bulundu`
-            : "Rakip taraması tamamlandı — eşleşen rakip bulunamadı",
-        );
+        const completedAtMs = fresh.refreshCompletedAt
+          ? new Date(fresh.refreshCompletedAt).getTime()
+          : 0;
+        if (completedAtMs > startedAtMs) {
+          setProduct(fresh);
+          const competitorsAfter = fresh.competitors?.length ?? 0;
+          if (fresh.refreshStatus === "failed" && fresh.refreshError) {
+            setCompareStatus(null);
+            setCompareError(`Tarama hatası: ${fresh.refreshError}`);
+          } else if (competitorsAfter > competitorsBefore) {
+            setCompareStatus(
+              `Tarama tamamlandı · ${competitorsAfter - competitorsBefore} yeni rakip eklendi (toplam ${competitorsAfter})`,
+            );
+          } else {
+            setCompareStatus(
+              "Tarama tamamlandı — yeni eşleşen rakip bulunamadı. Niş üründe normaldir; 'Rakip Ekle' ile elle ekleyebilirsiniz.",
+            );
+          }
+          return;
+        }
       }
-      await fetchProduct();
+
+      setCompareStatus(
+        "Tarama arka planda sürüyor — sonuçlar hazır olduğunda bu sayfada görünecek.",
+      );
     } catch {
       setCompareStatus(null);
       setCompareError("Rakip taraması sırasında bağlantı hatası oluştu");

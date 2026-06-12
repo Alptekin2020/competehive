@@ -170,23 +170,9 @@ export default function ProductsPage() {
       setShowFirstProductSuccess(true);
       setUrl("");
       setShowModal(false);
-
-      fetch("/api/products/compare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: data.product.id }),
-      })
-        .then((res) => res.json())
-        .then((compareData) => {
-          if (compareData.competitors?.length > 0) {
-            setProducts((prev) =>
-              prev.map((p) =>
-                p.id === data.product.id ? { ...p, competitors: compareData.competitors } : p,
-              ),
-            );
-          }
-        })
-        .catch((err) => console.error("Compare error:", err));
+      // Rakip keşfi POST /api/products tarafından worker kuyruğuna eklendi;
+      // sonuçlar arka planda gelir (eski ek web-compare çağrısı kaldırıldı —
+      // zayıf hattı tekrar tetikleyip çifte iş yapıyordu).
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
       setFormError(msg);
