@@ -405,10 +405,19 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       });
     }
 
+    // Tamamlandı — 0 kayıtta eleme özetini ürünün üzerine yaz ki kullanıcı
+    // sebebi EKRANDA görsün (Railway loglarına bakmak zorunda kalmasın).
+    const zeroSummary =
+      savedCount === 0 && seenUrls.size > 0
+        ? `Tarama özeti: ${seenUrls.size} aday bulundu — ` +
+          `${packagingFilteredCount} ambalaj/koli, ${priceFilteredCount} fiyat bandı dışı, ` +
+          `${aiRejectedCount} AI reddi, ${priceUnrecoverableCount} fiyatı alınamadı. Eşleşen rakip kalmadı.`
+        : null;
+
     await updateTrackedProductRefresh(productId, {
       refreshStatus: "completed",
       refreshCompletedAt: new Date(),
-      refreshError: null,
+      refreshError: zeroSummary,
     });
 
     console.log(
