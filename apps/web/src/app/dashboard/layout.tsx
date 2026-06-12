@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import { UserButton } from "@clerk/nextjs";
 import NotificationDropdown from "@/components/NotificationDropdown";
 import SessionExpiryGuard from "@/components/SessionExpiryGuard";
+import StaleBundleGuard from "@/components/StaleBundleGuard";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Genel Bakış", icon: "home" },
@@ -157,6 +158,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen bg-dark-1000 flex">
       <SessionExpiryGuard />
+      <StaleBundleGuard />
       {/* Sidebar */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 w-64 bg-dark-950 border-r border-dark-800 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
