@@ -13,6 +13,8 @@ export {
   isPackagingListing,
   assessCompetitor,
   isUsableCompetitor,
+  extractProductCodes,
+  sharesStrongProductCode,
 } from "./competitor-quality";
 export type {
   CompetitorIssue,

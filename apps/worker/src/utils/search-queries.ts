@@ -10,6 +10,8 @@
 //
 // Bu modül sorguları CANLI ürün adından kurar ve bayat/jenerik keyword'leri eler.
 
+import { extractProductCodes } from "./competitor-quality";
+
 const RAW_TITLE_MAX_WORDS = 6;
 
 export function truncateRawTitleForSearch(title: string): string {
@@ -78,8 +80,22 @@ export function buildSearchQueries(
     queries.push(q);
   };
 
-  // 1) Canlı ürün adı — birincil, en güvenilir sorgu.
+  // 1) Canlı ürün adı — birincil, geniş sorgu.
   push(liveName);
+
+  // 1.5) Marka + MODEL KODU/BARKOD sorgusu — birebir aynı ürünü bulmanın en
+  //      güvenilir yolu. Ad ilk 6 kelimeye kısaldığında sondaki model kodu
+  //      (Lenovo "83SC000QTR") düşüyordu; bu yüzden kodu açıkça hedefliyoruz.
+  const codes = extractProductCodes(liveName);
+  if (codes.length > 0) {
+    const codeTokenSet = new Set(codes.map((c) => c.toLowerCase()));
+    const brandWords = liveName
+      .split(/\s+/)
+      .filter((w) => w.length >= 2 && !codeTokenSet.has(w.toLowerCase()))
+      .slice(0, 2)
+      .join(" ");
+    push(`${brandWords} ${codes[0]}`.trim());
+  }
 
   // 2) AI keywords — yalnızca canlı adla anlamlı token paylaşanlar (bayat/jenerik
   //    keyword'ü ele). Ad jenerikse token kümesi boş kabul edilir → keyword'ler

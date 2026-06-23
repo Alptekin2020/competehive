@@ -90,6 +90,31 @@ function isInPriceBand(price: number, sourcePrice: number | null): boolean {
 }
 
 /**
+ * 0 rakip durumunda kullanıcıya gösterilecek insana okunur, baskın-sebep odaklı
+ * tek cümle. Sıfır olan kalemler ("0 ambalaj/koli") ASLA yazılmaz.
+ */
+export function buildZeroReason(
+  candidates: number,
+  c: { packaging: number; priceFiltered: number; aiRejected: number; priceUnrecoverable: number },
+): string {
+  // Baskın sebep neyse ana mesajı ona göre kur.
+  const max = Math.max(c.aiRejected, c.priceFiltered, c.packaging, c.priceUnrecoverable);
+  if (max === 0) {
+    return `${candidates} aday incelendi ama birebir aynı ürün bulunamadı.`;
+  }
+  if (c.aiRejected === max) {
+    return `${candidates} benzer ürün incelendi; hiçbiri birebir aynı ürün değil (farklı model, varyant veya marka). Bu ürünün piyasada birebir rakibi görünmüyor.`;
+  }
+  if (c.priceFiltered === max) {
+    return `${candidates} benzer ürün bulundu ama fiyatları kıyas için fazla farklı (büyük olasılıkla farklı paket/boyut). Birebir aynı ürün eşleşmedi.`;
+  }
+  if (c.packaging === max) {
+    return `${candidates} sonucun çoğu ambalaj/aksesuar ürünüydü; birebir aynı ürün bulunamadı.`;
+  }
+  return `${candidates} aday bulundu ama fiyat bilgisi alınamadığı için eşleştirilemedi.`;
+}
+
+/**
  * Periyodik döngü ve doğrudan çağrılar için sarmalayıcı: tek bir ürün için
  * Serper tabanlı rakip keşfi + fiyat tazeleme çalıştırır. processCompetitorJob
  * yalnızca job.data kullandığı için sentetik bir job ile güvenle çağrılabilir.
@@ -415,13 +440,16 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       });
     }
 
-    // Tamamlandı — 0 kayıtta eleme özetini ürünün üzerine yaz ki kullanıcı
-    // sebebi EKRANDA görsün (Railway loglarına bakmak zorunda kalmasın).
+    // Tamamlandı — 0 kayıtta kullanıcıya YALNIZCA anlamlı, baskın sebebi yaz
+    // (sıfır olan kalemleri "0 ambalaj/koli" gibi listeleme).
     const zeroSummary =
       savedCount === 0 && seenUrls.size > 0
-        ? `Tarama özeti: ${seenUrls.size} aday bulundu — ` +
-          `${packagingFilteredCount} ambalaj/koli, ${priceFilteredCount} fiyat bandı dışı, ` +
-          `${aiRejectedCount} AI reddi, ${priceUnrecoverableCount} fiyatı alınamadı. Eşleşen rakip kalmadı.`
+        ? buildZeroReason(seenUrls.size, {
+            packaging: packagingFilteredCount,
+            priceFiltered: priceFilteredCount,
+            aiRejected: aiRejectedCount,
+            priceUnrecoverable: priceUnrecoverableCount,
+          })
         : null;
 
     await updateTrackedProductRefresh(productId, {

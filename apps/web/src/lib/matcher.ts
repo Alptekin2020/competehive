@@ -5,6 +5,7 @@ import {
   PRICE_BAND_MAX_RATIO,
   withinPriceBand,
   isPackagingListing,
+  sharesStrongProductCode,
 } from "@competehive/shared";
 import { logger } from "./logger";
 
@@ -165,6 +166,24 @@ export async function verifyProductMatch(
       score: 0,
       reason: "Ambalaj/koli ürünü — otomatik red",
       attributes: emptyAttributes("Aday başlığı paketleme/lojistik malzemesi içeriyor"),
+    };
+  }
+
+  // Deterministik KABUL: iki başlık uzun bir MPN/barkod (>=10) paylaşıyorsa
+  // kesinlikle aynı üründür (AI'a sormaya gerek yok). Kısa spec kodları eşiğin altında.
+  if (sharesStrongProductCode(source.title, candidate.title)) {
+    return {
+      outcome: "match",
+      isMatch: true,
+      score: 95,
+      reason: "Aynı ürün kodu (MPN/barkod) eşleşmesi",
+      attributes: {
+        brandMatch: true,
+        modelMatch: true,
+        specMatch: true,
+        categoryMatch: true,
+        details: "Ortak benzersiz ürün kodu",
+      },
     };
   }
 
