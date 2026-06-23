@@ -8,6 +8,7 @@ import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
 import { urlMatchKey } from "../utils/url-match";
+import { buildSearchQueries } from "../utils/search-queries";
 import { alertQueue } from "./processor";
 
 interface OnboardJobData {
@@ -44,19 +45,6 @@ function retailerToMarketplace(retailerName: string): Marketplace {
     Gratis: "GRATIS",
   };
   return map[retailerName] ?? "CUSTOM";
-}
-
-/**
- * TrackedProduct.metadata JSON alanından AI tarafından üretilmiş searchKeywords'u
- * güvenli şekilde çıkar. Geçersiz/eksikse boş dizi döner.
- */
-function extractSearchKeywords(metadata: unknown): string[] {
-  if (!metadata || typeof metadata !== "object") return [];
-  const meta = metadata as { searchKeywords?: unknown };
-  if (!Array.isArray(meta.searchKeywords)) return [];
-  return meta.searchKeywords.filter(
-    (k): k is string => typeof k === "string" && k.trim().length > 0,
-  );
 }
 
 interface KeywordSearchOutcome {
@@ -96,13 +84,6 @@ async function searchSingleKeyword(
   }
 }
 
-const RAW_TITLE_MAX_WORDS = 6;
-function truncateRawTitleForSearch(title: string): string {
-  const words = title.trim().split(/\s+/);
-  if (words.length <= RAW_TITLE_MAX_WORDS + 1) return title.trim();
-  return words.slice(0, RAW_TITLE_MAX_WORDS).join(" ");
-}
-
 function isInPriceBand(price: number, sourcePrice: number | null): boolean {
   if (!sourcePrice || sourcePrice <= 0) return true;
   return withinPriceBand(sourcePrice, price);
@@ -137,13 +118,21 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
   }
 
   try {
-    const searchKeywords = extractSearchKeywords(product.metadata);
-    const queries = searchKeywords.length > 0 ? searchKeywords : [truncateRawTitleForSearch(title)];
-    console.log(
-      `🧠 ${
-        searchKeywords.length > 0 ? "Metadata keywords kullanılıyor" : "Fallback: raw title"
-      }: ${JSON.stringify(queries)}`,
-    );
+    // Sorgular CANLI ürün adından kurulur; bayat/jenerik ("Trendyol ürünü")
+    // placeholder keywords elenir. Bu eleme olmadan Serper alakasız ürünler
+    // döndürüp tüm rakipleri AI'a reddettiriyordu.
+    const queries = buildSearchQueries(product.productName, title, product.metadata);
+    console.log(`🧠 Arama sorguları: ${JSON.stringify(queries)}`);
+
+    if (queries.length === 0) {
+      console.warn(`⚠️ Geçerli arama sorgusu üretilemedi: ${productId}`);
+      await updateTrackedProductRefresh(productId, {
+        refreshStatus: "completed",
+        refreshCompletedAt: new Date(),
+        refreshError: "Ürün adı çözülemediği için rakip araması yapılamadı.",
+      });
+      return { found: 0 };
+    }
 
     const now = new Date();
     let savedCount = 0;

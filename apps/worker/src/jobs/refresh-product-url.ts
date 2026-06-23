@@ -3,6 +3,7 @@ import { Job } from "bullmq";
 import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import type { SerperShoppingResult } from "../serper";
+import { buildSearchQueries } from "../utils/search-queries";
 import { getScraper } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { maybeEnqueueAlerts } from "./processor";
@@ -11,18 +12,6 @@ import { isPlausiblePriceChange } from "../utils/price-sanity";
 
 interface RefreshUrlJobData {
   productUrl: string;
-}
-
-/**
- * TrackedProduct.metadata JSON alanından AI-generated searchKeywords'u güvenli şekilde çıkar.
- */
-function extractSearchKeywords(metadata: unknown): string[] {
-  if (!metadata || typeof metadata !== "object") return [];
-  const meta = metadata as { searchKeywords?: unknown };
-  if (!Array.isArray(meta.searchKeywords)) return [];
-  return meta.searchKeywords.filter(
-    (k): k is string => typeof k === "string" && k.trim().length > 0,
-  );
 }
 
 /**
@@ -269,10 +258,9 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       };
     }
 
-    // 6. Serper search BİR KEZ
-    const searchKeywords = extractSearchKeywords(primary.metadata);
-    const queries =
-      searchKeywords.length > 0 ? searchKeywords : [primary.productName].filter(Boolean);
+    // 6. Serper search BİR KEZ — sorgular canlı ürün adından kurulur; bayat
+    // "Trendyol ürünü" gibi placeholder keywords elenir (buildSearchQueries).
+    const queries = buildSearchQueries(primary.productName, primary.productName, primary.metadata);
 
     if (queries.length === 0) {
       console.warn(`⚠️ URL refresh: keyword yok, Serper atlanıyor: ${productUrl}`);
@@ -288,11 +276,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       return { processedSiblings: siblings.length, updatedCount: 0 };
     }
 
-    console.log(
-      `🧠 ${
-        searchKeywords.length > 0 ? "Metadata keywords" : "Fallback: productName"
-      }: ${JSON.stringify(queries)}`,
-    );
+    console.log(`🧠 URL refresh arama sorguları: ${JSON.stringify(queries)}`);
 
     const serperResults = await searchWithKeywords(queries);
     console.log(`📦 URL refresh: ${serperResults.length} unique Serper sonucu`);

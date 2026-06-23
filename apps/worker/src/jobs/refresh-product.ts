@@ -9,6 +9,7 @@ import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { getScraper } from "../scrapers";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
+import { buildSearchQueries } from "../utils/search-queries";
 import { maybeEnqueueAlerts } from "./processor";
 import { Marketplace } from "@prisma/client";
 
@@ -157,20 +158,12 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     // ============================================
     // Serper araması — competitor güncelleme + Audit P0-2: yeni keşif
     // ============================================
-    let refreshQuery = product.productName;
-    const refreshMetadata = product.metadata as Record<string, unknown> | null;
-    if (refreshMetadata) {
-      const analysis = (refreshMetadata.analysis || refreshMetadata) as Record<string, unknown>;
-      if (
-        analysis.searchKeywords &&
-        Array.isArray(analysis.searchKeywords) &&
-        analysis.searchKeywords.length > 0
-      ) {
-        refreshQuery = analysis.searchKeywords[0] as string;
-      } else if (analysis.shortTitle && typeof analysis.shortTitle === "string") {
-        refreshQuery = analysis.shortTitle;
-      }
-    }
+    // Sorgu CANLI ürün adından kurulur; bayat "Trendyol ürünü" gibi placeholder
+    // keywords elenir (buildSearchQueries) — aksi halde Serper alakasız ürünler
+    // döndürüp tüm rakipleri AI'a reddettiriyordu.
+    const refreshQuery =
+      buildSearchQueries(product.productName, product.productName, product.metadata)[0] ??
+      product.productName;
 
     const results = await searchProduct(refreshQuery);
 
