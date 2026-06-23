@@ -128,7 +128,7 @@ ${candidate.price ? `- Fiyat: ${candidate.price} ₺` : ""}
 ${candidate.marketplace ? `- Marketplace: ${candidate.marketplace}` : ""}
 
 KURALLAR:
-1. AYNI ÜRÜN = aynı marka, aynı model, aynı varyant (renk/boyut farklı olabilir)
+1. AYNI ÜRÜN = aynı marka + aynı model + aynı boyut/hacim/miktar/kapasite. Renk farkı önemli değildir (aynı üründür); ama BOYUT/HACİM/MİKTAR/KAPASİTE farkı FARKLI ÜRÜNDÜR — 10ml ≠ 20ml, 50cm ≠ 70cm, 128GB ≠ 256GB, tekli ≠ 2'li paket, 1L ≠ 2L.
 2. Aksesuar, kılıf, cam, kablosu vs. orijinal ürünle AYNI DEĞİLDİR
 3. Aynı markanın farklı modelleri AYNI DEĞİLDİR (ör: iPhone 15 ≠ iPhone 15 Pro)
 4. Set/paket ürünler tekli ürünle AYNI DEĞİLDİR
@@ -140,6 +140,7 @@ KURALLAR:
 10. KİTAP/MEDYA İSTİSNASI: Kaynak ürün kitap değilse ama aday başlığı "kitap", "roman", "öykü", "dergi", "nadirkitap", "idefix", "bkmkitap" içeriyorsa: score=0 ve isMatch=false.
 11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, terlik, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa (örn: "terlik" vs "kutu/ambalaj"; "telefon" vs "kılıf"; "kahve" vs "kahve makinesi"), categoryMatch=false ve score < 40 olmak ZORUNDA. Aynı marka olması yeterli değildir.
 12. FİYAT BÜYÜKLÜK SAĞDUYU: Kaynak fiyatı ${sourceProduct.price ?? "verilmedi"} ₺ ve aday fiyatı çok daha düşükse (örn: ¹/₁₀'undan az) yüksek olasılıkla farklı ürün/aksesuar/ambalajdır — score < 40 ver.
+13. AYNI ÜRÜN — FARKLI SATICI/İLAN: Aynı ürün farklı pazaryerlerinde farklı kelime sırası, fazladan pazarlama sözcükleri ("orijinal", "hediyeli", "ücretsiz kargo", "outlet", "faturalı") veya küçük başlık farklarıyla listelenir. Marka + model + boyut/hacim/miktar AYNIYSA bu farklar ÖNEMSİZDİR ve ürün AYNI ÜRÜNDÜR (score >= ${MIN_MATCH_SCORE}). Rakip fiyatı kıyaslamanın amacı aynı ürünü farklı satıcıda bulmaktır; salt pazarlama veya söz dizimi farkı yüzünden eşleşmeyi reddetme. (Boyut/hacim/miktar farkı bu kuralın İSTİSNASIDIR — Kural 1 geçerli.)
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
