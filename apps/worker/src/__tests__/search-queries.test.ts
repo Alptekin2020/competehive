@@ -84,6 +84,15 @@ describe("buildSearchQueries", () => {
     expect(queries.some((q) => q.toLowerCase().includes("trendyol ürünü"))).toBe(false);
   });
 
+  it("matches keywords across Turkish diacritics (asciiFold token compare)", () => {
+    const queries = buildSearchQueries("Çelik Şarjlı Süpürge", "", {
+      searchKeywords: ["celik sarjli supurge fiyat"],
+    });
+    // şarjlı↔sarjli, çelik↔celik yalnızca asciiFold ile eşleşir; plain toLowerCase
+    // "ş/ç/ü"yü çözemez ve bu ASCII keyword paylaşılan token bulamayıp düşerdi.
+    expect(queries.some((q) => q.includes("celik sarjli supurge"))).toBe(true);
+  });
+
   it("keeps AI keywords that share a token with the live name", () => {
     const queries = buildSearchQueries("Lenovo LOQ i5-13450HX 16GB RTX 5050", "Lenovo LOQ", {
       searchKeywords: ["Lenovo LOQ RTX 5050", "Trendyol ürünü"],

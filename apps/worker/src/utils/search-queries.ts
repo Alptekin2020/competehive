@@ -47,10 +47,11 @@ export function isGenericQuery(q: string): boolean {
 }
 
 function meaningfulTokens(s: string): string[] {
-  // Token EŞLEŞTİRME için locale-invariant küçük harf: tr-TR "I"→"ı" dönüşümü
-  // "NIKE" ile "Nike"yi farklı token yapıp eşleşmeyi kaçırırdı.
-  return s
-    .toLowerCase()
+  // Token EŞLEŞTİRME için asciiFold: hem "NIKE"/"Nike" (locale-invariant küçük
+  // harf) hem de "Ilık"/"ılık", "Şarjlı"/"sarjli" gibi Türkçe aksan/İ-I-ı
+  // farkları normalize edilir; plain toLowerCase "ı"yı çözemediği için eşleşme
+  // kaçırırdı. İki taraf da aynı fold'u kullandığından karşılaştırma simetrik.
+  return asciiFold(s)
     .split(/[^\p{L}\p{N}]+/u)
     .filter((t) => t.length >= 3);
 }
