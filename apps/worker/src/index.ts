@@ -252,9 +252,11 @@ async function start() {
     6 * 60 * 60 * 1000,
   );
 
-  // Bayat rakip fiyatı tazeleme: bilinen rakip URL'lerini hafif HTTP ile
-  // yeniden doğrular (Serper/AI maliyeti yok). 30 dakikada bir; açılıştan
-  // 2 dk sonra ilk tur (deploy anında dış sitelere yüklenmemek için).
+  // Periyodik rakip keşfi + fiyat tazeleme (Serper tabanlı): en uzun süredir
+  // taranmamış ürünler için tek tek discovery turu çalıştırır — hem yeni rakip
+  // bulur hem mevcutların fiyatını günceller. Datacenter IP'leri pazaryeri bot
+  // korumalarına takıldığından doğrudan sayfa çekmek yerine Serper kullanılır.
+  // 30 dakikada bir; açılıştan 2 dk sonra ilk tur.
   setInterval(
     () => {
       refreshStaleCompetitorPrices().catch((err) => {

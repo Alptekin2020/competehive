@@ -108,6 +108,15 @@ function isInPriceBand(price: number, sourcePrice: number | null): boolean {
   return withinPriceBand(sourcePrice, price);
 }
 
+/**
+ * Periyodik döngü ve doğrudan çağrılar için sarmalayıcı: tek bir ürün için
+ * Serper tabanlı rakip keşfi + fiyat tazeleme çalıştırır. processCompetitorJob
+ * yalnızca job.data kullandığı için sentetik bir job ile güvenle çağrılabilir.
+ */
+export function runCompetitorDiscovery(input: OnboardJobData) {
+  return processCompetitorJob({ data: input } as Job<OnboardJobData>);
+}
+
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
   const { productId, title, url } = job.data;
   console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
@@ -146,16 +155,28 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
     const seenUrls = new Set<string>();
-    // Kendi ürün URL'siyle normalize karşılaştırma (www/sondaki "/"/query
-    // farkları ham string eşitliğini kaçırıp ürünü kendi rakibi yapabiliyordu).
-    const ownUrlKey = url ? urlMatchKey(url) : null;
+    // Kendi ürün URL'siyle normalize karşılaştırma. product.productUrl her zaman
+    // dolu; onboard yolu url="" geçse bile kendi ürünü kendi rakibi yapmayalım.
+    const ownUrlKey = urlMatchKey(product.productUrl || url || "") || null;
+
+    // Daha önce kabul edilmiş rakip URL'leri: periyodik yeniden taramada bunlara
+    // tekrar AI çalıştırmıyoruz (maliyet + AI varyansının kabul edilmiş bir
+    // rakibi düşürmesini önler). Sadece fiyatları Serper'dan tazelenir.
+    const knownCompetitors = await prisma.competitor.findMany({
+      where: { trackedProductId: productId },
+      select: { competitorUrl: true },
+    });
+    const knownUrls = new Set(knownCompetitors.map((c) => c.competitorUrl));
 
     const processResults = async (batch: SerperShoppingResult[]) => {
       for (const result of batch) {
         if (ownUrlKey && urlMatchKey(result.link) === ownUrlKey) continue;
 
+        const isKnown = knownUrls.has(result.link);
+
         // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
-        if (isPackagingListing(result.title, product.productName)) {
+        // Bilinen rakipler bu filtreyi zaten geçmişti; tekrar uygulamaya gerek yok.
+        if (!isKnown && isPackagingListing(result.title, product.productName)) {
           packagingFilteredCount++;
           console.log(`📦 Ambalaj/koli sonucu elendi: ${result.title.slice(0, 60)}`);
           continue;
@@ -178,28 +199,29 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         let recoveryMatch: MatchResult | null = null;
         const needsRecovery = (!price || price <= 0) && isScraperBacked;
         if (needsRecovery) {
-          // AI matcher'ı price olmadan da çalıştırabiliriz; price filtresi recovery sonrası
-          // uygulanır. AI title-only match gate'i: skor >= MIN_MATCH_SCORE.
-          let preMatch: MatchResult;
-          try {
-            preMatch = await verifyProductMatch(
-              { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
-              { title: result.title, url: result.link, marketplace: retailer.name },
-            );
-          } catch {
-            continue;
+          // Yeni aday için AI title-only gate; bilinen rakip için zaten geçmiş.
+          if (!isKnown) {
+            let preMatch: MatchResult;
+            try {
+              preMatch = await verifyProductMatch(
+                { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+                { title: result.title, url: result.link, marketplace: retailer.name },
+              );
+            } catch {
+              continue;
+            }
+
+            if (!preMatch.isMatch) {
+              aiRejectedCount++;
+              console.log(
+                `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
+              );
+              continue;
+            }
+            recoveryMatch = preMatch;
           }
 
-          if (!preMatch.isMatch) {
-            aiRejectedCount++;
-            console.log(
-              `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
-            );
-            continue;
-          }
-
-          // Title eşleşti → lightweight HTTP fallback ile fiyat çek
-          recoveryMatch = preMatch;
+          // Title eşleşti (veya bilinen rakip) → lightweight HTTP fallback ile fiyat çek
           try {
             const recovered = await recoverPriceLightweight(result.link);
             if (recovered.price && recovered.price > 0) {
@@ -237,11 +259,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           continue;
         }
 
-        // AI matcher — recovery yaptıysak yeniden çalıştırma (zaten title-only match
-        // yapıldı; preMatch sonucu matchResult olarak saklanır). Recovery
-        // YAPMADIYSAK normal AI match akışı.
+        // AI matcher — recovery yaptıysak veya bilinen rakipse yeniden çalıştırma.
+        // recoveryMatch: pre-match skoru; isKnown: önceden kabul edilmiş.
         let matchResult: MatchResult | null = recoveryMatch;
-        if (!priceRecovered) {
+        if (!priceRecovered && !isKnown) {
           try {
             matchResult = await verifyProductMatch(
               { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
