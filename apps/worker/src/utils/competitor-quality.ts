@@ -175,3 +175,62 @@ export function isUsableCompetitor(
 ): boolean {
   return assessCompetitor(input, options).usable;
 }
+
+// ============================================
+// Ürün kodu (MPN / barkod) çıkarımı ve eşleştirme
+// ============================================
+//
+// Aynı ürünü farklı satıcılarda bulmanın en güvenilir yolu MPN/barkod gibi
+// benzersiz kodlardır (ör. Lenovo "83SC000QTR", barkod "8681677004991").
+// Bunlar arama sorgusunda kullanılırsa birebir aynı ürün bulunur; iki başlık
+// UZUN (>=10) bir kodu paylaşıyorsa kesinlikle aynı üründür — CPU/RAM gibi
+// kısa spec kodları (i5-13450HX → 9 hane) bu eşiğin altında kalıp yanlış
+// eşleşme yapmaz. Böylece "katı ol ama akıllı ol" sağlanır.
+
+export function extractProductCodes(text: string): string[] {
+  if (!text) return [];
+  const found: Array<{ raw: string; norm: string }> = [];
+  // Barkodlar: 8-14 haneli salt-rakam diziler.
+  for (const m of text.matchAll(/\b\d{8,14}\b/g)) {
+    found.push({ raw: m[0], norm: m[0] });
+  }
+  // MPN benzeri: harf+rakam karışık, normalize uzunluk >=6.
+  for (const m of text.matchAll(/\b[A-Za-z0-9][A-Za-z0-9-]{4,}[A-Za-z0-9]\b/g)) {
+    const norm = m[0].replace(/-/g, "").toUpperCase();
+    if (norm.length < 6) continue;
+    if (!/[A-Z]/.test(norm) || !/\d/.test(norm)) continue; // harf VE rakam içermeli
+    found.push({ raw: m[0], norm });
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  // En uzun kod en spesifik (MPN/barkod) — önce o.
+  for (const c of found.sort((a, b) => b.norm.length - a.norm.length)) {
+    if (seen.has(c.norm)) continue;
+    seen.add(c.norm);
+    out.push(c.raw);
+  }
+  return out;
+}
+
+const STRONG_CODE_MIN_LEN = 10;
+
+function strongCodeSet(text: string): Set<string> {
+  const set = new Set<string>();
+  for (const raw of extractProductCodes(text)) {
+    const norm = raw.replace(/-/g, "").toUpperCase();
+    if (norm.length >= STRONG_CODE_MIN_LEN) set.add(norm);
+  }
+  return set;
+}
+
+/**
+ * İki başlık, çakışması neredeyse imkânsız uzun bir kod (MPN/barkod, >=10)
+ * paylaşıyor mu? Paylaşıyorsa kesinlikle aynı üründür.
+ */
+export function sharesStrongProductCode(a: string, b: string): boolean {
+  const setA = strongCodeSet(a);
+  if (setA.size === 0) return false;
+  const setB = strongCodeSet(b);
+  for (const code of setB) if (setA.has(code)) return true;
+  return false;
+}

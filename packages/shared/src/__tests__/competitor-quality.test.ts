@@ -5,8 +5,65 @@ import {
   isPackagingListing,
   assessCompetitor,
   isUsableCompetitor,
+  extractProductCodes,
+  sharesStrongProductCode,
   COMPETITOR_STALE_HOURS,
 } from "../competitor-quality";
+
+describe("extractProductCodes", () => {
+  it("extracts MPN and barcode, longest (most specific) first", () => {
+    const codes = extractProductCodes(
+      "LENOVO LOQ i5-13450HX 16GB 512GB SSD RTX 5050 FreeDOS 83SC000QTR",
+    );
+    expect(codes[0]).toBe("83SC000QTR"); // MPN, norm len 10 — en spesifik
+    expect(codes).toContain("i5-13450HX");
+  });
+
+  it("extracts a barcode", () => {
+    expect(extractProductCodes("Evde Aesthetic Serum 2ml X 10 Ampul 8681677004991")).toContain(
+      "8681677004991",
+    );
+  });
+
+  it("ignores short spec-like tokens", () => {
+    expect(extractProductCodes("Karaca Çelik Tencere 16GB 8 cm")).toEqual([]);
+  });
+
+  it("returns [] for plain names", () => {
+    expect(extractProductCodes("Havaianas Top Tiras Terlik")).toEqual([]);
+  });
+});
+
+describe("sharesStrongProductCode", () => {
+  it("matches two listings sharing a long MPN", () => {
+    expect(
+      sharesStrongProductCode(
+        "LENOVO LOQ i5-13450HX 83SC000QTR",
+        "Lenovo LOQ Notebook 83SC000QTR FreeDOS",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches two listings sharing a barcode", () => {
+    expect(
+      sharesStrongProductCode("Erbatab D3 K2 8681677004991", "Erbatab Damla 8681677004991 10ml"),
+    ).toBe(true);
+  });
+
+  it("does NOT match on a shared short spec code (CPU) — different configs stay separate", () => {
+    // i5-13450HX normalize len 9 < 10 → güçlü kod değil; iki farklı laptop eşleşmez.
+    expect(
+      sharesStrongProductCode(
+        "Lenovo LOQ i5-13450HX 16GB RTX 5050",
+        "Asus TUF i5-13450HX 32GB RTX 4060",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not match when no codes present", () => {
+    expect(sharesStrongProductCode("Havaianas Terlik", "Nike Ayakkabı")).toBe(false);
+  });
+});
 
 const NOW = new Date("2026-06-11T12:00:00Z");
 const FRESH = new Date(NOW.getTime() - 2 * 60 * 60 * 1000); // 2 saat önce

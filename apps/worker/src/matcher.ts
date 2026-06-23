@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import { logger } from "./utils/logger";
-import { MIN_MATCH_SCORE, isPackagingListing } from "./utils/competitor-quality";
+import {
+  MIN_MATCH_SCORE,
+  isPackagingListing,
+  sharesStrongProductCode,
+} from "./utils/competitor-quality";
 
 let openai: OpenAI | null = null;
 
@@ -83,6 +87,24 @@ export async function verifyProductMatch(
         specMatch: false,
         categoryMatch: false,
         details: "Aday başlığı paketleme/lojistik malzemesi içeriyor",
+      },
+    };
+  }
+
+  // Deterministik KABUL: iki başlık uzun bir MPN/barkod (>=10) paylaşıyorsa
+  // kesinlikle aynı üründür — AI'a sormaya gerek yok (maliyet + AI'nın aşırı
+  // katı reddini de aşar). Kısa spec kodları (CPU/RAM) bu eşiğin altında.
+  if (sharesStrongProductCode(sourceProduct.title, candidate.title)) {
+    return {
+      isMatch: true,
+      score: 95,
+      reason: "Aynı ürün kodu (MPN/barkod) eşleşmesi",
+      attributes: {
+        brandMatch: true,
+        modelMatch: true,
+        specMatch: true,
+        categoryMatch: true,
+        details: "Ortak benzersiz ürün kodu",
       },
     };
   }

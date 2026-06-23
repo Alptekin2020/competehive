@@ -10,6 +10,8 @@
 //
 // Bu modül sorguları CANLI ürün adından kurar ve bayat/jenerik keyword'leri eler.
 
+import { extractProductCodes } from "./competitor-quality";
+
 const RAW_TITLE_MAX_WORDS = 6;
 
 export function truncateRawTitleForSearch(title: string): string {
@@ -39,13 +41,16 @@ const GENERIC_NAME_RE =
 
 export function isGenericQuery(q: string): boolean {
   const trimmed = q.trim();
-  if (trimmed.length < 4) return true;
+  // 3 karakter geçerli marka adı olabilir (PS5, JBL, LG) — yalnızca 1-2 karakter ele.
+  if (trimmed.length < 3) return true;
   return GENERIC_NAME_RE.test(trimmed);
 }
 
 function meaningfulTokens(s: string): string[] {
+  // Token EŞLEŞTİRME için locale-invariant küçük harf: tr-TR "I"→"ı" dönüşümü
+  // "NIKE" ile "Nike"yi farklı token yapıp eşleşmeyi kaçırırdı.
   return s
-    .toLocaleLowerCase("tr-TR")
+    .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((t) => t.length >= 3);
 }
@@ -75,8 +80,22 @@ export function buildSearchQueries(
     queries.push(q);
   };
 
-  // 1) Canlı ürün adı — birincil, en güvenilir sorgu.
+  // 1) Canlı ürün adı — birincil, geniş sorgu.
   push(liveName);
+
+  // 1.5) Marka + MODEL KODU/BARKOD sorgusu — birebir aynı ürünü bulmanın en
+  //      güvenilir yolu. Ad ilk 6 kelimeye kısaldığında sondaki model kodu
+  //      (Lenovo "83SC000QTR") düşüyordu; bu yüzden kodu açıkça hedefliyoruz.
+  const codes = extractProductCodes(liveName);
+  if (codes.length > 0) {
+    const codeTokenSet = new Set(codes.map((c) => c.toLowerCase()));
+    const brandWords = liveName
+      .split(/\s+/)
+      .filter((w) => w.length >= 2 && !codeTokenSet.has(w.toLowerCase()))
+      .slice(0, 2)
+      .join(" ");
+    push(`${brandWords} ${codes[0]}`.trim());
+  }
 
   // 2) AI keywords — yalnızca canlı adla anlamlı token paylaşanlar (bayat/jenerik
   //    keyword'ü ele). Ad jenerikse token kümesi boş kabul edilir → keyword'ler

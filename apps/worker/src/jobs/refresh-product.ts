@@ -159,13 +159,17 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     // Serper araması — competitor güncelleme + Audit P0-2: yeni keşif
     // ============================================
     // Sorgu CANLI ürün adından kurulur; bayat "Trendyol ürünü" gibi placeholder
-    // keywords elenir (buildSearchQueries) — aksi halde Serper alakasız ürünler
-    // döndürüp tüm rakipleri AI'a reddettiriyordu.
-    const refreshQuery =
-      buildSearchQueries(product.productName, product.productName, product.metadata)[0] ??
-      product.productName;
+    // keywords elenir (buildSearchQueries). Geçerli sorgu yoksa Serper'ı ATLA —
+    // aksi halde jenerik adla arayıp alakasız ürünleri AI'a reddettirir + kota
+    // israfı olur.
+    const refreshQueries = buildSearchQueries(
+      product.productName,
+      product.productName,
+      product.metadata,
+    );
+    const refreshQuery = refreshQueries[0];
 
-    const results = await searchProduct(refreshQuery);
+    const results = refreshQuery ? await searchProduct(refreshQuery) : [];
 
     // Kaynak fiyat Serper'dan kurtarma (mevcut davranış — Akamai bloğunda kullanılıyor)
     if (!refreshedOwnPrice) {
