@@ -28,56 +28,68 @@ interface GlobalAlertPrefsProps {
 
 // PRICE_THRESHOLD bilinçli olarak panelde yok: hedef fiyat ürüne özgüdür,
 // hesap geneli bir eşik anlamsız olur. O kural "Yeni Uyarı" ile kurulur.
-const PANEL_TYPES: Array<{
+interface PanelType {
   type: string;
   icon: string;
   label: string;
   hint: string;
   defaultCooldown: number;
   needsThreshold?: boolean;
-}> = [
-  {
-    type: "PRICE_DROP",
-    icon: "📉",
-    label: "Fiyatım düşünce",
-    hint: "Kendi ürününüzün fiyatı düştüğünde",
-    defaultCooldown: 60,
-  },
+  group: "competitor" | "own";
+}
+
+// RAKİP odaklı bildirimler önce — ürünün asıl değeri budur. Kendi ürün fiyatı
+// bildirimleri (kullanıcı zaten kendi fiyatını biliyor) "Kendi ürünüm" grubunda
+// ve varsayılan kapalı.
+const PANEL_TYPES: PanelType[] = [
   {
     type: "COMPETITOR_CHEAPER",
     icon: "⚡",
     label: "Rakip benden ucuz olunca",
-    hint: "Güvenilir bir rakip sizden ucuza düştüğünde",
+    hint: "Aynı ürünü satan bir rakip sizden ucuza düştüğünde — en kritik sinyal",
     defaultCooldown: 30,
+    group: "competitor",
   },
   {
     type: "OUT_OF_STOCK",
     icon: "🚫",
     label: "Stok bitince",
-    hint: "Ürününüz stoktan düştüğünde",
+    hint: "Takip edilen ürün stoktan düştüğünde",
     defaultCooldown: 120,
+    group: "competitor",
   },
   {
     type: "BACK_IN_STOCK",
     icon: "✅",
     label: "Stoğa dönünce",
-    hint: "Ürününüz tekrar satışa çıktığında",
+    hint: "Takip edilen ürün tekrar satışa çıktığında",
     defaultCooldown: 15,
+    group: "competitor",
+  },
+  {
+    type: "PRICE_DROP",
+    icon: "📉",
+    label: "Kendi fiyatım düşünce",
+    hint: "Kendi ürününüzün fiyatı düştüğünde (genelde siz değiştirirsiniz)",
+    defaultCooldown: 60,
+    group: "own",
   },
   {
     type: "PRICE_INCREASE",
     icon: "📈",
-    label: "Fiyatım artınca",
+    label: "Kendi fiyatım artınca",
     hint: "Kendi ürününüzün fiyatı yükseldiğinde",
     defaultCooldown: 60,
+    group: "own",
   },
   {
     type: "PERCENTAGE_CHANGE",
     icon: "📊",
-    label: "Büyük değişimde",
-    hint: "Tek seferde belirlediğiniz yüzdenin üzeri değişimde",
+    label: "Kendi fiyatımda büyük değişim",
+    hint: "Kendi ürününüzde tek seferde belirlediğiniz yüzdenin üzeri değişimde",
     defaultCooldown: 60,
     needsThreshold: true,
+    group: "own",
   },
 ];
 
@@ -255,59 +267,71 @@ export default function GlobalAlertPrefs({
         özel davranış için &quot;Yeni Uyarı&quot;dan o ürünü seçin.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
-        {PANEL_TYPES.map((type) => {
-          const rule = globalByType.get(type.type);
-          const isOn = Boolean(rule?.isActive);
-          const isBusy = busyType === type.type;
-          return (
-            <div
-              key={type.type}
-              className={`flex items-center justify-between gap-3 rounded-xl border p-3 transition ${
-                isOn ? "border-hive-500/30 bg-hive-500/5" : "border-dark-800 bg-dark-950"
-              }`}
-            >
-              <div className="min-w-0">
-                <p className="text-sm text-white font-medium flex items-center gap-1.5">
-                  <span>{type.icon}</span>
-                  {type.label}
-                </p>
-                <p className="text-[11px] text-dark-500 mt-0.5 truncate" title={type.hint}>
-                  {type.hint}
-                </p>
-                {type.needsThreshold && isOn && (
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    <span className="text-[11px] text-dark-400">Eşik: %</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={pctThreshold}
-                      onChange={(e) => setPctThreshold(e.target.value)}
-                      onBlur={commitPctThreshold}
-                      className="w-16 bg-dark-900 border border-dark-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-hive-500/50"
-                    />
+      {(["competitor", "own"] as const).map((group) => {
+        const groupTypes = PANEL_TYPES.filter((t) => t.group === group);
+        return (
+          <div key={group} className="mb-4">
+            <p className="text-[11px] uppercase tracking-wide text-dark-500 mb-2">
+              {group === "competitor"
+                ? "🎯 Rakip & stok bildirimleri (önerilen)"
+                : "Kendi ürün fiyatım (genelde gerekmez)"}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {groupTypes.map((type) => {
+                const rule = globalByType.get(type.type);
+                const isOn = Boolean(rule?.isActive);
+                const isBusy = busyType === type.type;
+                return (
+                  <div
+                    key={type.type}
+                    className={`flex items-center justify-between gap-3 rounded-xl border p-3 transition ${
+                      isOn ? "border-hive-500/30 bg-hive-500/5" : "border-dark-800 bg-dark-950"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-white font-medium flex items-center gap-1.5">
+                        <span>{type.icon}</span>
+                        {type.label}
+                      </p>
+                      <p className="text-[11px] text-dark-500 mt-0.5 truncate" title={type.hint}>
+                        {type.hint}
+                      </p>
+                      {type.needsThreshold && isOn && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className="text-[11px] text-dark-400">Eşik: %</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={pctThreshold}
+                            onChange={(e) => setPctThreshold(e.target.value)}
+                            onBlur={commitPctThreshold}
+                            className="w-16 bg-dark-900 border border-dark-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-hive-500/50"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => toggleType(type)}
+                      disabled={isBusy}
+                      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                        isBusy ? "opacity-50" : ""
+                      }`}
+                      style={{ backgroundColor: isOn ? "#F59E0B" : "#1F1F23" }}
+                      title={isOn ? "Kapat" : "Aç"}
+                    >
+                      <span
+                        className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform"
+                        style={{ transform: isOn ? "translateX(20px)" : "translateX(0)" }}
+                      />
+                    </button>
                   </div>
-                )}
-              </div>
-              <button
-                onClick={() => toggleType(type)}
-                disabled={isBusy}
-                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
-                  isBusy ? "opacity-50" : ""
-                }`}
-                style={{ backgroundColor: isOn ? "#F59E0B" : "#1F1F23" }}
-                title={isOn ? "Kapat" : "Aç"}
-              >
-                <span
-                  className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform"
-                  style={{ transform: isOn ? "translateX(20px)" : "translateX(0)" }}
-                />
-              </button>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
 
       <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-dark-800">
         <span className="text-xs text-dark-400 mr-1">Bildirim kanalı:</span>

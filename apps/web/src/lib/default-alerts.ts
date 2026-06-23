@@ -9,20 +9,17 @@ interface DefaultAlertRuleSpec {
   cooldownMinutes: number;
 }
 
-// Priority order: most valuable rules first. When the plan's alert-rule cap
-// leaves only a few slots, we keep the top entries and drop the rest.
-function buildDefaultRules(alertThresholdPct: number): DefaultAlertRuleSpec[] {
+// RAKİP ODAKLI varsayılanlar. Ürünün kendi fiyat değişimi kullanıcıya bildirim
+// olarak değersiz — fiyatı zaten kullanıcı kendisi belirliyor. Bu yüzden
+// varsayılanlar rakip hareketlerine odaklanır: bir rakip ucuzladığında ve
+// stok durumu değiştiğinde. Kendi-fiyat kuralları (PRICE_DROP/INCREASE/
+// PERCENTAGE_CHANGE) varsayılan değildir; isteyen kullanıcı elle ekleyebilir.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function buildDefaultRules(_alertThresholdPct: number): DefaultAlertRuleSpec[] {
   return [
-    { ruleType: RuleType.PRICE_DROP, cooldownMinutes: 60 },
     { ruleType: RuleType.COMPETITOR_CHEAPER, cooldownMinutes: 30 },
     { ruleType: RuleType.OUT_OF_STOCK, cooldownMinutes: 120 },
     { ruleType: RuleType.BACK_IN_STOCK, cooldownMinutes: 15 },
-    { ruleType: RuleType.PRICE_INCREASE, cooldownMinutes: 60 },
-    {
-      ruleType: RuleType.PERCENTAGE_CHANGE,
-      thresholdValue: alertThresholdPct,
-      cooldownMinutes: 60,
-    },
   ];
 }
 
