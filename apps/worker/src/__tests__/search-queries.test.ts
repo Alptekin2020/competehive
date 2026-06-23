@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildSearchQueries, isGenericQuery, extractSearchKeywords } from "../utils/search-queries";
+import {
+  buildSearchQueries,
+  isGenericQuery,
+  extractSearchKeywords,
+  stripSearchNoise,
+} from "../utils/search-queries";
 
 describe("isGenericQuery", () => {
   it("flags marketplace placeholder names", () => {
@@ -34,7 +39,36 @@ describe("extractSearchKeywords", () => {
   });
 });
 
+describe("stripSearchNoise", () => {
+  it("removes marketing/logistics noise but keeps brand/model", () => {
+    expect(
+      stripSearchNoise("Oral-B Pro 3 Şarjlı Diş Fırçası Hediyeli Ücretsiz Kargo Orijinal"),
+    ).toBe("Oral-B Pro 3 Şarjlı Diş Fırçası");
+  });
+
+  it("keeps size/volume/quantity tokens (product identity must survive)", () => {
+    expect(stripSearchNoise("Erbatab D3 K2 Damla 20ml 2'li")).toBe("Erbatab D3 K2 Damla 20ml 2'li");
+  });
+
+  it("matches noise regardless of Turkish casing/diacritics", () => {
+    expect(stripSearchNoise("Philips Tıraş Makinesi FIRSAT GARANTİLİ FATURALI")).toBe(
+      "Philips Tıraş Makinesi",
+    );
+  });
+
+  it("returns the original when stripping would empty it", () => {
+    expect(stripSearchNoise("Hediyeli Kargo")).toBe("Hediyeli Kargo");
+  });
+});
+
 describe("buildSearchQueries", () => {
+  it("strips marketing noise from the primary query (recall fix)", () => {
+    const queries = buildSearchQueries("Oral-B Pro 3 Diş Fırçası Hediyeli Ücretsiz Kargo", "", {});
+    expect(queries[0].toLowerCase()).toContain("oral");
+    expect(queries[0].toLowerCase()).not.toContain("hediyeli");
+    expect(queries[0].toLowerCase()).not.toContain("kargo");
+  });
+
   it("uses the live product name, NOT the stale generic keyword (the bug)", () => {
     // Gerçek vaka: ad düzelmiş ama metadata'da "Trendyol ürünü" donmuş.
     const queries = buildSearchQueries(
@@ -48,6 +82,15 @@ describe("buildSearchQueries", () => {
     expect(queries[0].toLowerCase()).toContain("erbatab");
     // Jenerik keyword asla sorgu olmamalı.
     expect(queries.some((q) => q.toLowerCase().includes("trendyol ürünü"))).toBe(false);
+  });
+
+  it("matches keywords across Turkish diacritics (asciiFold token compare)", () => {
+    const queries = buildSearchQueries("Çelik Şarjlı Süpürge", "", {
+      searchKeywords: ["celik sarjli supurge fiyat"],
+    });
+    // şarjlı↔sarjli, çelik↔celik yalnızca asciiFold ile eşleşir; plain toLowerCase
+    // "ş/ç/ü"yü çözemez ve bu ASCII keyword paylaşılan token bulamayıp düşerdi.
+    expect(queries.some((q) => q.includes("celik sarjli supurge"))).toBe(true);
   });
 
   it("keeps AI keywords that share a token with the live name", () => {

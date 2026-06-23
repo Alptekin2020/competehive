@@ -47,12 +47,72 @@ export function isGenericQuery(q: string): boolean {
 }
 
 function meaningfulTokens(s: string): string[] {
-  // Token EŞLEŞTİRME için locale-invariant küçük harf: tr-TR "I"→"ı" dönüşümü
-  // "NIKE" ile "Nike"yi farklı token yapıp eşleşmeyi kaçırırdı.
-  return s
-    .toLowerCase()
+  // Token EŞLEŞTİRME için asciiFold: hem "NIKE"/"Nike" (locale-invariant küçük
+  // harf) hem de "Ilık"/"ılık", "Şarjlı"/"sarjli" gibi Türkçe aksan/İ-I-ı
+  // farkları normalize edilir; plain toLowerCase "ı"yı çözemediği için eşleşme
+  // kaçırırdı. İki taraf da aynı fold'u kullandığından karşılaştırma simetrik.
+  return asciiFold(s)
     .split(/[^\p{L}\p{N}]+/u)
     .filter((t) => t.length >= 3);
+}
+
+// Türkçe harfleri ASCII'ye indirger + küçük harfe çevirir. Gürültü sözcüğü
+// eşleşmesini büyük/küçük harf ve aksandan bağımsız yapar: "FIRSAT", "Fırsat",
+// "fırsat" hepsi "firsat" olur (İ/I/ı ayrışması dahil).
+function asciiFold(s: string): string {
+  return s
+    .replace(/[İIı]/g, "i")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[öÖ]/g, "o")
+    .toLowerCase();
+}
+
+// Ürünü TANIMLAMAYAN pazarlama/lojistik sözcükleri. Arama sorgusunda Google
+// Shopping'i alakasız sonuçlara dağıtıyorlar ("Oral-B ... Hediyeli Ücretsiz
+// Kargo Orijinal" → marka+model yerine kampanya başlıklarıyla eşleşme). Yalnızca
+// ARAMADAN elenir; ürün kimliğini taşıyan boyut/hacim/adet (10ml, 2'li) korunur.
+const SEARCH_NOISE_WORDS = new Set([
+  "hediye",
+  "hediyeli",
+  "hediyeniz",
+  "ucretsiz",
+  "bedava",
+  "kargo",
+  "hizli",
+  "indirim",
+  "indirimde",
+  "indirimli",
+  "indirimi",
+  "kampanya",
+  "kampanyali",
+  "firsat",
+  "firsati",
+  "outlet",
+  "garanti",
+  "garantili",
+  "garantisi",
+  "fatura",
+  "faturali",
+  "orijinal",
+  "orjinal",
+  "stokta",
+  "stoklarda",
+]);
+
+/**
+ * Arama sorgusundan pazarlama/lojistik gürültüsünü ayıklar; marka/model/boyutu
+ * korur. Her şey elenirse boş/jenerik sorgu üretmemek için orijinali döndürür.
+ */
+export function stripSearchNoise(name: string): string {
+  const kept = name.split(/\s+/).filter((w) => {
+    const folded = asciiFold(w.replace(/[^\p{L}\p{N}]+/gu, ""));
+    return folded.length === 0 ? true : !SEARCH_NOISE_WORDS.has(folded);
+  });
+  const result = kept.join(" ").trim();
+  return result.length >= 3 ? result : name.trim();
 }
 
 /**
@@ -67,6 +127,9 @@ export function buildSearchQueries(
   metadata: unknown,
 ): string[] {
   const liveName = (productName || fallbackTitle || "").trim();
+  // Pazarlama/lojistik gürültüsü ayıklanmış ad: hem birincil sorgunun 6 kelimelik
+  // bütçesi marka/model'e harcanır hem de marka çıkarımı gürültüye takılmaz.
+  const cleanName = stripSearchNoise(liveName);
   const queries: string[] = [];
   const seen = new Set<string>();
 
@@ -80,8 +143,8 @@ export function buildSearchQueries(
     queries.push(q);
   };
 
-  // 1) Canlı ürün adı — birincil, geniş sorgu.
-  push(liveName);
+  // 1) Canlı ürün adı (gürültüsü ayıklanmış) — birincil, geniş sorgu.
+  push(cleanName);
 
   // 1.5) Marka + MODEL KODU/BARKOD sorgusu — birebir aynı ürünü bulmanın en
   //      güvenilir yolu. Ad ilk 6 kelimeye kısaldığında sondaki model kodu
@@ -89,7 +152,7 @@ export function buildSearchQueries(
   const codes = extractProductCodes(liveName);
   if (codes.length > 0) {
     const codeTokenSet = new Set(codes.map((c) => c.toLowerCase()));
-    const brandWords = liveName
+    const brandWords = cleanName
       .split(/\s+/)
       .filter((w) => w.length >= 2 && !codeTokenSet.has(w.toLowerCase()))
       .slice(0, 2)
