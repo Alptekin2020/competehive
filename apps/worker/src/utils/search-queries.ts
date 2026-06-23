@@ -39,13 +39,16 @@ const GENERIC_NAME_RE =
 
 export function isGenericQuery(q: string): boolean {
   const trimmed = q.trim();
-  if (trimmed.length < 4) return true;
+  // 3 karakter geçerli marka adı olabilir (PS5, JBL, LG) — yalnızca 1-2 karakter ele.
+  if (trimmed.length < 3) return true;
   return GENERIC_NAME_RE.test(trimmed);
 }
 
 function meaningfulTokens(s: string): string[] {
+  // Token EŞLEŞTİRME için locale-invariant küçük harf: tr-TR "I"→"ı" dönüşümü
+  // "NIKE" ile "Nike"yi farklı token yapıp eşleşmeyi kaçırırdı.
   return s
-    .toLocaleLowerCase("tr-TR")
+    .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((t) => t.length >= 3);
 }
