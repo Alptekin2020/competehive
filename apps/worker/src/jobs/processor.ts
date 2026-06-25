@@ -428,21 +428,30 @@ export const alertWorker = new Worker(
     // Kalite politikası (skor, fiyat bandı, bayatlık) uygulanır — yoksa ₺11'lik
     // bir koli kaydı ₺2.500'lük ürüne sürekli sahte "rakip daha ucuz" alarmı üretir.
     let minCompetitorPrice: number | null = null;
+    let cheapestCompetitorName: string | null = null;
+    let cheaperCompetitorCount = 0;
     if (rules.some((r) => r.ruleType === "COMPETITOR_CHEAPER")) {
       const competitors = await prisma.competitor.findMany({
         where: { trackedProductId: productId, currentPrice: { gt: 0 } },
-        select: { currentPrice: true, matchScore: true, lastScrapedAt: true },
+        select: { competitorName: true, currentPrice: true, matchScore: true, lastScrapedAt: true },
       });
       const ownPrice = Number(currentPrice);
-      const usablePrices = competitors
+      const usable = competitors
         .map((c) => ({
+          name: c.competitorName,
           price: Number(c.currentPrice),
           matchScore: c.matchScore,
           lastScrapedAt: c.lastScrapedAt,
         }))
-        .filter((c) => isUsableCompetitor(c, { ownPrice }))
-        .map((c) => c.price);
-      minCompetitorPrice = usablePrices.length > 0 ? Math.min(...usablePrices) : null;
+        .filter((c) => isUsableCompetitor(c, { ownPrice }));
+      if (usable.length > 0) {
+        // En ucuz geçerli rakip + bizden ucuz olanların sayısı — bildirimi
+        // "kim, ne kadar ucuz" diyecek kadar aksiyon alınabilir yapar.
+        const cheapest = usable.reduce((min, c) => (c.price < min.price ? c : min));
+        minCompetitorPrice = cheapest.price;
+        cheapestCompetitorName = cheapest.name;
+        cheaperCompetitorCount = usable.filter((c) => c.price < ownPrice).length;
+      }
     }
 
     for (const rule of rules) {
@@ -484,6 +493,9 @@ export const alertWorker = new Worker(
           productUrl: product.productUrl,
           cost: ownCost,
           marginPct,
+          competitorPrice: minCompetitorPrice,
+          cheapestCompetitorName,
+          cheaperCompetitorCount,
         });
 
         await markCooldown(rule.id, productId, rule.cooldownMinutes);
