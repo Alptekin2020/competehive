@@ -24,6 +24,11 @@ export interface AlertEvalContext {
   /** Cheapest in-stock competitor price for the product, or null when none. */
   minCompetitorPrice: number | null;
   /**
+   * Current profit margin % = (currentPrice - cost) / currentPrice * 100, or
+   * null when the product has no cost set. Drives LOW_MARGIN.
+   */
+  marginPct: number | null;
+  /**
    * User-level global noise floor (User.alertThresholdPct). A price-movement
    * alert whose absolute % change is below this is suppressed. 0 disables it.
    */
@@ -86,6 +91,16 @@ export function evaluateAlertRule(ruleType: string, ctx: AlertEvalContext): bool
       // Fires whenever a tracked competitor is cheaper than our current price.
       if (ctx.minCompetitorPrice === null || ctx.currentPrice <= 0) return false;
       return ctx.minCompetitorPrice < ctx.currentPrice;
+
+    case "LOW_MARGIN":
+      // Maliyeti girilmiş ürünlerde, fiyat değişimi sonrası kâr marjı kullanıcının
+      // belirlediği taban yüzdesinin (thresholdValue) altına düştüğünde tetiklenir.
+      // Zarar (negatif marj) her zaman tabanın altındadır → kapsanır. Maliyet yoksa
+      // (marginPct === null) sessiz kalır — yanlış uyarı üretmez.
+      if (!ctx.isPriceEvent || ctx.marginPct === null || ctx.thresholdValue === null) {
+        return false;
+      }
+      return ctx.marginPct < ctx.thresholdValue;
 
     default:
       return false;

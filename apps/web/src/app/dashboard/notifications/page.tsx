@@ -28,6 +28,7 @@ const RULE_TYPE_META: Record<
   COMPETITOR_CHEAPER: { icon: "⚡", label: "Rakip Daha Ucuz", category: "price", critical: true },
   OUT_OF_STOCK: { icon: "🚫", label: "Stoktan Çıktı", category: "stock", critical: true },
   BACK_IN_STOCK: { icon: "✅", label: "Stoğa Girdi", category: "stock" },
+  LOW_MARGIN: { icon: "💸", label: "Düşük Marj", category: "price", critical: true },
 };
 
 const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {

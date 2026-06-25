@@ -119,6 +119,7 @@ export async function GET() {
         product_url: p.productUrl,
         product_image: p.productImage,
         current_price: p.currentPrice,
+        cost: p.cost,
         last_scraped_at: p.lastScrapedAt,
         status: p.status,
         refresh_status: p.refreshStatus,

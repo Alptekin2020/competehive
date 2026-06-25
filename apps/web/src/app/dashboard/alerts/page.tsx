@@ -100,6 +100,14 @@ const RULE_TYPE_LABELS: Record<
     needsDirection: false,
     recommended: "Öneri: Stoğa dönüşte hızlı aksiyon için düşük bekleme kullanın.",
   },
+  LOW_MARGIN: {
+    label: "Düşük Marj",
+    description: "Kâr marjı belirlediğiniz tabanın altına düştüğünde (ürün maliyeti gerekli)",
+    icon: "💸",
+    needsThreshold: true,
+    needsDirection: false,
+    recommended: "Öneri: Ürün maliyetini girip tabanı hedef marjınıza göre (%10–15) belirleyin.",
+  },
 };
 
 const CHANNEL_LABELS: Record<string, { label: string; icon: string }> = {
@@ -532,7 +540,9 @@ export default function AlertsPage() {
                             {rule.thresholdValue != null
                               ? rule.ruleType === "PERCENTAGE_CHANGE"
                                 ? `%${rule.thresholdValue} değişim`
-                                : `${rule.direction === "below" ? "↓" : "↑"} ₺${Number(rule.thresholdValue).toLocaleString("tr-TR")}`
+                                : rule.ruleType === "LOW_MARGIN"
+                                  ? `%${rule.thresholdValue} marj altı`
+                                  : `${rule.direction === "below" ? "↓" : "↑"} ₺${Number(rule.thresholdValue).toLocaleString("tr-TR")}`
                               : "Koşul tabanlı"}
                           </p>
                         </div>
@@ -743,12 +753,16 @@ function CreateAlertModal({
     );
   };
 
+  // PERCENTAGE_CHANGE ve LOW_MARGIN yüzde girişi alır; PRICE_THRESHOLD TL eşiği.
+  const isPercentRule = ruleType === "PERCENTAGE_CHANGE" || ruleType === "LOW_MARGIN";
   const thresholdPresets =
     ruleType === "PERCENTAGE_CHANGE"
       ? ["3", "5", "10"]
       : ruleType === "PRICE_THRESHOLD"
         ? ["100", "500", "1000"]
-        : [];
+        : ruleType === "LOW_MARGIN"
+          ? ["5", "10", "15"]
+          : [];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -925,16 +939,26 @@ function CreateAlertModal({
             {ruleConfig.needsThreshold ? (
               <>
                 <label className="block text-sm font-medium text-dark-300 mb-2">
-                  {ruleType === "PERCENTAGE_CHANGE" ? "Yüzde Değer (%)" : "Fiyat Eşiği (₺)"}
+                  {ruleType === "LOW_MARGIN"
+                    ? "Minimum Marj (%)"
+                    : ruleType === "PERCENTAGE_CHANGE"
+                      ? "Yüzde Değer (%)"
+                      : "Fiyat Eşiği (₺)"}
                 </label>
                 <input
                   type="number"
-                  step={ruleType === "PERCENTAGE_CHANGE" ? "1" : "0.01"}
+                  step={isPercentRule ? "1" : "0.01"}
                   min="0"
                   value={thresholdValue}
                   onChange={(e) => setThresholdValue(e.target.value)}
                   className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-3 text-white text-sm placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition"
-                  placeholder={ruleType === "PERCENTAGE_CHANGE" ? "Örn: 5" : "Örn: 500"}
+                  placeholder={
+                    ruleType === "LOW_MARGIN"
+                      ? "Örn: 10"
+                      : ruleType === "PERCENTAGE_CHANGE"
+                        ? "Örn: 5"
+                        : "Örn: 500"
+                  }
                 />
                 {thresholdPresets.length > 0 && (
                   <div className="flex flex-wrap gap-2">
@@ -945,7 +969,7 @@ function CreateAlertModal({
                         onClick={() => setThresholdValue(preset)}
                         className="text-xs px-3 py-1.5 rounded-full border border-dark-700 text-dark-400 hover:text-white hover:border-hive-500/40"
                       >
-                        {ruleType === "PERCENTAGE_CHANGE" ? `%${preset}` : `₺${preset}`}
+                        {isPercentRule ? `%${preset}` : `₺${preset}`}
                       </button>
                     ))}
                   </div>

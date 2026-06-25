@@ -22,6 +22,14 @@ export type {
   CompetitorAssessmentInput,
   CompetitorAssessmentOptions,
 } from "./competitor-quality";
+export {
+  THIN_MARGIN_PCT,
+  HEALTHY_MARGIN_PCT,
+  marginBand,
+  computeMargin,
+  priceForMargin,
+} from "./margin";
+export type { MarginBand, MarginResult } from "./margin";
 export type { WebEnv, WorkerEnv } from "./env";
 export type {
   TrackedProductRow,

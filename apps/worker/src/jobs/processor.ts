@@ -378,12 +378,21 @@ export const alertWorker = new Worker(
     // kullanıcının kural kümesi için gerekli.
     const product = await prisma.trackedProduct.findUnique({
       where: { id: productId },
-      select: { userId: true, productName: true, marketplace: true, productUrl: true },
+      select: { userId: true, productName: true, marketplace: true, productUrl: true, cost: true },
     });
     if (!product) {
       logger.warn({ productId }, "Alert check skipped — product no longer exists");
       return;
     }
+
+    // Kâr marjı (LOW_MARGIN için): maliyet girilmemişse null kalır ve LOW_MARGIN
+    // sessiz kalır. Formül packages/shared/src/margin.ts ile senkron tutulmalı
+    // (worker Docker context'i shared paketi import edemez).
+    const ownCost = product.cost != null ? Number(product.cost) : null;
+    const marginPct =
+      ownCost !== null && Number.isFinite(ownCost) && currentPrice > 0
+        ? ((currentPrice - ownCost) / currentPrice) * 100
+        : null;
 
     let previousStockState: boolean | null =
       typeof previousInStock === "boolean" ? previousInStock : null;
@@ -460,6 +469,7 @@ export const alertWorker = new Worker(
         thresholdValue: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
         direction: rule.direction,
         minCompetitorPrice,
+        marginPct,
         userThresholdPct: rule.user.alertThresholdPct,
       });
 
@@ -472,6 +482,8 @@ export const alertWorker = new Worker(
           priceChangePct,
           marketplace: product.marketplace,
           productUrl: product.productUrl,
+          cost: ownCost,
+          marginPct,
         });
 
         await markCooldown(rule.id, productId, rule.cooldownMinutes);
