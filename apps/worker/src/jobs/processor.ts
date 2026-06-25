@@ -390,7 +390,7 @@ export const alertWorker = new Worker(
     // (worker Docker context'i shared paketi import edemez).
     const ownCost = product.cost != null ? Number(product.cost) : null;
     const marginPct =
-      ownCost !== null && Number.isFinite(ownCost) && currentPrice > 0
+      ownCost !== null && Number.isFinite(ownCost) && ownCost >= 0 && currentPrice > 0
         ? ((currentPrice - ownCost) / currentPrice) * 100
         : null;
 

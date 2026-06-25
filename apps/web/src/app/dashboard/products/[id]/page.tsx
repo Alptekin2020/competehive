@@ -298,11 +298,15 @@ export default function ProductDetailPage() {
     setCostSaved(false);
 
     const trimmed = costInput.trim();
-    // Boş = maliyeti temizle (null). Input type="number" olduğu için değer nokta
-    // ondalıklı geçerli bir sayı string'idir; locale parse'ına gerek yok.
+    // Boş = maliyeti temizle (null). type="text" olduğu için ham metin gelir:
+    // virgül (TR ondalık) noktaya çevrilir, virgül varsa binlik ayıracı noktalar
+    // atılır. Geçersiz girişte sessizce temizlemek yerine kullanıcıya hata gösterilir.
     let cost: number | null = null;
     if (trimmed !== "") {
-      const parsed = Number(trimmed);
+      const normalized = trimmed.includes(",")
+        ? trimmed.replace(/\./g, "").replace(",", ".")
+        : trimmed;
+      const parsed = Number(normalized);
       if (!Number.isFinite(parsed) || parsed < 0) {
         setCostError("Geçerli bir maliyet girin (0 veya daha büyük).");
         return;
@@ -1036,9 +1040,7 @@ export default function ProductDetailPage() {
             </label>
             <input
               id="product-cost"
-              type="number"
-              step="0.01"
-              min="0"
+              type="text"
               inputMode="decimal"
               value={costInput}
               onChange={(e) => {
@@ -1143,7 +1145,7 @@ export default function ProductDetailPage() {
                   }`}
                 >
                   {undercutMargin.profit < 0
-                    ? `⚠️ Maliyetinizin altında — birim zarar ${formatPrice(undercutMargin.profit, product.currency)}.`
+                    ? `⚠️ Maliyetinizin altında — birim zarar ${formatPrice(Math.abs(undercutMargin.profit), product.currency)}.`
                     : `Bu fiyatta marjınız %${undercutMargin.marginPct.toFixed(1)}${
                         undercutBreachesFloor ? ` — %${THIN_MARGIN_PCT} tabanının altında.` : "."
                       }`}

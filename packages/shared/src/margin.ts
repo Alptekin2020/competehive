@@ -39,7 +39,9 @@ export function marginBand(marginPct: number): MarginBand {
 
 function toFiniteNumber(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
-  const n = typeof value === "string" ? Number(value) : value;
+  // Number() string'leri, sayıları ve valueOf'lu nesneleri (ör. Prisma Decimal)
+  // tek tip kapsar; typeof daralması bir Decimal'i sessizce null yapabilirdi.
+  const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
