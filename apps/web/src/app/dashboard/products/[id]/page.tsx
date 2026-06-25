@@ -684,6 +684,19 @@ export default function ProductDetailPage() {
     undercutSuggestion !== null &&
     marginFloorPrice !== null &&
     undercutSuggestion < marginFloorPrice;
+  // Marj-korumalı öneri: rakibi geç ama %10 marj tabanının altına inme. Taban
+  // en ucuz rakibin üstündeyse kârlı şekilde geçilemez → taban fiyatı önerilir.
+  const marginProtectedPrice =
+    hasCost && marginFloorPrice !== null
+      ? undercutSuggestion !== null
+        ? Math.max(undercutSuggestion, marginFloorPrice)
+        : marginFloorPrice
+      : null;
+  const marginProtectedMargin = computeMargin(marginProtectedPrice, ownCostNum);
+  const marginProtectedBeatsCheapest =
+    marginProtectedPrice !== null &&
+    cheapestCompetitorPrice !== null &&
+    marginProtectedPrice < cheapestCompetitorPrice;
 
   const qualityRatio = competitors.length > 0 ? validCompetitors.length / competitors.length : 0;
   const staleRatio = competitors.length > 0 ? staleCompetitors.length / competitors.length : 0;
@@ -1121,51 +1134,75 @@ export default function ProductDetailPage() {
         {validCompetitors.length === 0 ? (
           <p className="text-sm text-gray-400">Öneri üretmek için yeterli rakip verisi yok.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
-              <p className="text-xs text-gray-500 mb-1">
-                En düşük rakibi geçmek için önerilen fiyat
-              </p>
-              <p className="text-lg font-semibold text-emerald-300">
-                {undercutSuggestion
-                  ? formatPrice(undercutSuggestion, product.currency)
-                  : "Hesaplanamadı"}
-              </p>
-              <p className="text-[11px] text-gray-500 mt-1">
-                En düşük geçerli rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
-              </p>
-              {undercutSuggestion && undercutMargin && (
-                <p
-                  className={`text-[11px] mt-1.5 font-medium ${
-                    undercutMargin.profit < 0
-                      ? "text-rose-400"
-                      : undercutBreachesFloor
-                        ? "text-amber-400"
-                        : "text-emerald-400"
-                  }`}
-                >
-                  {undercutMargin.profit < 0
-                    ? `⚠️ Maliyetinizin altında — birim zarar ${formatPrice(Math.abs(undercutMargin.profit), product.currency)}.`
-                    : `Bu fiyatta marjınız %${undercutMargin.marginPct.toFixed(1)}${
-                        undercutBreachesFloor ? ` — %${THIN_MARGIN_PCT} tabanının altında.` : "."
-                      }`}
+          <>
+            {marginProtectedPrice !== null && marginProtectedMargin && (
+              <div className="mb-3 rounded-xl border border-hive-500/30 bg-hive-500/5 p-3">
+                <p className="text-xs text-hive-300 mb-1 inline-flex items-center gap-1.5">
+                  ⭐ Marj-korumalı önerilen fiyat
+                  <InfoTip
+                    align="left"
+                    text="Rakibi geçmeye çalışır ama kâr marjınızı %10 tabanının altına düşürmez. Taban en ucuz rakibin üstündeyse kârlı şekilde geçemezsiniz; bu durumda en düşük kârlı fiyatınız önerilir."
+                  />
                 </p>
-              )}
+                <p className="text-xl font-bold text-white">
+                  {formatPrice(marginProtectedPrice, product.currency)}
+                  <span className="text-sm font-medium text-emerald-300 ml-2">
+                    %{marginProtectedMargin.marginPct.toFixed(1)} marj
+                  </span>
+                </p>
+                <p className="mt-1 text-[11px] text-gray-400">
+                  {marginProtectedBeatsCheapest
+                    ? "En ucuz rakibin altında kalır ve marjınızı korur."
+                    : `Rakibi geçmek %${THIN_MARGIN_PCT} marjın altına iner; bu sizin en düşük kârlı fiyatınız.`}
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">
+                  En düşük rakibi geçmek için önerilen fiyat
+                </p>
+                <p className="text-lg font-semibold text-emerald-300">
+                  {undercutSuggestion
+                    ? formatPrice(undercutSuggestion, product.currency)
+                    : "Hesaplanamadı"}
+                </p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  En düşük geçerli rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
+                </p>
+                {undercutSuggestion && undercutMargin && (
+                  <p
+                    className={`text-[11px] mt-1.5 font-medium ${
+                      undercutMargin.profit < 0
+                        ? "text-rose-400"
+                        : undercutBreachesFloor
+                          ? "text-amber-400"
+                          : "text-emerald-400"
+                    }`}
+                  >
+                    {undercutMargin.profit < 0
+                      ? `⚠️ Maliyetinizin altında — birim zarar ${formatPrice(Math.abs(undercutMargin.profit), product.currency)}.`
+                      : `Bu fiyatta marjınız %${undercutMargin.marginPct.toFixed(1)}${
+                          undercutBreachesFloor ? ` — %${THIN_MARGIN_PCT} tabanının altında.` : "."
+                        }`}
+                  </p>
+                )}
+              </div>
+              <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">
+                  İlk 3 rakip ortalamasına göre önerilen fiyat
+                </p>
+                <p className="text-lg font-semibold text-amber-300">
+                  {top3AvgSuggestion
+                    ? formatPrice(top3AvgSuggestion, product.currency)
+                    : "Öneri için en az 3 rakip gerekli"}
+                </p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  En ucuz 3 geçerli rakip fiyatının aritmetik ortalaması alınır.
+                </p>
+              </div>
             </div>
-            <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
-              <p className="text-xs text-gray-500 mb-1">
-                İlk 3 rakip ortalamasına göre önerilen fiyat
-              </p>
-              <p className="text-lg font-semibold text-amber-300">
-                {top3AvgSuggestion
-                  ? formatPrice(top3AvgSuggestion, product.currency)
-                  : "Öneri için en az 3 rakip gerekli"}
-              </p>
-              <p className="text-[11px] text-gray-500 mt-1">
-                En ucuz 3 geçerli rakip fiyatının aritmetik ortalaması alınır.
-              </p>
-            </div>
-          </div>
+          </>
         )}
       </div>
 
