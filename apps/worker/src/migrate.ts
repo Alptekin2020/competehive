@@ -358,6 +358,23 @@ export async function runMigrations() {
 
     console.log("✅ Phase 10 migration: notification schema reconciled");
 
+    // Phase 11: Kârlılık katmanı — ürün maliyeti (COGS) + LOW_MARGIN kural tipi.
+    // 202606250001_add_product_cost_and_low_margin_rule'ı aynalar. Bu deployment
+    // şemayı runMigrations() ile uyguluyor (worker image'ında migration
+    // bulunmadığı için `prisma migrate deploy` no-op) — bu adım olmadan merge'lenen
+    // web build'i her tracked_products sorgusunda 500 verir: "column
+    // tracked_products.cost does not exist".
+    await client.query(`
+      ALTER TABLE "tracked_products"
+      ADD COLUMN IF NOT EXISTS "cost" DECIMAL(12, 2)
+    `);
+
+    // Ayrı statement, autocommit (sarmalayan txn yok) — Step 3.1 Marketplace enum
+    // eklemeleriyle aynı kalıp. ALTER TYPE ADD VALUE bir txn bloğunda çalışamaz.
+    await client.query(`ALTER TYPE "RuleType" ADD VALUE IF NOT EXISTS 'LOW_MARGIN'`);
+
+    console.log("✅ Phase 11 migration: product cost + LOW_MARGIN rule type added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
