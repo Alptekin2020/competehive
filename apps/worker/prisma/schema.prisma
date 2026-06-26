@@ -125,6 +125,9 @@ model TrackedProduct {
   sellerName     String?       @map("seller_name")
   category       String?
   currentPrice   Decimal?      @db.Decimal(12, 2) @map("current_price")
+  // Satıcının birim maliyeti (COGS). Opsiyonel — girildiğinde kâr (TL), marj (%)
+  // ve marj-korumalı fiyat önerisi hesaplanır; LOW_MARGIN uyarısını besler.
+  cost           Decimal?      @db.Decimal(12, 2)
   currency       String        @default("TRY")
   status         ProductStatus @default(ACTIVE)
   lastScrapedAt  DateTime?     @map("last_scraped_at")
@@ -221,6 +224,7 @@ enum RuleType {
   COMPETITOR_CHEAPER // rakip daha ucuz olduğunda
   OUT_OF_STOCK // stoktan çıktığında
   BACK_IN_STOCK // stoğa girdiğinde
+  LOW_MARGIN // kâr marjı belirlenen tabanın altına düştüğünde (maliyet gerekli)
 }
 
 enum NotifyChannel {

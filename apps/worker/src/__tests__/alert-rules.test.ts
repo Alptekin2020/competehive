@@ -17,6 +17,7 @@ const base: AlertEvalContext = {
   thresholdValue: null,
   direction: null,
   minCompetitorPrice: null,
+  marginPct: null,
   userThresholdPct: 0,
 };
 
@@ -144,6 +145,58 @@ describe("evaluateAlertRule", () => {
           minCompetitorPrice: 50,
         }),
       ).toBe(false);
+    });
+  });
+
+  describe("LOW_MARGIN", () => {
+    it("fires when margin falls below the floor on a price event", () => {
+      const ctx = { ...base, isPriceEvent: true, marginPct: 5, thresholdValue: 10 };
+      expect(evaluateAlertRule("LOW_MARGIN", ctx)).toBe(true);
+    });
+    it("fires on a loss (negative margin)", () => {
+      const ctx = { ...base, isPriceEvent: true, marginPct: -8, thresholdValue: 10 };
+      expect(evaluateAlertRule("LOW_MARGIN", ctx)).toBe(true);
+    });
+    it("does not fire when margin is at or above the floor", () => {
+      expect(
+        evaluateAlertRule("LOW_MARGIN", {
+          ...base,
+          isPriceEvent: true,
+          marginPct: 15,
+          thresholdValue: 10,
+        }),
+      ).toBe(false);
+      expect(
+        evaluateAlertRule("LOW_MARGIN", {
+          ...base,
+          isPriceEvent: true,
+          marginPct: 10,
+          thresholdValue: 10,
+        }),
+      ).toBe(false);
+    });
+    it("does not fire without a cost (marginPct null)", () => {
+      const ctx = { ...base, isPriceEvent: true, marginPct: null, thresholdValue: 10 };
+      expect(evaluateAlertRule("LOW_MARGIN", ctx)).toBe(false);
+    });
+    it("does not fire without a price event or threshold", () => {
+      expect(evaluateAlertRule("LOW_MARGIN", { ...base, marginPct: 2, thresholdValue: 10 })).toBe(
+        false,
+      );
+      expect(evaluateAlertRule("LOW_MARGIN", { ...base, isPriceEvent: true, marginPct: 2 })).toBe(
+        false,
+      );
+    });
+    it("is not suppressed by the user noise floor (a tiny move can cross the margin floor)", () => {
+      const ctx = {
+        ...base,
+        isPriceEvent: true,
+        marginPct: 2,
+        thresholdValue: 10,
+        priceChangePct: -1,
+        userThresholdPct: 5,
+      };
+      expect(evaluateAlertRule("LOW_MARGIN", ctx)).toBe(true);
     });
   });
 

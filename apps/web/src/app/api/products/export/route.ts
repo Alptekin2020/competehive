@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { unauthorized, serverError } from "@/lib/api-response";
 import { buildCsv } from "@/lib/csv";
+import { computeMargin } from "@competehive/shared";
 
 function formatDate(value: Date | null) {
   if (!value) return "";
@@ -38,6 +39,9 @@ export async function GET() {
       "product",
       "marketplace",
       "my_price",
+      "cost",
+      "profit",
+      "margin_pct",
       "competitor_count",
       "last_update",
       "status",
@@ -45,16 +49,26 @@ export async function GET() {
       "product_url",
     ];
 
-    const rows = products.map((product) => [
-      product.productName,
-      product.marketplace,
-      product.currentPrice ? Number(product.currentPrice).toFixed(2) : "",
-      product.competitors.length,
-      formatDate(product.lastScrapedAt),
-      product.status,
-      product.tags.map((pt) => pt.tag.name).join(" | "),
-      product.productUrl,
-    ]);
+    const rows = products.map((product) => {
+      // Maliyet girilmemişse kâr/marj kolonları boş kalır — "0" yazmak yanıltıcı olur.
+      const margin = computeMargin(
+        product.currentPrice ? Number(product.currentPrice) : null,
+        product.cost ? Number(product.cost) : null,
+      );
+      return [
+        product.productName,
+        product.marketplace,
+        product.currentPrice ? Number(product.currentPrice).toFixed(2) : "",
+        product.cost ? Number(product.cost).toFixed(2) : "",
+        margin ? margin.profit.toFixed(2) : "",
+        margin ? margin.marginPct.toFixed(1) : "",
+        product.competitors.length,
+        formatDate(product.lastScrapedAt),
+        product.status,
+        product.tags.map((pt) => pt.tag.name).join(" | "),
+        product.productUrl,
+      ];
+    });
 
     const csv = buildCsv(headers, rows);
     const filename = `competehive-products-${new Date().toISOString().slice(0, 10)}.csv`;

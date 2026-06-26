@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -15,9 +15,13 @@ import {
 } from "recharts";
 import {
   MIN_MATCH_SCORE,
+  THIN_MARGIN_PCT,
   getMarketplaceInfo,
   assessCompetitor,
+  computeMargin,
+  priceForMargin,
   type CompetitorAssessment,
+  type MarginBand,
 } from "@competehive/shared";
 import RefreshButton from "@/components/RefreshButton";
 import InfoTip from "@/components/ui/InfoTip";
@@ -57,6 +61,7 @@ interface ProductData {
   productUrl: string;
   productImage: string | null;
   currentPrice: string | null;
+  cost: string | null;
   currency: string;
   status: string;
   refreshStatus: string | null;
@@ -71,6 +76,37 @@ interface ProductData {
 type CompetitorSort = "lowest" | "highest" | "closest";
 type CompetitorFilter = "all" | "priced" | "suspicious";
 type TimeRange = "7d" | "30d" | "all";
+
+// Marj bandı → rozet etiketi + renkleri. margin.ts'teki MarginBand ile senkron.
+const MARGIN_BAND_UI: Record<
+  MarginBand,
+  { label: string; text: string; bg: string; border: string }
+> = {
+  loss: {
+    label: "Zarar",
+    text: "text-rose-300",
+    bg: "bg-rose-500/10",
+    border: "border-rose-500/30",
+  },
+  thin: {
+    label: "İnce marj",
+    text: "text-amber-300",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/30",
+  },
+  healthy: {
+    label: "Sağlıklı",
+    text: "text-emerald-300",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/30",
+  },
+  strong: {
+    label: "Güçlü",
+    text: "text-emerald-300",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/30",
+  },
+};
 
 // Retailer renklerini döndür
 function retailerColor(name: string): string {
@@ -216,6 +252,10 @@ export default function ProductDetailPage() {
   const [competitorUrlInput, setCompetitorUrlInput] = useState("");
   const [addCompetitorLoading, setAddCompetitorLoading] = useState(false);
   const [addCompetitorError, setAddCompetitorError] = useState<string | null>(null);
+  const [costInput, setCostInput] = useState("");
+  const [savingCost, setSavingCost] = useState(false);
+  const [costError, setCostError] = useState<string | null>(null);
+  const [costSaved, setCostSaved] = useState(false);
 
   const fetchProduct = useCallback(async () => {
     setLoading(true);
@@ -240,6 +280,60 @@ export default function ProductDetailPage() {
     if (!id) return;
     fetchProduct();
   }, [id, fetchProduct]);
+
+  // Maliyet input'unu yalnızca ürün KİMLİĞİ değiştiğinde (ilk yükleme) sunucu
+  // değeriyle senkronla; kaydetme sonrası refetch'te (aynı id) kullanıcının
+  // girdisini ezmesin.
+  const syncedCostProductIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (product && product.id !== syncedCostProductIdRef.current) {
+      syncedCostProductIdRef.current = product.id;
+      setCostInput(product.cost != null ? String(Number(product.cost)) : "");
+    }
+  }, [product]);
+
+  const handleSaveCost = useCallback(async () => {
+    if (!product || savingCost) return;
+    setCostError(null);
+    setCostSaved(false);
+
+    const trimmed = costInput.trim();
+    // Boş = maliyeti temizle (null). type="text" olduğu için ham metin gelir:
+    // virgül (TR ondalık) noktaya çevrilir, virgül varsa binlik ayıracı noktalar
+    // atılır. Geçersiz girişte sessizce temizlemek yerine kullanıcıya hata gösterilir.
+    let cost: number | null = null;
+    if (trimmed !== "") {
+      const normalized = trimmed.includes(",")
+        ? trimmed.replace(/\./g, "").replace(",", ".")
+        : trimmed;
+      const parsed = Number(normalized);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setCostError("Geçerli bir maliyet girin (0 veya daha büyük).");
+        return;
+      }
+      cost = parsed;
+    }
+
+    setSavingCost(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cost }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setCostError(data?.error || "Maliyet kaydedilemedi.");
+        return;
+      }
+      setCostSaved(true);
+      await fetchProduct();
+    } catch {
+      setCostError("Maliyet kaydedilemedi.");
+    } finally {
+      setSavingCost(false);
+    }
+  }, [product, costInput, savingCost, fetchProduct]);
 
   // Stats — currentPrice null'sa priceHistory'deki en güncel öz-fiyatı kullan.
   // Erken return'lerden önce çağrılmalı; product yoksa null değer üretir.
@@ -577,6 +671,33 @@ export default function ProductDetailPage() {
           .reduce((acc, price) => acc + price, 0) / 3
       : null;
 
+  // Kârlılık (maliyet girilmişse): mevcut marj, en ucuz rakibi geçme fiyatındaki
+  // marj ve %10 ince-marj tabanı. Maliyet yoksa hepsi null kalır ve kart "maliyet
+  // girin" durumunu gösterir.
+  const ownCostNum = product.cost != null ? Number(product.cost) : null;
+  const hasCost = ownCostNum !== null && Number.isFinite(ownCostNum);
+  const currentMargin = computeMargin(ownPrice, ownCostNum);
+  const undercutMargin = computeMargin(undercutSuggestion, ownCostNum);
+  const marginFloorPrice = priceForMargin(ownCostNum, THIN_MARGIN_PCT);
+  // Rakibi geçmek ince-marj tabanının altına inmeyi gerektiriyor mu?
+  const undercutBreachesFloor =
+    undercutSuggestion !== null &&
+    marginFloorPrice !== null &&
+    undercutSuggestion < marginFloorPrice;
+  // Marj-korumalı öneri: rakibi geç ama %10 marj tabanının altına inme. Taban
+  // en ucuz rakibin üstündeyse kârlı şekilde geçilemez → taban fiyatı önerilir.
+  const marginProtectedPrice =
+    hasCost && marginFloorPrice !== null
+      ? undercutSuggestion !== null
+        ? Math.max(undercutSuggestion, marginFloorPrice)
+        : marginFloorPrice
+      : null;
+  const marginProtectedMargin = computeMargin(marginProtectedPrice, ownCostNum);
+  const marginProtectedBeatsCheapest =
+    marginProtectedPrice !== null &&
+    cheapestCompetitorPrice !== null &&
+    marginProtectedPrice < cheapestCompetitorPrice;
+
   const qualityRatio = competitors.length > 0 ? validCompetitors.length / competitors.length : 0;
   const staleRatio = competitors.length > 0 ? staleCompetitors.length / competitors.length : 0;
   const qualityLabel =
@@ -906,6 +1027,102 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
+      {/* Maliyet & Kâr — satıcının birim maliyetinden kâr/marj türetir */}
+      <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <h3 className="text-white font-semibold inline-flex items-center gap-2">
+            Maliyet & Kâr
+            <InfoTip
+              align="left"
+              text="Ürünün size birim maliyetini (alış + kargo + komisyon dahil) girin. Kâr, marj ve marj-korumalı fiyat önerisi bundan hesaplanır. Bu veri yalnızca sizin hesabınıza özeldir ve rakiplere gösterilmez."
+            />
+          </h3>
+          {currentMargin && (
+            <span
+              className={`rounded-full border px-3 py-1 text-xs font-medium ${MARGIN_BAND_UI[currentMargin.band].text} ${MARGIN_BAND_UI[currentMargin.band].bg} ${MARGIN_BAND_UI[currentMargin.band].border}`}
+            >
+              {MARGIN_BAND_UI[currentMargin.band].label}
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1">
+            <label htmlFor="product-cost" className="block text-xs text-gray-500 mb-1">
+              Birim maliyet ({product.currency})
+            </label>
+            <input
+              id="product-cost"
+              type="text"
+              inputMode="decimal"
+              value={costInput}
+              onChange={(e) => {
+                setCostInput(e.target.value);
+                setCostSaved(false);
+                setCostError(null);
+              }}
+              placeholder="Örn: 850"
+              className="w-full bg-dark-900 border border-dark-800 rounded-xl px-4 py-2.5 text-white text-sm placeholder-dark-600 focus:outline-none focus:border-hive-500/50 transition"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveCost}
+            disabled={savingCost}
+            className="bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 px-5 py-2.5 rounded-xl text-sm font-semibold transition"
+          >
+            {savingCost ? "Kaydediliyor..." : "Kaydet"}
+          </button>
+        </div>
+        {costError && <p className="mt-2 text-xs text-rose-400">{costError}</p>}
+        {costSaved && !costError && (
+          <p className="mt-2 text-xs text-emerald-400">Maliyet kaydedildi.</p>
+        )}
+
+        {hasCost ? (
+          currentMargin ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+              <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
+                <p className="text-gray-500 text-xs mb-1">Birim kâr</p>
+                <p
+                  className={`font-semibold ${currentMargin.profit < 0 ? "text-rose-300" : "text-white"}`}
+                >
+                  {formatPrice(currentMargin.profit, product.currency)}
+                </p>
+              </div>
+              <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
+                <p className="text-gray-500 text-xs mb-1">Kâr marjı</p>
+                <p className={`font-semibold ${MARGIN_BAND_UI[currentMargin.band].text}`}>
+                  %{currentMargin.marginPct.toFixed(1)}
+                </p>
+              </div>
+              <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
+                <p className="text-gray-500 text-xs mb-1 inline-flex items-center gap-1.5">
+                  %{THIN_MARGIN_PCT} marj tabanı
+                  <InfoTip
+                    align="right"
+                    text="Bu satış fiyatının altına inerseniz kâr marjınız %10'un altına düşer. Rakibi geçmeden önce bu tabanla kıyaslayın."
+                  />
+                </p>
+                <p className="text-white font-semibold">
+                  {marginFloorPrice ? formatPrice(marginFloorPrice, product.currency) : "—"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-gray-500">
+              Kâr hesaplamak için güncel satış fiyatınız gerekli — tarama tamamlanınca otomatik
+              dolacak.
+            </p>
+          )
+        ) : (
+          <p className="mt-3 text-xs text-gray-500">
+            Maliyet girince birim kâr, marj rozeti ve zarar/düşük-marj uyarısı (LOW_MARGIN) devreye
+            girer.
+          </p>
+        )}
+      </div>
+
       <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6">
         <h3 className="text-white font-semibold mb-2 inline-flex items-center gap-2">
           Önerilen Fiyat
@@ -917,34 +1134,75 @@ export default function ProductDetailPage() {
         {validCompetitors.length === 0 ? (
           <p className="text-sm text-gray-400">Öneri üretmek için yeterli rakip verisi yok.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
-              <p className="text-xs text-gray-500 mb-1">
-                En düşük rakibi geçmek için önerilen fiyat
-              </p>
-              <p className="text-lg font-semibold text-emerald-300">
-                {undercutSuggestion
-                  ? formatPrice(undercutSuggestion, product.currency)
-                  : "Hesaplanamadı"}
-              </p>
-              <p className="text-[11px] text-gray-500 mt-1">
-                En düşük geçerli rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
-              </p>
+          <>
+            {marginProtectedPrice !== null && marginProtectedMargin && (
+              <div className="mb-3 rounded-xl border border-hive-500/30 bg-hive-500/5 p-3">
+                <p className="text-xs text-hive-300 mb-1 inline-flex items-center gap-1.5">
+                  ⭐ Marj-korumalı önerilen fiyat
+                  <InfoTip
+                    align="left"
+                    text="Rakibi geçmeye çalışır ama kâr marjınızı %10 tabanının altına düşürmez. Taban en ucuz rakibin üstündeyse kârlı şekilde geçemezsiniz; bu durumda en düşük kârlı fiyatınız önerilir."
+                  />
+                </p>
+                <p className="text-xl font-bold text-white">
+                  {formatPrice(marginProtectedPrice, product.currency)}
+                  <span className="text-sm font-medium text-emerald-300 ml-2">
+                    %{marginProtectedMargin.marginPct.toFixed(1)} marj
+                  </span>
+                </p>
+                <p className="mt-1 text-[11px] text-gray-400">
+                  {marginProtectedBeatsCheapest
+                    ? "En ucuz rakibin altında kalır ve marjınızı korur."
+                    : `Rakibi geçmek %${THIN_MARGIN_PCT} marjın altına iner; bu sizin en düşük kârlı fiyatınız.`}
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">
+                  En düşük rakibi geçmek için önerilen fiyat
+                </p>
+                <p className="text-lg font-semibold text-emerald-300">
+                  {undercutSuggestion
+                    ? formatPrice(undercutSuggestion, product.currency)
+                    : "Hesaplanamadı"}
+                </p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  En düşük geçerli rakip fiyatından 1 TL düşük olacak şekilde hesaplanır.
+                </p>
+                {undercutSuggestion && undercutMargin && (
+                  <p
+                    className={`text-[11px] mt-1.5 font-medium ${
+                      undercutMargin.profit < 0
+                        ? "text-rose-400"
+                        : undercutBreachesFloor
+                          ? "text-amber-400"
+                          : "text-emerald-400"
+                    }`}
+                  >
+                    {undercutMargin.profit < 0
+                      ? `⚠️ Maliyetinizin altında — birim zarar ${formatPrice(Math.abs(undercutMargin.profit), product.currency)}.`
+                      : `Bu fiyatta marjınız %${undercutMargin.marginPct.toFixed(1)}${
+                          undercutBreachesFloor ? ` — %${THIN_MARGIN_PCT} tabanının altında.` : "."
+                        }`}
+                  </p>
+                )}
+              </div>
+              <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">
+                  İlk 3 rakip ortalamasına göre önerilen fiyat
+                </p>
+                <p className="text-lg font-semibold text-amber-300">
+                  {top3AvgSuggestion
+                    ? formatPrice(top3AvgSuggestion, product.currency)
+                    : "Öneri için en az 3 rakip gerekli"}
+                </p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  En ucuz 3 geçerli rakip fiyatının aritmetik ortalaması alınır.
+                </p>
+              </div>
             </div>
-            <div className="bg-[#0D0D10] border border-[#1F1F23] rounded-xl p-3">
-              <p className="text-xs text-gray-500 mb-1">
-                İlk 3 rakip ortalamasına göre önerilen fiyat
-              </p>
-              <p className="text-lg font-semibold text-amber-300">
-                {top3AvgSuggestion
-                  ? formatPrice(top3AvgSuggestion, product.currency)
-                  : "Öneri için en az 3 rakip gerekli"}
-              </p>
-              <p className="text-[11px] text-gray-500 mt-1">
-                En ucuz 3 geçerli rakip fiyatının aritmetik ortalaması alınır.
-              </p>
-            </div>
-          </div>
+          </>
         )}
       </div>
 

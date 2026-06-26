@@ -93,6 +93,10 @@ function absPct(n: number | null): string {
 function isDrop(n: number | null): boolean {
   return n != null && n < 0;
 }
+// Negatif marj = zarar; pozitif ama düşük marj = "ince" uyarı. İkisi de LOW_MARGIN.
+function isLoss(marginPct: number | null | undefined): boolean {
+  return typeof marginPct === "number" && marginPct < 0;
+}
 function emailHeadline(ruleType: string, drop: boolean): { emoji: string; heading: string } {
   switch (ruleType) {
     case "OUT_OF_STOCK":
@@ -103,6 +107,8 @@ function emailHeadline(ruleType: string, drop: boolean): { emoji: string; headin
       return { emoji: "⚡", heading: "Rakip daha ucuz" };
     case "PRICE_THRESHOLD":
       return { emoji: "🎯", heading: "Hedef fiyata ulaşıldı" };
+    case "LOW_MARGIN":
+      return { emoji: "💸", heading: "Kâr marjı düştü" };
     default:
       return drop
         ? { emoji: "📉", heading: "Fiyat düştü" }
@@ -147,7 +153,9 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `🎯 <b>Hedef fiyata ulaşıldı</b>`,
         ``,
         name,
-        `Şu anki fiyat: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        data.previousPrice !== null
+          ? `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`
+          : `Şu anki fiyat: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
         marketplace,
         ``,
         linkLine,
@@ -169,15 +177,24 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
       ].join("\n");
     }
 
-    case "COMPETITOR_CHEAPER":
+    case "COMPETITOR_CHEAPER": {
+      const compPrice = data.competitorPrice ?? null;
+      const compName = escapeHtml(data.cheapestCompetitorName?.trim() || "Bir rakip");
+      const count = data.cheaperCompetitorCount ?? 0;
+      const diffPct =
+        compPrice && compPrice > 0 ? ((data.currentPrice - compPrice) / compPrice) * 100 : null;
+      const lead = count > 1 ? `${count} rakip senden ucuz — en ucuzu:` : `Senden ucuz:`;
       return [
         `⚡ <b>Rakip daha ucuz</b>`,
         ``,
         name,
-        `${marketplace} fiyatı: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${lead} <b>${compName} · ${money(compPrice)} ₺</b>`,
+        `Senin fiyatın: <b>${data.currentPrice.toFixed(2)} ₺</b>${diffPct !== null ? ` (%${diffPct.toFixed(1)} daha pahalı)` : ""}`,
+        marketplace,
         ``,
         linkLine,
       ].join("\n");
+    }
 
     case "OUT_OF_STOCK":
       return [`🚫 <b>Stoktan çıktı</b>`, ``, name, marketplace, ``, linkLine].join("\n");
@@ -192,6 +209,24 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         ``,
         linkLine,
       ].join("\n");
+
+    case "LOW_MARGIN": {
+      const loss = isLoss(data.marginPct);
+      const emoji = loss ? "🔻" : "💸";
+      const heading = loss ? "Zarar ediyorsun" : "Kâr marjı düştü";
+      const profit = data.cost != null ? data.currentPrice - data.cost : null;
+      const marginStr = data.marginPct != null ? data.marginPct.toFixed(1) : "—";
+      return [
+        `${emoji} <b>${heading}</b>`,
+        ``,
+        name,
+        `Satış: <b>${data.currentPrice.toFixed(2)} ₺</b> • Maliyet: ${money(data.cost ?? null)} ₺`,
+        `Birim kâr: <b>${money(profit)} ₺</b> • Marj: <b>%${marginStr}</b>`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+    }
 
     default: {
       const dir = isDrop(data.priceChange) ? "düştü" : "arttı";
@@ -223,6 +258,13 @@ interface AlertData {
   priceChangePct: number | null;
   marketplace: string;
   productUrl: string;
+  // Kârlılık alanları — yalnızca LOW_MARGIN için doldurulur (maliyet girilmişse).
+  cost?: number | null;
+  marginPct?: number | null;
+  // Rakip bağlamı — yalnızca COMPETITOR_CHEAPER için doldurulur.
+  competitorPrice?: number | null;
+  cheapestCompetitorName?: string | null;
+  cheaperCompetitorCount?: number | null;
 }
 
 // ============================================
@@ -247,6 +289,10 @@ function generateNotificationTitle(ruleType: string, data: AlertData): string {
       return `🚫 Stoktan çıktı: ${data.productName}`;
     case "BACK_IN_STOCK":
       return `✅ Stoğa girdi: ${data.productName}`;
+    case "LOW_MARGIN":
+      return isLoss(data.marginPct)
+        ? `🔻 Zarar uyarısı: ${data.productName}`
+        : `💸 Kâr marjı düştü: ${data.productName}`;
     default: {
       const direction = isDrop(data.priceChange) ? "düştü" : "arttı";
       return `🔔 Fiyat ${direction}: ${data.productName}`;
@@ -262,7 +308,15 @@ function generateNotificationMessage(ruleType: string, data: AlertData): string 
     return `${data.productName} tekrar stokta. Güncel fiyat: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
   }
   if (ruleType === "COMPETITOR_CHEAPER") {
-    return `${data.productName} için bir rakip daha ucuz. Senin fiyatın: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+    const compName = data.cheapestCompetitorName?.trim() || "Bir rakip";
+    const count = data.cheaperCompetitorCount ?? 0;
+    const countText = count > 1 ? `${count} rakip senden ucuz. ` : "";
+    return `${data.productName}: ${countText}En ucuz rakip ${compName} ${money(data.competitorPrice ?? null)} ₺. Senin fiyatın: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+  }
+  if (ruleType === "LOW_MARGIN") {
+    const profit = data.cost != null ? data.currentPrice - data.cost : null;
+    const marginStr = data.marginPct != null ? data.marginPct.toFixed(1) : "—";
+    return `${data.productName} kâr marjı %${marginStr} seviyesine indi. Satış: ${money(data.currentPrice)} ₺, maliyet: ${money(data.cost ?? null)} ₺, birim kâr: ${money(profit)} ₺. Marketplace: ${data.marketplace}.`;
   }
   if (data.previousPrice === null || data.priceChange === null) {
     return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
@@ -402,6 +456,41 @@ async function sendEmailAlert(
   const priceColor = data.priceChange === null ? "#FFFFFF" : drop ? "#22C55E" : "#EF4444";
   const { emoji, heading } = emailHeadline(ruleType, drop);
 
+  // LOW_MARGIN: fiyat kartına maliyet + birim kâr/marj satırlarını ekle. Diğer
+  // kural türlerinde boş kalır (mevcut e-posta görünümü değişmez).
+  const showMargin = ruleType === "LOW_MARGIN" && data.marginPct != null;
+  const marginProfit = data.cost != null ? data.currentPrice - data.cost : null;
+  const marginColor = isLoss(data.marginPct) ? "#EF4444" : "#F59E0B";
+  const marginRowsHtml = showMargin
+    ? `<tr>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Maliyet</td>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
+          ${money(data.cost ?? null)} ₺
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Birim kâr / Marj</td>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${marginColor}; font-size: 14px; font-weight: 600;">
+          ${money(marginProfit)} ₺ (%${(data.marginPct as number).toFixed(1)})
+        </td>
+      </tr>`
+    : "";
+
+  // COMPETITOR_CHEAPER: fiyat kartına "en ucuz rakip" satırını ekle.
+  const showCompetitor = ruleType === "COMPETITOR_CHEAPER" && data.competitorPrice != null;
+  const competitorLabel =
+    (data.cheaperCompetitorCount ?? 0) > 1
+      ? `En ucuz rakip (${data.cheaperCompetitorCount})`
+      : "Rakip fiyatı";
+  const competitorRowsHtml = showCompetitor
+    ? `<tr>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">${competitorLabel}</td>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #22C55E; font-size: 14px; font-weight: 600;">
+          ${escapeHtml(data.cheapestCompetitorName?.trim() || "Bir rakip")} · ${money(data.competitorPrice ?? null)} ₺
+        </td>
+      </tr>`
+    : "";
+
   try {
     await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || "CompeteHive <onboarding@resend.dev>",
@@ -461,6 +550,8 @@ async function sendEmailAlert(
                       </td>
                     </tr>`
                 }
+                ${marginRowsHtml}
+                ${competitorRowsHtml}
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Marketplace</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
@@ -518,6 +609,28 @@ async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<Deliv
       change: data.priceChange,
       changePercent: data.priceChangePct,
     },
+    // Maliyet girilmiş ürünlerde otomasyonların kârlılığa göre karar verebilmesi
+    // için marj bloğu eklenir (repricing botları vb.). Maliyet yoksa atlanır.
+    ...(data.cost != null
+      ? {
+          margin: {
+            cost: data.cost,
+            profit: data.currentPrice - data.cost,
+            marginPercent: data.marginPct ?? null,
+          },
+        }
+      : {}),
+    // En ucuz geçerli rakip bağlamı (COMPETITOR_CHEAPER). Otomasyonlar "kimden,
+    // ne kadar ucuz" bilgisiyle repricing kararı verebilir.
+    ...(data.competitorPrice != null
+      ? {
+          competitor: {
+            cheapestPrice: data.competitorPrice,
+            cheapestName: data.cheapestCompetitorName ?? null,
+            cheaperCount: data.cheaperCompetitorCount ?? null,
+          },
+        }
+      : {}),
   });
 
   try {

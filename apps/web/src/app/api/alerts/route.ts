@@ -46,6 +46,7 @@ const createAlertSchema = z.object({
     "COMPETITOR_CHEAPER",
     "OUT_OF_STOCK",
     "BACK_IN_STOCK",
+    "LOW_MARGIN",
   ]),
   thresholdValue: z.number().optional(),
   direction: z.enum(["above", "below"]).optional(),

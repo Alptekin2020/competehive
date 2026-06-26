@@ -4,6 +4,16 @@ export const addProductSchema = z.object({
   productUrl: z.string().url("Gecerli bir URL giriniz"),
 });
 
+// Ürün maliyetini (COGS) güncelle. null = maliyeti temizle. Üst sınır, hatalı
+// kuruş/lira girişini (ör. 12.500 yerine 1250000) erkenden eler.
+export const updateProductSchema = z.object({
+  cost: z
+    .number()
+    .min(0, "Maliyet 0 veya daha buyuk olmali")
+    .max(99999999, "Maliyet cok yuksek")
+    .nullable(),
+});
+
 export const compareSchema = z.object({
   productId: z.string().uuid("Gecerli bir urun ID gerekli"),
 });

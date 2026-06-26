@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { isUsableCompetitor } from "@competehive/shared";
+import { isUsableCompetitor, computeMargin } from "@competehive/shared";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
@@ -58,6 +58,7 @@ interface ProductItem {
   product_url: string;
   product_image: string | null;
   current_price: string | null;
+  cost?: string | null;
   last_scraped_at: string | null;
   status?: string;
   refresh_status?: string | null;
@@ -207,6 +208,8 @@ export default function ProductsPage() {
         const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
         const stale = isStale(p.last_scraped_at);
         const priceChange = p.trend?.priceChange ?? null;
+        // Maliyet girilmişse marj — katalog genelinde kâr sağlığı tek bakışta.
+        const margin = computeMargin(myPrice, p.cost ?? null);
 
         return {
           product: p,
@@ -215,6 +218,7 @@ export default function ProductsPage() {
           minCompetitorPrice,
           stale,
           priceChange,
+          margin,
         };
       })
       .filter(({ product }) => {
@@ -594,7 +598,7 @@ export default function ProductsPage() {
             </div>
           )}
           {filteredProducts.map(
-            ({ product, myPrice, competitorCount, minCompetitorPrice, stale }) => {
+            ({ product, myPrice, competitorCount, minCompetitorPrice, stale, margin }) => {
               // Tarama servisi hata aldıysa bunu "Rakip yok" gibi göstermek
               // yanıltıcıdır — kullanıcı gerçek sebebi (ör. arama servisi
               // erişilemedi) görmeli ki yanlış teşhise gitmesin.
@@ -672,6 +676,20 @@ export default function ProductsPage() {
                           title="Karara uygun (güvenilir eşleşme, fiyat bandında, taze) rakipler içindeki en düşük fiyat"
                         >
                           En düşük rakip: ₺{minCompetitorPrice.toLocaleString("tr-TR")}
+                        </span>
+                      )}
+                      {margin && (
+                        <span
+                          className={`px-2 py-0.5 rounded-full border ${
+                            margin.band === "loss"
+                              ? "border-rose-500/30 text-rose-300 bg-rose-500/10"
+                              : margin.band === "thin"
+                                ? "border-amber-500/25 text-amber-300 bg-amber-500/10"
+                                : "border-emerald-500/20 text-emerald-300 bg-emerald-500/10"
+                          }`}
+                          title="Kâr marjı — maliyet ürün detayından girilir"
+                        >
+                          {margin.band === "loss" ? "Zarar" : "Marj"} %{margin.marginPct.toFixed(0)}
                         </span>
                       )}
                       {product.tags?.map((pt) => {

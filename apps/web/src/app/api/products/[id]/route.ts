@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { apiSuccess, unauthorized, notFound, serverError } from "@/lib/api-response";
+import { apiSuccess, unauthorized, notFound, badRequest, serverError } from "@/lib/api-response";
+import { updateProductSchema } from "@/lib/validation";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -22,6 +23,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         productUrl: true,
         productImage: true,
         currentPrice: true,
+        cost: true,
         currency: true,
         status: true,
         refreshStatus: true,
@@ -72,6 +74,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       productUrl: product.productUrl,
       productImage: product.productImage,
       currentPrice: product.currentPrice,
+      cost: product.cost,
       currency: product.currency,
       status: product.status,
       refreshStatus: product.refreshStatus,
@@ -130,5 +133,32 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     return apiSuccess({ product: responseProduct });
   } catch (error) {
     return serverError(error, "Product detail fetch failed");
+  }
+}
+
+// PATCH - Ürünün satıcı tarafından girilen alanlarını güncelle (şimdilik maliyet).
+// Maliyet kâr/marj hesaplarını ve LOW_MARGIN uyarısını besler; null = temizle.
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return unauthorized();
+
+    const { id } = await params;
+
+    const body = await request.json().catch(() => null);
+    const parsed = updateProductSchema.safeParse(body);
+    if (!parsed.success) return badRequest(parsed.error.errors[0].message);
+
+    // Sahiplik kontrolü: updateMany ile kullanıcının kendi ürününe sınırla.
+    const result = await prisma.trackedProduct.updateMany({
+      where: { id, userId: user.id },
+      data: { cost: parsed.data.cost },
+    });
+
+    if (result.count === 0) return notFound("Ürün bulunamadı");
+
+    return apiSuccess({ success: true, cost: parsed.data.cost });
+  } catch (error) {
+    return serverError(error, "Product update failed");
   }
 }

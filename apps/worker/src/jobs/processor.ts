@@ -378,12 +378,21 @@ export const alertWorker = new Worker(
     // kullanıcının kural kümesi için gerekli.
     const product = await prisma.trackedProduct.findUnique({
       where: { id: productId },
-      select: { userId: true, productName: true, marketplace: true, productUrl: true },
+      select: { userId: true, productName: true, marketplace: true, productUrl: true, cost: true },
     });
     if (!product) {
       logger.warn({ productId }, "Alert check skipped — product no longer exists");
       return;
     }
+
+    // Kâr marjı (LOW_MARGIN için): maliyet girilmemişse null kalır ve LOW_MARGIN
+    // sessiz kalır. Formül packages/shared/src/margin.ts ile senkron tutulmalı
+    // (worker Docker context'i shared paketi import edemez).
+    const ownCost = product.cost != null ? Number(product.cost) : null;
+    const marginPct =
+      ownCost !== null && Number.isFinite(ownCost) && ownCost >= 0 && currentPrice > 0
+        ? ((currentPrice - ownCost) / currentPrice) * 100
+        : null;
 
     let previousStockState: boolean | null =
       typeof previousInStock === "boolean" ? previousInStock : null;
@@ -419,21 +428,30 @@ export const alertWorker = new Worker(
     // Kalite politikası (skor, fiyat bandı, bayatlık) uygulanır — yoksa ₺11'lik
     // bir koli kaydı ₺2.500'lük ürüne sürekli sahte "rakip daha ucuz" alarmı üretir.
     let minCompetitorPrice: number | null = null;
+    let cheapestCompetitorName: string | null = null;
+    let cheaperCompetitorCount = 0;
     if (rules.some((r) => r.ruleType === "COMPETITOR_CHEAPER")) {
       const competitors = await prisma.competitor.findMany({
         where: { trackedProductId: productId, currentPrice: { gt: 0 } },
-        select: { currentPrice: true, matchScore: true, lastScrapedAt: true },
+        select: { competitorName: true, currentPrice: true, matchScore: true, lastScrapedAt: true },
       });
       const ownPrice = Number(currentPrice);
-      const usablePrices = competitors
+      const usable = competitors
         .map((c) => ({
+          name: c.competitorName,
           price: Number(c.currentPrice),
           matchScore: c.matchScore,
           lastScrapedAt: c.lastScrapedAt,
         }))
-        .filter((c) => isUsableCompetitor(c, { ownPrice }))
-        .map((c) => c.price);
-      minCompetitorPrice = usablePrices.length > 0 ? Math.min(...usablePrices) : null;
+        .filter((c) => isUsableCompetitor(c, { ownPrice }));
+      if (usable.length > 0) {
+        // En ucuz geçerli rakip + bizden ucuz olanların sayısı — bildirimi
+        // "kim, ne kadar ucuz" diyecek kadar aksiyon alınabilir yapar.
+        const cheapest = usable.reduce((min, c) => (c.price < min.price ? c : min));
+        minCompetitorPrice = cheapest.price;
+        cheapestCompetitorName = cheapest.name;
+        cheaperCompetitorCount = usable.filter((c) => c.price < ownPrice).length;
+      }
     }
 
     for (const rule of rules) {
@@ -460,6 +478,7 @@ export const alertWorker = new Worker(
         thresholdValue: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
         direction: rule.direction,
         minCompetitorPrice,
+        marginPct,
         userThresholdPct: rule.user.alertThresholdPct,
       });
 
@@ -472,6 +491,11 @@ export const alertWorker = new Worker(
           priceChangePct,
           marketplace: product.marketplace,
           productUrl: product.productUrl,
+          cost: ownCost,
+          marginPct,
+          competitorPrice: minCompetitorPrice,
+          cheapestCompetitorName,
+          cheaperCompetitorCount,
         });
 
         await markCooldown(rule.id, productId, rule.cooldownMinutes);
