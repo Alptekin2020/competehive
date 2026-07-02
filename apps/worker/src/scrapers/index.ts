@@ -355,7 +355,8 @@ function parseTrendyolHtml(html: string): ScrapedProduct | null {
               pd.price =
                 pd.price ||
                 product.price?.discountedPrice?.value ||
-                product.price?.sellingPrice?.value;
+                product.price?.sellingPrice?.value ||
+                product.price?.originalPrice?.value;
               pd.sellerName = pd.sellerName || product.merchant?.name;
               pd.category = pd.category || product.category?.name;
             }
@@ -496,16 +497,16 @@ export async function scrapeTrendyol(
 
         // merchantId istenmişse yanıtın gerçekten o satıcıya ait olduğunu
         // doğrula — API parametreyi yok sayarsa buybox fiyatı döner ve yanlış
-        // satıcının fiyatı kaydedilir. Eşleşmiyorsa HTML stratejisine düş
+        // satıcının fiyatı kaydedilir. Yanıtta merchant.id hiç yoksa da
+        // doğrulanamıyor demektir; iki durumda da HTML stratejisine düş
         // (SSR sayfası merchantId'yi her zaman dikkate alır).
         const responseMerchantId =
           merchant?.id != null ? String(merchant.id as string | number) : null;
-        const merchantMismatch =
-          merchantId !== null && responseMerchantId !== null && responseMerchantId !== merchantId;
+        const merchantMismatch = merchantId !== null && responseMerchantId !== merchantId;
 
         if (merchantMismatch) {
           logger.warn(
-            `Trendyol API merchant mismatch: requested=${merchantId} got=${responseMerchantId} — falling back to HTML`,
+            `Trendyol API merchant mismatch: requested=${merchantId} got=${responseMerchantId ?? "unknown"} — falling back to HTML`,
           );
         } else if (priceValue > 0) {
           const product: ScrapedProduct = {
