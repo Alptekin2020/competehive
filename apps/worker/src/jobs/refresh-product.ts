@@ -171,8 +171,15 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
 
     const results = refreshQuery ? await searchProduct(refreshQuery) : [];
 
-    // Kaynak fiyat Serper'dan kurtarma (mevcut davranış — Akamai bloğunda kullanılıyor)
-    if (!refreshedOwnPrice) {
+    // Kaynak fiyat Serper'dan kurtarma (mevcut davranış — Akamai bloğunda kullanılıyor).
+    // KRİTİK KORUMA: URL belirli bir satıcıya işaret ediyorsa (?merchantId=...)
+    // Google Shopping'in ilan fiyatı BUYBOX fiyatıdır, o satıcının değil —
+    // urlMatchKey query'yi attığı için ikisi aynı anahtara düşer ve yanlış
+    // satıcının fiyatı "Benim Fiyatım" olarak yazılırdı (üretimde ₺1.058/₺1.189,99
+    // vakasının kök nedeni). Satıcıya özel üründe bu kurtarma atlanır; fiyat
+    // eski kalır ama YANLIŞ olmaz.
+    const urlHasMerchantId = /[?&]merchantId=\d+/i.test(product.productUrl);
+    if (!refreshedOwnPrice && !urlHasMerchantId) {
       const ownKey = urlMatchKey(product.productUrl);
       for (const result of results) {
         if (urlMatchKey(result.link) !== ownKey) continue;

@@ -1711,8 +1711,8 @@ export default function ProductDetailPage() {
           <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-md relative z-10 safe-bottom">
             <h2 className="text-lg font-bold text-white mb-1">Rakip Ekle</h2>
             <p className="text-dark-500 text-sm mb-4">
-              Rakip ürünün marketplace linkini yapıştırın. Fiyatı hemen alınamazsa en geç 30 dakika
-              içinde otomatik güncellenir.
+              Rakip ürünün marketplace linkini yapıştırın. Fiyatı hemen alınamazsa arka planda
+              çekilir ve birkaç dakika içinde görünür.
             </p>
             <input
               type="url"
