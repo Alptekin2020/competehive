@@ -261,10 +261,13 @@ function extractFromTrendyolInitialState($: cheerio.CheerioAPI): {
           const product = state.product;
           if (product) {
             if (!name && product.name) name = product.name;
-            if (!price && product.price?.sellingPrice?.value)
-              price = product.price.sellingPrice.value;
+            // Müşterinin gördüğü fiyat kampanya varken discountedPrice'tır;
+            // sellingPrice kampanya öncesi fiyat olabilir. Worker'daki API
+            // yoluyla aynı öncelik sırası kullanılır.
             if (!price && product.price?.discountedPrice?.value)
               price = product.price.discountedPrice.value;
+            if (!price && product.price?.sellingPrice?.value)
+              price = product.price.sellingPrice.value;
             if (!price && product.price?.originalPrice?.value)
               price = product.price.originalPrice.value;
             if (!seller && product.merchant?.name) seller = product.merchant.name;

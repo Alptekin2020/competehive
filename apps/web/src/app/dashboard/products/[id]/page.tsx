@@ -222,6 +222,16 @@ function MatchScoreBadge({ score }: { score: number | null }) {
   );
 }
 
+// Rakip adı boş/boşluk geldiğinde satır tamamen isimsiz (ve tıklanamaz
+// görünümde) kalmasın — en azından alan adı gösterilir.
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 function timeAgo(dateStr: string): string {
   const now = new Date();
   const date = new Date(dateStr);
@@ -1565,7 +1575,8 @@ export default function ProductDetailPage() {
                           rel="noopener noreferrer"
                           className="text-sm text-gray-300 hover:text-white truncate transition-colors block"
                         >
-                          {competitor.competitorName || competitor.competitorUrl}
+                          {competitor.competitorName?.trim() ||
+                            hostnameOf(competitor.competitorUrl)}
                         </a>
                         {competitor.matchReason && (
                           <p
@@ -1635,6 +1646,28 @@ export default function ProductDetailPage() {
                           <p className="text-sm text-gray-500">Fiyat yok</p>
                         )}
                       </div>
+                      <a
+                        href={competitor.competitorUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1.5 text-gray-500 hover:text-amber-400 rounded-lg hover:bg-amber-500/10 transition flex-shrink-0"
+                        title="Rakip ürüne git"
+                        aria-label="Rakip ürüne git"
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                      </a>
                       <button
                         type="button"
                         onClick={() => {

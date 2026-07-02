@@ -265,6 +265,14 @@ function extractTrendyolContentId(url: string): string | null {
   return match ? match[1] : null;
 }
 
+// URL belirli bir satıcının ilanına işaret ediyorsa (?merchantId=...) onu al.
+// Aynı ürünü birden çok satıcı satar; merchantId'siz productDetail çağrısı
+// buybox kazananının fiyatını döndürür — kullanıcının kendi ilanının değil.
+function extractTrendyolMerchantId(url: string): string | null {
+  const match = url.match(/[?&]merchantId=(\d+)/i);
+  return match ? match[1] : null;
+}
+
 // ============================================
 // Parse HTML for Trendyol product data
 // ============================================
@@ -343,7 +351,11 @@ function parseTrendyolHtml(html: string): ScrapedProduct | null {
             const product = state.product;
             if (product) {
               pd.name = pd.name || product.name;
-              pd.price = pd.price || product.price?.sellingPrice?.value;
+              // Kampanya varken müşterinin gördüğü fiyat discountedPrice'tır.
+              pd.price =
+                pd.price ||
+                product.price?.discountedPrice?.value ||
+                product.price?.sellingPrice?.value;
               pd.sellerName = pd.sellerName || product.merchant?.name;
               pd.category = pd.category || product.category?.name;
             }
@@ -411,9 +423,12 @@ export async function scrapeTrendyol(
 
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
   const contentId = extractTrendyolContentId(url);
+  const merchantId = extractTrendyolMerchantId(url);
   if (contentId) {
-    const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}`;
-    logger.info(`Trying Trendyol API: contentId=${contentId}`);
+    const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}${
+      merchantId ? `?merchantId=${merchantId}` : ""
+    }`;
+    logger.info(`Trying Trendyol API: contentId=${contentId} merchantId=${merchantId ?? "none"}`);
     const apiRetries = 2;
     let apiData: Record<string, unknown> | null = null;
     for (let attempt = 1; attempt <= apiRetries; attempt++) {
@@ -479,7 +494,20 @@ export async function scrapeTrendyol(
         const ratingScore = result.ratingScore as Record<string, unknown> | undefined;
         const merchant = result.merchant as Record<string, unknown> | undefined;
 
-        if (priceValue > 0) {
+        // merchantId istenmişse yanıtın gerçekten o satıcıya ait olduğunu
+        // doğrula — API parametreyi yok sayarsa buybox fiyatı döner ve yanlış
+        // satıcının fiyatı kaydedilir. Eşleşmiyorsa HTML stratejisine düş
+        // (SSR sayfası merchantId'yi her zaman dikkate alır).
+        const responseMerchantId =
+          merchant?.id != null ? String(merchant.id as string | number) : null;
+        const merchantMismatch =
+          merchantId !== null && responseMerchantId !== null && responseMerchantId !== merchantId;
+
+        if (merchantMismatch) {
+          logger.warn(
+            `Trendyol API merchant mismatch: requested=${merchantId} got=${responseMerchantId} — falling back to HTML`,
+          );
+        } else if (priceValue > 0) {
           const product: ScrapedProduct = {
             name: (result.name as string) || (result.productName as string) || "",
             price: priceValue,
