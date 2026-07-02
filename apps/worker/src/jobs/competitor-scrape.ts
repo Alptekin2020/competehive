@@ -12,6 +12,7 @@
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { getScraper } from "../scrapers";
+import { extractRetailer } from "../serper";
 
 export interface CompetitorScrapeJobData {
   competitorId: string;
@@ -24,7 +25,13 @@ export async function processCompetitorScrapeJob(
 
   const competitor = await prisma.competitor.findUnique({
     where: { id: competitorId },
-    select: { id: true, competitorUrl: true, marketplace: true, competitorName: true },
+    select: {
+      id: true,
+      competitorUrl: true,
+      marketplace: true,
+      competitorName: true,
+      trackedProductId: true,
+    },
   });
   if (!competitor) {
     logger.warn({ competitorId }, "Competitor scrape job: competitor not found (deleted?)");
@@ -60,6 +67,20 @@ export async function processCompetitorScrapeJob(
       price: scraped.price,
       currency: scraped.currency || "TRY",
       inStock: scraped.inStock ?? true,
+      scrapedAt: now,
+    },
+  });
+
+  // Grafik tutarlılığı: keşif ve tazeleme yolları gibi priceHistory'ye de yaz —
+  // aynı satıcı adı kuralıyla (perakendeci görünen adı; bilinmiyorsa mağaza adı).
+  const retailer = extractRetailer(competitor.competitorUrl);
+  await prisma.priceHistory.create({
+    data: {
+      trackedProductId: competitor.trackedProductId,
+      price: scraped.price,
+      currency: scraped.currency || "TRY",
+      inStock: scraped.inStock ?? true,
+      sellerName: retailer.name !== "Diğer" ? retailer.name : (scraped.sellerName ?? "Rakip"),
       scrapedAt: now,
     },
   });

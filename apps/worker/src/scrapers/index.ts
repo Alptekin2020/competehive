@@ -766,21 +766,25 @@ export async function scrapeTrendyol(
         pageHtml = await page.content();
         puppeteerFinalUrl = page.url();
 
-        // Coğrafi yönlendirme /en vitrinine düşürdüyse (TL fiyat yok) TR
-        // yoluna bir kez daha zorla — site çerezleri artık yüklü olduğundan
-        // ikinci deneme TR'de kalabilir.
+        // Coğrafi yönlendirme uluslararası bir vitrine düşürdüyse (TL fiyat
+        // yok) TR yoluna bir kez daha zorla — site çerezleri artık yüklü
+        // olduğundan ikinci deneme TR'de kalabilir. IP'nin ülkesine göre
+        // /en dışında /de, /ro, /pl gibi vitrinlere de yönlendirme olabilir.
+        const intlPathRegex = /^\/(en|de|ar|ro|pl|cs|sk|hu|el|bg|uk|rs)(\/|$)/;
         const landedOnIntl = (u: string | null) => {
           if (!u) return false;
           try {
-            return /^\/en(\/|$)/.test(new URL(u).pathname);
+            return intlPathRegex.test(new URL(u).pathname);
           } catch {
             return false;
           }
         };
         if (landedOnIntl(puppeteerFinalUrl)) {
-          const trRetryUrl = puppeteerFinalUrl!.replace("/en/", "/");
+          const retryUrlObj = new URL(puppeteerFinalUrl!);
+          retryUrlObj.pathname = retryUrlObj.pathname.replace(intlPathRegex, "/");
+          const trRetryUrl = retryUrlObj.toString();
           logger.info(
-            `Trendyol Puppeteer /en yönlendirmesi — TR retry: ${trRetryUrl.slice(0, 100)}`,
+            `Trendyol Puppeteer uluslararası vitrin yönlendirmesi — TR retry: ${trRetryUrl.slice(0, 100)}`,
           );
           await page.goto(trRetryUrl, {
             waitUntil: "domcontentloaded",
@@ -790,11 +794,16 @@ export async function scrapeTrendyol(
           pageHtml = await page.content();
           puppeteerFinalUrl = page.url();
         }
-        // Hâlâ /en'deysek sayfayı AYRIŞTIRMA — EUR fiyatın TL sanılıp
-        // yazılmasındansa taramanın başarısız sayılması güvenlidir.
-        if (landedOnIntl(puppeteerFinalUrl)) {
+        // Hâlâ uluslararası vitrindeysek sayfayı AYRIŞTIRMA — EUR/RON vb.
+        // fiyatın TL sanılıp yazılmasındansa taramanın başarısız sayılması
+        // güvenlidir. Son kapı yol önekine değil <html lang="..."> özniteliğine
+        // bakar: tüm dilleri kapsar ve iki harfli marka yollarında yanlış
+        // pozitif üretmez.
+        const htmlLangMatch = pageHtml.match(/<html[^>]*\blang="([a-zA-Z-]+)"/);
+        const htmlLang = htmlLangMatch ? htmlLangMatch[1].toLowerCase() : null;
+        if (landedOnIntl(puppeteerFinalUrl) || (htmlLang !== null && !htmlLang.startsWith("tr"))) {
           logger.warn(
-            `Trendyol Puppeteer uluslararası vitrinde kaldı (${puppeteerFinalUrl?.slice(0, 100)}) — sonuç reddedildi`,
+            `Trendyol Puppeteer uluslararası vitrinde kaldı (finalUrl=${puppeteerFinalUrl?.slice(0, 100)} lang=${htmlLang ?? "yok"}) — sonuç reddedildi`,
           );
           pageHtml = "";
         }
