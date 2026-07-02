@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { isUsableCompetitor, computeMargin } from "@competehive/shared";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -69,14 +70,22 @@ interface ProductItem {
   tags?: { tag: { id: string; name: string; color: string } }[];
 }
 
-type QuickFilter = "ALL" | "NO_COMPETITOR" | "STALE" | "CHANGED" | "ACTIVE";
+type QuickFilter =
+  | "ALL"
+  | "NO_COMPETITOR"
+  | "CHEAPER_COMPETITOR"
+  | "LOSS"
+  | "STALE"
+  | "CHANGED"
+  | "ACTIVE";
 type SortOption =
   | "updated_desc"
   | "updated_asc"
   | "price_desc"
   | "price_asc"
   | "competitors_desc"
-  | "biggest_drop";
+  | "biggest_drop"
+  | "gap_desc";
 type ViewMode = "cards" | "table";
 
 const STALE_HOURS = 24;
@@ -100,7 +109,10 @@ function isStale(lastScrapedAt: string | null): boolean {
   return Date.now() - ts > STALE_HOURS * 60 * 60 * 1000;
 }
 
-export default function ProductsPage() {
+function ProductsPageInner() {
+  // Bildirimlerdeki "Ürünü aç" linki ?search= parametresiyle gelir; parametre
+  // okunmazsa link sessizce boş listeye düşer.
+  const searchParams = useSearchParams();
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,11 +124,12 @@ export default function ProductsPage() {
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [showTagManager, setShowTagManager] = useState(false);
   const [planFeatures, setPlanFeatures] = useState<PlanFeaturesData | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get("search") ?? "");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
   const [sortBy, setSortBy] = useState<SortOption>("updated_desc");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
-  const [showFirstProductSuccess, setShowFirstProductSuccess] = useState(false);
+  const [addedBanner, setAddedBanner] = useState<{ first: boolean } | null>(null);
+  const [formErrorCode, setFormErrorCode] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [deleteConfirmProductId, setDeleteConfirmProductId] = useState<string | null>(null);
   const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
@@ -125,8 +138,10 @@ export default function ProductsPage() {
     message: string;
   } | null>(null);
 
-  const fetchProducts = useCallback(async () => {
-    setLoading(true);
+  // silent: arka plan tazelemesi — skeleton'a düşürmeden listeyi günceller
+  // (ürün ekledikten sonra tarama sonuçlarını kendiliğinden göstermek için).
+  const fetchProducts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/products");
@@ -134,10 +149,17 @@ export default function ProductsPage() {
       const data = await res.json();
       setProducts(data.products || []);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Bilinmeyen hata");
+      if (!opts?.silent) setError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
+  }, []);
+
+  // Ürün ekledikten sonra planlanan sessiz tazelemeler; sayfadan çıkınca iptal.
+  const refetchTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  useEffect(() => {
+    const timers = refetchTimersRef.current;
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   useEffect(() => {
@@ -156,6 +178,7 @@ export default function ProductsPage() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
+    setFormErrorCode(null);
     setFormLoading(true);
 
     try {
@@ -165,15 +188,29 @@ export default function ProductsPage() {
         body: JSON.stringify({ productUrl: url }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        setFormError(data.error || "Bilinmeyen hata");
+        // Plan limiti hatasında modalda "Planı Yükselt" CTA'sı gösterilir —
+        // salt kırmızı metinle çıkmaz bir sokağa dönüşmesin.
+        if (data.code === "PLAN_LIMIT_REACHED" || data.upgradeRequired) {
+          setFormErrorCode("PLAN_LIMIT");
+        }
+        return;
+      }
 
+      const wasEmpty = products.length === 0;
       setProducts((prev) => [data.product, ...prev]);
-      setShowFirstProductSuccess(true);
+      setAddedBanner({ first: wasEmpty });
       setUrl("");
       setShowModal(false);
       // Rakip keşfi POST /api/products tarafından worker kuyruğuna eklendi;
       // sonuçlar arka planda gelir (eski ek web-compare çağrısı kaldırıldı —
-      // zayıf hattı tekrar tetikleyip çifte iş yapıyordu).
+      // zayıf hattı tekrar tetikleyip çifte iş yapıyordu). Sonuçları elle
+      // yenilemeye gerek kalmasın diye listeyi birkaç kez sessizce tazele.
+      refetchTimersRef.current.forEach(clearTimeout);
+      refetchTimersRef.current = [10_000, 30_000, 90_000].map((ms) =>
+        setTimeout(() => fetchProducts({ silent: true }), ms),
+      );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
       setFormError(msg);
@@ -228,13 +265,19 @@ export default function ProductsPage() {
           product.marketplace?.toLowerCase().includes(normalizedQuery)
         );
       })
-      .filter(({ product, competitorCount, stale, priceChange }) => {
-        if (quickFilter === "NO_COMPETITOR") return competitorCount === 0;
-        if (quickFilter === "STALE") return stale;
-        if (quickFilter === "CHANGED") return Boolean(priceChange);
-        if (quickFilter === "ACTIVE") return product.status === "ACTIVE";
-        return true;
-      });
+      .filter(
+        ({ product, competitorCount, stale, priceChange, myPrice, minCompetitorPrice, margin }) => {
+          if (quickFilter === "NO_COMPETITOR") return competitorCount === 0;
+          if (quickFilter === "CHEAPER_COMPETITOR")
+            return myPrice !== null && minCompetitorPrice !== null && myPrice > minCompetitorPrice;
+          if (quickFilter === "LOSS")
+            return margin !== null && (margin.band === "loss" || margin.band === "thin");
+          if (quickFilter === "STALE") return stale;
+          if (quickFilter === "CHANGED") return Boolean(priceChange);
+          if (quickFilter === "ACTIVE") return product.status === "ACTIVE";
+          return true;
+        },
+      );
 
     return withMeta.sort((a, b) => {
       if (sortBy === "updated_desc") {
@@ -252,12 +295,23 @@ export default function ProductsPage() {
       if (sortBy === "price_desc") return (b.myPrice ?? -Infinity) - (a.myPrice ?? -Infinity);
       if (sortBy === "price_asc") return (a.myPrice ?? Infinity) - (b.myPrice ?? Infinity);
       if (sortBy === "competitors_desc") return b.competitorCount - a.competitorCount;
+      if (sortBy === "gap_desc") {
+        // En çok geride kalınan (rakibin en çok altında kaldığımız değil,
+        // rakipten en pahalı olduğumuz) ürün en üstte — sabah ilk bakılacak yer.
+        const gap = (m: { myPrice: number | null; minCompetitorPrice: number | null }) =>
+          m.myPrice !== null && m.minCompetitorPrice !== null && m.minCompetitorPrice > 0
+            ? (m.myPrice - m.minCompetitorPrice) / m.minCompetitorPrice
+            : -Infinity;
+        return gap(b) - gap(a);
+      }
       return (a.priceChange ?? 0) - (b.priceChange ?? 0);
     });
   }, [products, quickFilter, searchQuery, selectedTagId, sortBy]);
 
   const quickFilters: { key: QuickFilter; label: string }[] = [
     { key: "ALL", label: "Tümü" },
+    { key: "CHEAPER_COMPETITOR", label: "Rakip Daha Ucuz" },
+    { key: "LOSS", label: "Zarar / İnce Marj" },
     { key: "NO_COMPETITOR", label: "Rakipsiz" },
     { key: "STALE", label: "Veri Eski" },
     { key: "CHANGED", label: "Fiyat Değişti" },
@@ -411,17 +465,19 @@ export default function ProductsPage() {
         />
       )}
 
-      {showFirstProductSuccess && (
+      {addedBanner && (
         <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3">
           <div>
-            <p className="text-sm text-emerald-300 font-medium">İlk ürününüz başarıyla eklendi.</p>
+            <p className="text-sm text-emerald-300 font-medium">
+              {addedBanner.first ? "İlk ürününüz başarıyla eklendi." : "Ürün eklendi."}
+            </p>
             <p className="text-xs text-emerald-100/80 mt-0.5">
-              Sıradaki adım: ürün detayından rakip taramasını başlatıp ilk fiyat sinyalini
-              yakalayın.
+              Rakip taraması arka planda başlatıldı — sonuçlar birkaç dakika içinde bu listeye
+              kendiliğinden yansıyacak.
             </p>
           </div>
           <button
-            onClick={() => setShowFirstProductSuccess(false)}
+            onClick={() => setAddedBanner(null)}
             className="text-xs text-emerald-200/80 hover:text-emerald-100 transition"
           >
             Kapat
@@ -511,6 +567,7 @@ export default function ProductsPage() {
               <option value="price_asc">En düşük fiyat</option>
               <option value="competitors_desc">En çok rakip</option>
               <option value="biggest_drop">En büyük fiyat düşüşü</option>
+              <option value="gap_desc">En büyük rakip farkı</option>
             </select>
 
             <div className="inline-flex rounded-xl border border-[#2A2A2F] overflow-hidden">
@@ -601,17 +658,28 @@ export default function ProductsPage() {
             ({ product, myPrice, competitorCount, minCompetitorPrice, stale, margin }) => {
               // Tarama servisi hata aldıysa bunu "Rakip yok" gibi göstermek
               // yanıltıcıdır — kullanıcı gerçek sebebi (ör. arama servisi
-              // erişilemedi) görmeli ki yanlış teşhise gitmesin.
+              // erişilemedi) görmeli ki yanlış teşhise gitmesin. Yeni eklenmiş
+              // üründe keşif hâlâ arkada koşarken de "Rakip yok" yerine
+              // "Rakipler taranıyor" gösterilir — ölü kart izlenimi vermesin.
               const searchFailed = competitorCount === 0 && product.refresh_status === "failed";
+              const scanningLikely =
+                competitorCount === 0 &&
+                !searchFailed &&
+                (product.refresh_status === "pending" ||
+                  product.refresh_status === "processing" ||
+                  (product.last_scraped_at !== null &&
+                    Date.now() - new Date(product.last_scraped_at).getTime() < 15 * 60 * 1000));
               const pricePositionHint = searchFailed
                 ? "Tarama hatası"
-                : competitorCount === 0
-                  ? "Rakip yok"
-                  : myPrice === null || minCompetitorPrice === null
-                    ? "Karşılaştırma yok"
-                    : myPrice <= minCompetitorPrice
-                      ? "Piyasanın altında"
-                      : "Rakipten pahalı";
+                : scanningLikely
+                  ? "Rakipler taranıyor"
+                  : competitorCount === 0
+                    ? "Rakip yok"
+                    : myPrice === null || minCompetitorPrice === null
+                      ? "Karşılaştırma yok"
+                      : myPrice <= minCompetitorPrice
+                        ? "Piyasanın altında"
+                        : "Rakipten pahalı";
 
               return (
                 <Link
@@ -660,22 +728,50 @@ export default function ProductsPage() {
                         </span>
                       )}
                       <span
-                        className={`px-2 py-0.5 rounded-full border ${pricePositionHint === "Piyasanın altında" ? "border-emerald-500/20 text-emerald-300 bg-emerald-500/10" : pricePositionHint === "Rakipten pahalı" ? "border-red-500/20 text-red-300 bg-red-500/10" : pricePositionHint === "Tarama hatası" ? "border-rose-500/30 text-rose-300 bg-rose-500/10" : "border-[#323239] text-gray-400 bg-[#1A1A1E]"}`}
+                        className={`px-2 py-0.5 rounded-full border ${pricePositionHint === "Piyasanın altında" ? "border-emerald-500/20 text-emerald-300 bg-emerald-500/10" : pricePositionHint === "Rakipten pahalı" ? "border-red-500/20 text-red-300 bg-red-500/10" : pricePositionHint === "Tarama hatası" ? "border-rose-500/30 text-rose-300 bg-rose-500/10" : pricePositionHint === "Rakipler taranıyor" ? "border-blue-500/25 text-blue-300 bg-blue-500/10" : "border-[#323239] text-gray-400 bg-[#1A1A1E]"}`}
                         title={
                           pricePositionHint === "Tarama hatası"
                             ? product.refresh_error ||
                               "Rakip araması hata aldı — ürün detayından yeniden deneyin"
-                            : undefined
+                            : pricePositionHint === "Rakipler taranıyor"
+                              ? "Rakip keşfi arka planda sürüyor — sonuçlar birkaç dakika içinde görünür"
+                              : undefined
                         }
                       >
                         {pricePositionHint}
                       </span>
+                      {product.status === "ERROR" && (
+                        <span className="px-2 py-0.5 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10">
+                          Hata
+                        </span>
+                      )}
+                      {product.status === "OUT_OF_STOCK" && (
+                        <span className="px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
+                          Stok Yok
+                        </span>
+                      )}
+                      {product.status === "PAUSED" && (
+                        <span className="px-2 py-0.5 rounded-full border border-[#323239] text-gray-400 bg-[#1A1A1E]">
+                          Duraklatıldı
+                        </span>
+                      )}
                       {minCompetitorPrice !== null && (
                         <span
                           className="text-gray-500"
                           title="Karara uygun (güvenilir eşleşme, fiyat bandında, taze) rakipler içindeki en düşük fiyat"
                         >
                           En düşük rakip: ₺{minCompetitorPrice.toLocaleString("tr-TR")}
+                          {myPrice !== null && myPrice > minCompetitorPrice && (
+                            <span className="text-red-300">
+                              {" "}
+                              (%
+                              {(
+                                ((myPrice - minCompetitorPrice) / minCompetitorPrice) *
+                                100
+                              ).toFixed(1)}{" "}
+                              pahalısınız)
+                            </span>
+                          )}
                         </span>
                       )}
                       {margin && (
@@ -832,21 +928,32 @@ export default function ProductsPage() {
                     {stale && <span className="ml-2 text-amber-300 text-xs">(Veri Eski)</span>}
                   </td>
                   <td className="px-4 py-3">
-                    {product.trend ? (
-                      <PriceTrend
-                        priceChange={product.trend.priceChange}
-                        priceChangePct={product.trend.priceChangePct}
-                        size="sm"
-                      />
-                    ) : (
-                      <span className="text-xs text-gray-500">
-                        {product.status === "ACTIVE"
-                          ? "Aktif"
-                          : product.status === "ERROR"
-                            ? "Hata"
-                            : "Bekliyor"}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {product.trend && (
+                        <PriceTrend
+                          priceChange={product.trend.priceChange}
+                          priceChangePct={product.trend.priceChangePct}
+                          size="sm"
+                        />
+                      )}
+                      {product.status === "ERROR" ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10">
+                          Hata
+                        </span>
+                      ) : product.status === "OUT_OF_STOCK" ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
+                          Stok Yok
+                        </span>
+                      ) : product.status === "PAUSED" ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full border border-[#323239] text-gray-400 bg-[#1A1A1E]">
+                          Duraklatıldı
+                        </span>
+                      ) : !product.trend ? (
+                        <span className="text-xs text-gray-500">
+                          {product.status === "ACTIVE" ? "Aktif" : "Bekliyor"}
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -913,11 +1020,13 @@ export default function ProductsPage() {
           onUrlChange={setUrl}
           loading={formLoading}
           error={formError}
+          showUpgradeCta={formErrorCode === "PLAN_LIMIT"}
           onSubmit={handleAdd}
           onClose={() => {
             if (!formLoading) {
               setShowModal(false);
               setFormError("");
+              setFormErrorCode(null);
             }
           }}
         />
@@ -936,5 +1045,23 @@ export default function ProductsPage() {
         <TagManagerModal onClose={() => setShowTagManager(false)} onUpdated={fetchProducts} />
       )}
     </div>
+  );
+}
+
+// useSearchParams (bildirim derin linki için) Next 15'te Suspense sınırı ister;
+// sarmalayıcı olmadan production build hata verir.
+export default function ProductsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="grid gap-4">
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
+      }
+    >
+      <ProductsPageInner />
+    </Suspense>
   );
 }

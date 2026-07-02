@@ -296,6 +296,11 @@ export default function AlertsPage() {
     setShowCreateModal(true);
   };
 
+  // Kota API'de AKTİF kural sayısıyla denetlenir; göstergeyi canlı listeden
+  // hesaplamak, kural silme/pasifleştirme sonrası butonun kilitli kalmasını önler.
+  const activeRuleCount = rules.filter((r) => r.isActive).length;
+  const atRuleCap = planFeatures !== null && activeRuleCount >= planFeatures.features.maxAlertRules;
+
   return (
     <div>
       {actionError && (
@@ -314,22 +319,47 @@ export default function AlertsPage() {
             Daha az gürültü, daha net aksiyon için uyarılarınızı optimize edin.
           </p>
         </div>
-        <button
-          onClick={() => openCreateModal()}
-          className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
-        >
-          <svg
-            className="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
+        <div className="flex items-center gap-3">
+          {planFeatures && (
+            <div className="text-right">
+              <span
+                className={`text-xs font-medium ${atRuleCap ? "text-red-400" : "text-dark-400"}`}
+              >
+                Kural hakkı: {activeRuleCount}/{planFeatures.features.maxAlertRules}
+              </span>
+              {atRuleCap && (
+                <Link
+                  href="/dashboard/pricing"
+                  className="block text-xs text-hive-400 hover:text-hive-300 transition"
+                >
+                  Limiti artır →
+                </Link>
+              )}
+            </div>
+          )}
+          <button
+            onClick={() => openCreateModal()}
+            disabled={atRuleCap}
+            title={
+              atRuleCap
+                ? "Kural limitiniz doldu — bir kuralı silin, pasifleştirin ya da planınızı yükseltin"
+                : undefined
+            }
+            className="inline-flex items-center gap-2 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 disabled:cursor-not-allowed text-dark-1000 px-5 py-2.5 rounded-xl font-semibold text-sm transition"
           >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Yeni Uyarı
-        </button>
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Yeni Uyarı
+          </button>
+        </div>
       </div>
 
       {!loading && !error && (
