@@ -9,6 +9,14 @@ import { getProxyConfig } from "../utils/proxy";
 // Scraper Types
 // ============================================
 
+// Aynı ilanı satan diğer satıcı (Trendyol "Diğer Satıcılar" / buybox rakibi).
+// Ürün birebir aynı olduğundan bu kayıtlar kesin eşleşmedir (matchScore 100).
+export interface ScrapedOtherSeller {
+  merchantId: string;
+  sellerName: string | null;
+  price: number;
+}
+
 export interface ScrapedProduct {
   name: string;
   price: number;
@@ -20,6 +28,7 @@ export interface ScrapedProduct {
   rating?: number;
   reviewCount?: number;
   metadata?: Record<string, unknown>;
+  otherSellers?: ScrapedOtherSeller[];
 }
 
 export interface ScraperConfig {
@@ -273,6 +282,47 @@ function extractTrendyolMerchantId(url: string): string | null {
   return match ? match[1] : null;
 }
 
+// productDetail yanıtındaki "Diğer Satıcılar" (otherMerchants) listesini ayıkla.
+// Bu satıcılar aynı ilanın buybox rakipleridir — keşif hattı (Google araması)
+// bunları hiçbir zaman bulamaz çünkü satıcı varyantı URL'leri ayrı sonuç olarak
+// indekslenmez. Alan adları API sürümüne göre değişebildiği için savunmacı okunur.
+export function parseTrendyolOtherMerchants(
+  result: Record<string, unknown>,
+  ownMerchantId: string | null,
+): ScrapedOtherSeller[] {
+  const raw = result.otherMerchants;
+  if (!Array.isArray(raw)) return [];
+
+  const sellers: ScrapedOtherSeller[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const merchant = entry.merchant as Record<string, unknown> | undefined;
+
+    const idRaw = merchant?.id ?? entry.merchantId;
+    if (idRaw == null) continue;
+    const merchantId = String(idRaw);
+    if (ownMerchantId && merchantId === ownMerchantId) continue;
+
+    const price = entry.price as Record<string, unknown> | undefined;
+    const discounted = price?.discountedPrice as Record<string, unknown> | undefined;
+    const selling = price?.sellingPrice as Record<string, unknown> | undefined;
+    const priceValue =
+      (typeof discounted?.value === "number" ? discounted.value : 0) ||
+      (typeof selling?.value === "number" ? selling.value : 0) ||
+      (typeof entry.price === "number" ? entry.price : 0);
+    if (!priceValue || priceValue <= 0) continue;
+
+    const name = merchant?.name;
+    sellers.push({
+      merchantId,
+      sellerName: typeof name === "string" && name.trim() ? name.trim() : null,
+      price: priceValue,
+    });
+  }
+  return sellers;
+}
+
 // ============================================
 // Parse HTML for Trendyol product data
 // ============================================
@@ -509,6 +559,13 @@ export async function scrapeTrendyol(
             `Trendyol API merchant mismatch: requested=${merchantId} got=${responseMerchantId ?? "unknown"} — falling back to HTML`,
           );
         } else if (priceValue > 0) {
+          // Hariç tutulacak satıcı: yanıtın ana satıcısı (ürünün kendisi) —
+          // merchantId'siz URL'de buybox kazananı, merchantId'li URL'de zaten
+          // istenen satıcıyla aynı (mismatch kontrolünden geçti).
+          const otherSellers = parseTrendyolOtherMerchants(
+            result,
+            responseMerchantId ?? merchantId,
+          );
           const product: ScrapedProduct = {
             name: (result.name as string) || (result.productName as string) || "",
             price: priceValue,
@@ -523,6 +580,7 @@ export async function scrapeTrendyol(
             reviewCount: ratingScore?.totalRatingCount
               ? parseInt(String(ratingScore.totalRatingCount))
               : undefined,
+            otherSellers: otherSellers.length > 0 ? otherSellers : undefined,
           };
 
           logger.info(

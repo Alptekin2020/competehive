@@ -112,6 +112,94 @@ export async function maybeEnqueueAlerts(params: {
 }
 
 // ============================================
+// SAME-LISTING SELLERS → COMPETITORS
+// ============================================
+
+// Aynı ilanı satan diğer satıcıları (Trendyol otherMerchants) otomatik rakip
+// olarak senkronla. Keşif hattı bunları bulamaz: Google satıcı varyantı
+// URL'lerini ayrı indekslemez ve urlMatchKey aynı ilanın tüm varyantlarını
+// "kendi ürün" sayıp eler. Ürün birebir aynı olduğundan matchScore=100 —
+// kalite politikasından geçer ve COMPETITOR_CHEAPER (buybox kaybı) sinyali
+// aynı tarama döngüsünde tetiklenebilir. Satmayı bırakan satıcı güncellenmez
+// ve 72 saat sonra bayatlayarak karar hesaplarından kendiliğinden düşer.
+async function syncSameListingCompetitors(
+  productId: string,
+  productUrl: string,
+  scraped: ScrapedProduct,
+): Promise<void> {
+  const sellers = scraped.otherSellers ?? [];
+  if (sellers.length === 0) return;
+
+  try {
+    const parsed = new URL(productUrl);
+    const listingBase = `${parsed.origin}${parsed.pathname}`;
+    // En ucuz 10 satıcı yeterli — kalabalık ilanlarda satır patlamasını önle.
+    const top = [...sellers].sort((a, b) => a.price - b.price).slice(0, 10);
+    const now = new Date();
+
+    for (const [index, seller] of top.entries()) {
+      const competitorUrl = `${listingBase}?merchantId=${seller.merchantId}`;
+      const competitor = await prisma.competitor.upsert({
+        where: {
+          trackedProductId_competitorUrl: { trackedProductId: productId, competitorUrl },
+        },
+        update: {
+          currentPrice: seller.price,
+          lastScrapedAt: now,
+          ...(seller.sellerName ? { competitorName: seller.sellerName } : {}),
+          matchScore: 100,
+          matchReason: "Aynı ilanın diğer satıcısı",
+        },
+        create: {
+          trackedProductId: productId,
+          competitorUrl,
+          competitorName: seller.sellerName ?? "Trendyol satıcısı",
+          marketplace: "TRENDYOL",
+          currentPrice: seller.price,
+          lastScrapedAt: now,
+          matchScore: 100,
+          matchReason: "Aynı ilanın diğer satıcısı",
+        },
+      });
+
+      await prisma.competitorPrice.create({
+        data: {
+          competitorId: competitor.id,
+          price: seller.price,
+          currency: scraped.currency || "TRY",
+          inStock: true,
+          scrapedAt: now,
+        },
+      });
+
+      // Grafik tutarlılığı: keşif hattı gibi priceHistory'ye de yaz ki
+      // "En Düşük Rakip" çizgisi buybox satıcılarını da görsün. Kalabalığı
+      // önlemek için yalnızca en ucuz 5 satıcı grafiğe girer. sellerName
+      // olarak MAĞAZA adı yazılır — "Trendyol" yazılsaydı grafikteki
+      // kendi-fiyat sezgisi (marketplace adı ipucu) bu satırları
+      // kullanıcının kendi fiyatı sanırdı.
+      if (index < 5) {
+        await prisma.priceHistory.create({
+          data: {
+            trackedProductId: productId,
+            price: seller.price,
+            currency: scraped.currency || "TRY",
+            inStock: true,
+            sellerName: seller.sellerName ?? `Satıcı ${seller.merchantId}`,
+            scrapedAt: now,
+          },
+        });
+      }
+    }
+
+    logger.info({ productId, count: top.length }, "Same-listing sellers synced as competitors");
+  } catch (error) {
+    // Rakip senkronu ana taramayı asla düşürmesin — fiyat/stok güncellemesi kritik.
+    logger.error({ productId, error }, "Same-listing competitor sync failed (non-fatal)");
+  }
+}
+
+// ============================================
 // SCRAPE WORKER
 // ============================================
 
@@ -192,6 +280,10 @@ export const scrapeWorker = new Worker(
           metadata: toPrismaJsonObject(result.metadata) as never,
         },
       });
+
+      // Aynı ilandaki diğer satıcıları rakip olarak senkronla — alert
+      // kuyruğundan ÖNCE ki COMPETITOR_CHEAPER taze buybox fiyatlarını görsün.
+      await syncSameListingCompetitors(productId, productUrl, result);
 
       // Fiyat/stok değiştiyse alert kontrolünü kuyruğa al — tüm fiyat-güncelleme
       // yollarıyla paylaşılan ortak yardımcı (manuel "Yenile" ve 6 saatlik
