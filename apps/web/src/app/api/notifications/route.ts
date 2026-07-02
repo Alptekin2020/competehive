@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
               ruleType: true,
               trackedProduct: {
                 select: {
+                  id: true,
                   productName: true,
                   marketplace: true,
                 },
@@ -59,6 +60,7 @@ export async function GET(req: NextRequest) {
       is_read: n.isRead,
       sent_at: n.sentAt,
       rule_type: n.alertRule?.ruleType ?? null,
+      product_id: n.alertRule?.trackedProduct?.id ?? null,
       product_name: n.alertRule?.trackedProduct?.productName ?? null,
       marketplace: n.alertRule?.trackedProduct?.marketplace ?? null,
     }));

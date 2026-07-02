@@ -24,6 +24,7 @@ import {
   type MarginBand,
 } from "@competehive/shared";
 import RefreshButton from "@/components/RefreshButton";
+import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import InfoTip from "@/components/ui/InfoTip";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
@@ -252,6 +253,9 @@ export default function ProductDetailPage() {
   const [competitorUrlInput, setCompetitorUrlInput] = useState("");
   const [addCompetitorLoading, setAddCompetitorLoading] = useState(false);
   const [addCompetitorError, setAddCompetitorError] = useState<string | null>(null);
+  const [competitorDeleteId, setCompetitorDeleteId] = useState<string | null>(null);
+  const [competitorDeleteLoading, setCompetitorDeleteLoading] = useState(false);
+  const [competitorDeleteError, setCompetitorDeleteError] = useState<string | null>(null);
   const [costInput, setCostInput] = useState("");
   const [savingCost, setSavingCost] = useState(false);
   const [costError, setCostError] = useState<string | null>(null);
@@ -459,6 +463,38 @@ export default function ProductDetailPage() {
       setAddCompetitorError("Bağlantı hatası — lütfen tekrar deneyin.");
     } finally {
       setAddCompetitorLoading(false);
+    }
+  };
+
+  const handleDeleteCompetitor = async () => {
+    if (!product || !competitorDeleteId || competitorDeleteLoading) return;
+    setCompetitorDeleteLoading(true);
+    setCompetitorDeleteError(null);
+    try {
+      const res = await fetch(`/api/products/${product.id}/competitors/${competitorDeleteId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setCompetitorDeleteError(data?.error || "Rakip silinemedi. Lütfen tekrar deneyin.");
+        return;
+      }
+      setCompetitorDeleteId(null);
+      setCompareStatus("Rakip listeden kaldırıldı.");
+      // Yerel state'ten filtrele — fetchProduct() tam sayfa skeleton'a düşürüp
+      // titremeye yol açıyordu; silme kesin bir işlem, yeniden çekmeye gerek yok.
+      setProduct((prev) =>
+        prev
+          ? {
+              ...prev,
+              competitors: (prev.competitors || []).filter((c) => c.id !== competitorDeleteId),
+            }
+          : prev,
+      );
+    } catch {
+      setCompetitorDeleteError("Bağlantı hatası — lütfen tekrar deneyin.");
+    } finally {
+      setCompetitorDeleteLoading(false);
     }
   };
 
@@ -1506,9 +1542,10 @@ export default function ProductDetailPage() {
                     >
                       <span className="text-gray-500 text-xs w-5 text-center">{index + 1}</span>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <span className="text-xs font-medium px-2 py-0.5 rounded border border-[#2F2F33] text-gray-400">
-                          {competitor.marketplace}
-                        </span>
+                        <MarketplaceBadge
+                          marketplace={competitor.marketplace}
+                          overrideName={competitor.marketplace === "CUSTOM" ? "Diğer" : undefined}
+                        />
                         <MatchScoreBadge score={competitor.matchScore} />
                         {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
                           "out-of-band",
@@ -1598,6 +1635,29 @@ export default function ProductDetailPage() {
                           <p className="text-sm text-gray-500">Fiyat yok</p>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCompetitorDeleteError(null);
+                          setCompetitorDeleteId(competitor.id);
+                        }}
+                        className="p-1.5 text-gray-600 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition flex-shrink-0"
+                        title="Bu rakibi listeden kaldır (yanlış eşleşme için)"
+                        aria-label="Rakibi kaldır"
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
                     </div>
                   );
                 })}
@@ -1646,6 +1706,50 @@ export default function ProductDetailPage() {
                 className="flex-1 bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 py-2.5 rounded-xl text-sm font-semibold transition"
               >
                 {addCompetitorLoading ? "Ekleniyor..." : "Ekle"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {competitorDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-0 sm:px-6">
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (!competitorDeleteLoading) {
+                setCompetitorDeleteId(null);
+                setCompetitorDeleteError(null);
+              }
+            }}
+          />
+          <div className="bg-dark-900 border border-dark-800 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 w-full sm:max-w-sm relative z-10 safe-bottom">
+            <h2 className="text-lg font-bold text-white mb-2">Rakibi Kaldır</h2>
+            <p className="text-dark-500 text-sm mb-3">
+              Bu rakip ve fiyat geçmişi listeden silinecek. Yanlış eşleşmeleri kaldırmak piyasa
+              pozisyonu ve fiyat önerisi hesaplarını temiz tutar. Otomatik tarama aynı ürünü ileride
+              yeniden bulabilir.
+            </p>
+            {competitorDeleteError && (
+              <p className="text-sm text-red-300 mb-4">{competitorDeleteError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setCompetitorDeleteId(null);
+                  setCompetitorDeleteError(null);
+                }}
+                disabled={competitorDeleteLoading}
+                className="flex-1 border border-dark-700 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-dark-800 disabled:opacity-60 transition"
+              >
+                İptal
+              </button>
+              <button
+                onClick={handleDeleteCompetitor}
+                disabled={competitorDeleteLoading}
+                className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white py-2.5 rounded-xl text-sm font-semibold transition"
+              >
+                {competitorDeleteLoading ? "Kaldırılıyor..." : "Kaldır"}
               </button>
             </div>
           </div>

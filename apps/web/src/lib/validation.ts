@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const addProductSchema = z.object({
-  productUrl: z.string().url("Gecerli bir URL giriniz"),
+  productUrl: z.string().url("Geçerli bir URL girin"),
 });
 
 // Ürün maliyetini (COGS) güncelle. null = maliyeti temizle. Üst sınır, hatalı
@@ -9,17 +9,17 @@ export const addProductSchema = z.object({
 export const updateProductSchema = z.object({
   cost: z
     .number()
-    .min(0, "Maliyet 0 veya daha buyuk olmali")
-    .max(99999999, "Maliyet cok yuksek")
+    .min(0, "Maliyet 0 veya daha büyük olmalı")
+    .max(99999999, "Maliyet çok yüksek")
     .nullable(),
 });
 
 export const compareSchema = z.object({
-  productId: z.string().uuid("Gecerli bir urun ID gerekli"),
+  productId: z.string().uuid("Geçerli bir ürün ID gerekli"),
 });
 
 export const scrapeTrigerSchema = z.object({
-  productId: z.string().uuid("Gecerli bir urun ID gerekli"),
+  productId: z.string().uuid("Geçerli bir ürün ID gerekli"),
 });
 
 export const updateSettingsSchema = z.object({

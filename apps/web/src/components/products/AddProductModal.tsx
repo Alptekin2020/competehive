@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { SUPPORTED_MARKETPLACE_LABEL } from "@/lib/marketplaces";
 
 interface AddProductModalProps {
@@ -5,6 +6,9 @@ interface AddProductModalProps {
   onUrlChange: (url: string) => void;
   loading: boolean;
   error: string;
+  // Plan limiti hatasında modal içinde yükseltme yolu göster — kullanıcı
+  // kırmızı metinle baş başa kalmasın.
+  showUpgradeCta?: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onClose: () => void;
 }
@@ -14,6 +18,7 @@ export function AddProductModal({
   onUrlChange,
   loading,
   error,
+  showUpgradeCta = false,
   onSubmit,
   onClose,
 }: AddProductModalProps) {
@@ -44,8 +49,16 @@ export function AddProductModal({
         </div>
 
         {error && (
-          <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">
-            {error}
+          <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 mb-4">
+            <p className="text-red-400 text-sm">{error}</p>
+            {showUpgradeCta && (
+              <Link
+                href="/dashboard/pricing"
+                className="inline-flex items-center gap-1 mt-2 text-sm font-semibold text-hive-400 hover:text-hive-300 transition"
+              >
+                Planı Yükselt →
+              </Link>
+            )}
           </div>
         )}
 

@@ -12,7 +12,7 @@ import {
   SUPPORTED_MARKETPLACE_LABEL,
 } from "@/lib/marketplaces";
 import { logger } from "@/lib/logger";
-import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
+import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
 import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
@@ -201,11 +201,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Ayni URL ikinci kez eklenirse plan kotasi bosuna tukenir ve ayni urun
+    // iki kez taranir — toplu ekleme ucuyla ayni kontrol burada da yapilir.
+    const existingProduct = await prisma.trackedProduct.findFirst({
+      where: { userId: user.id, productUrl },
+      select: { id: true },
+    });
+    if (existingProduct) {
+      return badRequest("Bu ürün zaten takip ediliyor.");
+    }
+
     const productCount = await prisma.trackedProduct.count({
       where: { userId: user.id },
     });
     if (productCount >= user.maxProducts) {
-      return forbidden(`Urun limitinize ulastiniz (${user.maxProducts}). Planinizi yukseltin.`);
+      return new Response(
+        JSON.stringify({
+          error: `Ürün limitinize ulaştınız (${user.maxProducts}). Planınızı yükseltin.`,
+          code: "PLAN_LIMIT_REACHED",
+          current: productCount,
+          limit: user.maxProducts,
+          plan: user.plan,
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
     }
 
     // Marketplace limit check
@@ -347,6 +366,8 @@ export async function POST(req: NextRequest) {
       logger.error({ err }, "Scrape trigger setup error");
     }
 
+    // Liste sayfasi bu nesneyi oldugu gibi basa ekler (GET ile ayni sekil):
+    // last_scraped_at/status eksik kalirsa saniyelik urun "Veri Eski" gorunur.
     return apiSuccess({
       success: true,
       product: {
@@ -356,6 +377,15 @@ export async function POST(req: NextRequest) {
         product_url: product.productUrl,
         product_image: product.productImage,
         current_price: product.currentPrice,
+        cost: product.cost,
+        last_scraped_at: product.lastScrapedAt,
+        status: product.status,
+        refresh_status: null,
+        refresh_error: null,
+        trend: null,
+        tags: [],
+        competitorCount: 0,
+        competitors: [],
       },
       analysis,
     });
@@ -381,7 +411,7 @@ export async function DELETE(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const productId = searchParams.get("id");
 
-    if (!productId) return badRequest("Urun ID gerekli");
+    if (!productId) return badRequest("Ürün ID gerekli");
 
     // Cascade handles competitors automatically
     await prisma.trackedProduct.deleteMany({

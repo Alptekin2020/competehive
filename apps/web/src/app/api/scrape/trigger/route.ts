@@ -93,15 +93,20 @@ export async function POST(req: NextRequest) {
       /ürünü\s*[-–]\s*Online/i.test(product.productName);
     const needsNameUpdate = parsedName && isFallbackName;
 
+    // Durum yalnizca ERROR'dan sifirlanir: OUT_OF_STOCK/PAUSED gercek sinyaller
+    // (stok alarmi previousInStock'u urun durumundan turetir) — kosulsuz ACTIVE
+    // yazmak stok bilgisini ve duraklatmayi siliyordu.
+    const statusReset = product.status === "ERROR" ? { status: "ACTIVE" as const } : {};
+
     if (needsNameUpdate) {
       await prisma.trackedProduct.update({
         where: { id: productId },
-        data: { productName: parsedName, status: "ACTIVE" },
+        data: { productName: parsedName, ...statusReset },
       });
-    } else if (product.status !== "ACTIVE") {
+    } else if (product.status === "ERROR") {
       await prisma.trackedProduct.update({
         where: { id: productId },
-        data: { status: "ACTIVE" },
+        data: statusReset,
       });
     }
 

@@ -2,15 +2,19 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 
 interface Notification {
   id: string;
   title: string;
   message: string;
   channel: string;
+  status?: string | null;
+  error?: string | null;
   is_read: boolean;
   sent_at: string;
   rule_type?: string | null;
+  product_id?: string | null;
   product_name?: string | null;
   marketplace?: string | null;
 }
@@ -31,17 +35,33 @@ const RULE_TYPE_META: Record<
   LOW_MARGIN: { icon: "💸", label: "Düşük Marj", category: "price", critical: true },
 };
 
-const MARKETPLACE_LABELS: Record<string, { name: string; color: string }> = {
-  TRENDYOL: { name: "Trendyol", color: "#F27A1A" },
-  HEPSIBURADA: { name: "Hepsiburada", color: "#FF6000" },
-  AMAZON_TR: { name: "Amazon TR", color: "#FF9900" },
-  N11: { name: "N11", color: "#7B2D8E" },
-  PAZARAMA: { name: "Pazarama", color: "#00C4B3" },
-  TEKNOSA: { name: "Teknosa", color: "#005CA9" },
-  VATAN: { name: "Vatan", color: "#E30613" },
-  DECATHLON: { name: "Decathlon", color: "#0082C3" },
-  MEDIAMARKT: { name: "MediaMarkt", color: "#DF0000" },
-};
+// Teslimat sonucu (worker'ın yazdığı SENT/FAILED/SKIPPED) kullanıcıya
+// görünmezse, gitmeyen bir Telegram uyarısı sonsuza dek "gönderildi" sanılır.
+// SKIPPED'in iki alt hali vardır: kullanıcının bilinçli kapattığı kanal
+// (sessiz geç) ve hiç yapılandırılmamış kanal (ayarlara yönlendir).
+const DELIBERATE_SKIP_ERRORS = ["E-posta uyarıları kapalı"];
+
+function deliveryBadge(notification: {
+  status?: string | null;
+  error?: string | null;
+}): { label: string; className: string; linkToSettings: boolean } | null {
+  if (notification.status === "FAILED") {
+    return {
+      label: "Gönderilemedi",
+      className: "bg-red-500/15 text-red-300",
+      linkToSettings: false,
+    };
+  }
+  if (notification.status === "SKIPPED") {
+    if (notification.error && DELIBERATE_SKIP_ERRORS.includes(notification.error)) return null;
+    return {
+      label: "Kanal ayarlı değil",
+      className: "bg-dark-800 text-dark-400",
+      linkToSettings: true,
+    };
+  }
+  return null;
+}
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -409,9 +429,7 @@ export default function NotificationsPage() {
                       ? RULE_TYPE_META[notification.rule_type]
                       : undefined;
                     const icon = meta?.icon || "🔔";
-                    const marketplace = notification.marketplace
-                      ? MARKETPLACE_LABELS[notification.marketplace]
-                      : null;
+                    const delivery = deliveryBadge(notification);
                     const isCritical =
                       Boolean(meta?.critical) ||
                       /acil|kritik|urgent/i.test(`${notification.title} ${notification.message}`);
@@ -475,26 +493,47 @@ export default function NotificationsPage() {
                                   {notification.product_name}
                                 </span>
                               )}
-                              {marketplace && (
-                                <span
-                                  className="text-xs font-medium px-1.5 py-0.5 rounded"
-                                  style={{
-                                    backgroundColor: `${marketplace.color}20`,
-                                    color: marketplace.color,
-                                  }}
-                                >
-                                  {marketplace.name}
-                                </span>
+                              {notification.marketplace && (
+                                <MarketplaceBadge marketplace={notification.marketplace} />
                               )}
                               <span className="text-xs text-dark-600 bg-dark-800 px-1.5 py-0.5 rounded">
                                 {notification.channel}
                               </span>
+                              {delivery && (
+                                <span
+                                  className={`text-[10px] px-2 py-0.5 rounded-full ${delivery.className}`}
+                                  title={notification.error || undefined}
+                                >
+                                  {delivery.label}
+                                </span>
+                              )}
                             </div>
+                            {delivery && notification.error && (
+                              <p className="text-[11px] text-dark-500 mt-1.5">
+                                {notification.error}
+                                {delivery.linkToSettings && (
+                                  <>
+                                    {" · "}
+                                    <Link
+                                      href="/dashboard/settings"
+                                      className="text-hive-400 hover:text-hive-300"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      Kanalı ayarla →
+                                    </Link>
+                                  </>
+                                )}
+                              </p>
+                            )}
 
                             {notification.product_name && (
                               <div className="mt-3">
                                 <Link
-                                  href={`/dashboard/products?search=${encodeURIComponent(notification.product_name)}`}
+                                  href={
+                                    notification.product_id
+                                      ? `/dashboard/products/${notification.product_id}`
+                                      : `/dashboard/products?search=${encodeURIComponent(notification.product_name)}`
+                                  }
                                   className="inline-flex items-center gap-1 text-xs text-hive-400 hover:text-hive-300"
                                   onClick={(e) => e.stopPropagation()}
                                 >

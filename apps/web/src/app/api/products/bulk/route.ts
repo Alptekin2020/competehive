@@ -9,6 +9,9 @@ import { Marketplace } from "@prisma/client";
 import { getPlanFeatures } from "@/lib/plan-gates";
 import { applyRateLimit } from "@/lib/with-rate-limit";
 import { RATE_LIMITS } from "@/lib/rate-limit";
+import { addScrapeJob } from "@/lib/queue";
+import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
+import { logger } from "@/lib/logger";
 
 const bulkSchema = z.object({
   urls: z
@@ -117,6 +120,17 @@ export async function POST(req: NextRequest) {
 
         existingUrls.add(url); // prevent same URL added twice in same batch
 
+        // Tekli ekleme ucuyla ayni sekilde ilk taramayi hemen kuyrukla —
+        // aksi halde urunler zamanlayicinin dongusunu bekleyip "Yükleniyor..."
+        // olarak kalir. Rakip kesfi bilerek kuyruklanmaz: urun adi henuz
+        // "Yükleniyor..." oldugu icin coplu bir arama sorgusu uretirdi; adin
+        // dolmasindan sonra periyodik kesif dongusu rakipleri kendisi bulur.
+        try {
+          await addScrapeJob(product.id, marketplace, url);
+        } catch (queueError) {
+          logger.error({ err: queueError, productId: product.id }, "Bulk scrape queue error");
+        }
+
         results.push({
           url,
           status: "success",
@@ -148,6 +162,20 @@ export async function POST(req: NextRequest) {
     const successCount = results.filter((r) => r.status === "success").length;
     const errorCount = results.filter((r) => r.status === "error").length;
     const duplicateCount = results.filter((r) => r.status === "duplicate").length;
+
+    // Ilk urunlerini toplu ekleyen kullanici da varsayilan hesap-geneli uyari
+    // kurallarini almali (tekli ekleme ucundaki adimin karsiligi; idempotent).
+    if (successCount > 0) {
+      try {
+        await ensureDefaultGlobalAlertRules({
+          userId: user.id,
+          plan: user.plan,
+          alertThresholdPct: user.alertThresholdPct,
+        });
+      } catch (err) {
+        logger.error({ err, userId: user.id }, "Bulk default alert rules error (non-fatal)");
+      }
+    }
 
     return apiSuccess({
       success: true,

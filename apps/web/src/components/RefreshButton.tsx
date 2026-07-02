@@ -15,8 +15,16 @@ export default function RefreshButton({
 }: RefreshButtonProps) {
   const [status, setStatus] = useState<string | null>(initialStatus);
   const [error, setError] = useState<string | null>(null);
+  // 429 yanıtındaki retryAfter'a göre butonu kilitleyen geri sayım (saniye).
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
   const isActive = status === "pending" || status === "processing";
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setTimeout(() => setCooldownSeconds((prev) => Math.max(0, prev - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldownSeconds]);
 
   // Poll for status updates
   const pollStatus = useCallback(async () => {
@@ -65,7 +73,13 @@ export default function RefreshButton({
 
       if (!res.ok) {
         setStatus(null);
-        setError(data.error || "Bir hata oluştu");
+        const retryAfter = typeof data.retryAfter === "number" ? Math.ceil(data.retryAfter) : null;
+        if (res.status === 429 && retryAfter && retryAfter > 0) {
+          setCooldownSeconds(retryAfter);
+          setError(null);
+        } else {
+          setError(data.error || "Bir hata oluştu");
+        }
         return;
       }
 
@@ -81,9 +95,9 @@ export default function RefreshButton({
       {/* Refresh Button */}
       <button
         onClick={handleRefresh}
-        disabled={isActive}
+        disabled={isActive || cooldownSeconds > 0}
         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-          isActive
+          isActive || cooldownSeconds > 0
             ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 cursor-not-allowed"
             : "bg-amber-500 hover:bg-amber-400 text-black"
         }`}
@@ -124,7 +138,13 @@ export default function RefreshButton({
           </svg>
         )}
 
-        {isActive ? (status === "pending" ? "Sırada..." : "Yenileniyor...") : "Fiyatları Yenile"}
+        {isActive
+          ? status === "pending"
+            ? "Sırada..."
+            : "Yenileniyor..."
+          : cooldownSeconds > 0
+            ? `${cooldownSeconds} sn sonra tekrar deneyin`
+            : "Fiyatları Yenile"}
       </button>
 
       {/* Status Badge */}
