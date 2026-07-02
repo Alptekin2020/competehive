@@ -481,7 +481,16 @@ export default function ProductDetailPage() {
       }
       setCompetitorDeleteId(null);
       setCompareStatus("Rakip listeden kaldırıldı.");
-      await fetchProduct();
+      // Yerel state'ten filtrele — fetchProduct() tam sayfa skeleton'a düşürüp
+      // titremeye yol açıyordu; silme kesin bir işlem, yeniden çekmeye gerek yok.
+      setProduct((prev) =>
+        prev
+          ? {
+              ...prev,
+              competitors: (prev.competitors || []).filter((c) => c.id !== competitorDeleteId),
+            }
+          : prev,
+      );
     } catch {
       setCompetitorDeleteError("Bağlantı hatası — lütfen tekrar deneyin.");
     } finally {

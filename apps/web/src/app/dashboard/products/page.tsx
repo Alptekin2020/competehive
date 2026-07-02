@@ -207,9 +207,13 @@ function ProductsPageInner() {
       // sonuçlar arka planda gelir (eski ek web-compare çağrısı kaldırıldı —
       // zayıf hattı tekrar tetikleyip çifte iş yapıyordu). Sonuçları elle
       // yenilemeye gerek kalmasın diye listeyi birkaç kez sessizce tazele.
-      refetchTimersRef.current.forEach(clearTimeout);
-      refetchTimersRef.current = [10_000, 30_000, 90_000].map((ms) =>
-        setTimeout(() => fetchProducts({ silent: true }), ms),
+      // Dizi yerinde güncellenir (yeni referans atanmaz) — unmount temizliği
+      // mount'ta yakaladığı diziden en güncel zamanlayıcıları görebilsin.
+      const timers = refetchTimersRef.current;
+      timers.forEach(clearTimeout);
+      timers.length = 0;
+      [10_000, 30_000, 90_000].forEach((ms) =>
+        timers.push(setTimeout(() => fetchProducts({ silent: true }), ms)),
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
@@ -297,12 +301,19 @@ function ProductsPageInner() {
       if (sortBy === "competitors_desc") return b.competitorCount - a.competitorCount;
       if (sortBy === "gap_desc") {
         // En çok geride kalınan (rakibin en çok altında kaldığımız değil,
-        // rakipten en pahalı olduğumuz) ürün en üstte — sabah ilk bakılacak yer.
+        // rakipten en pahalı olduğumuz) ürün en üstte; fiyatı eksik olanlar en
+        // altta. null-null çifti açıkça 0 döner — (-Infinity - -Infinity) = NaN
+        // karşılaştırıcıyı bozardı.
         const gap = (m: { myPrice: number | null; minCompetitorPrice: number | null }) =>
           m.myPrice !== null && m.minCompetitorPrice !== null && m.minCompetitorPrice > 0
             ? (m.myPrice - m.minCompetitorPrice) / m.minCompetitorPrice
-            : -Infinity;
-        return gap(b) - gap(a);
+            : null;
+        const gapA = gap(a);
+        const gapB = gap(b);
+        if (gapA === null && gapB === null) return 0;
+        if (gapA === null) return 1;
+        if (gapB === null) return -1;
+        return gapB - gapA;
       }
       return (a.priceChange ?? 0) - (b.priceChange ?? 0);
     });
