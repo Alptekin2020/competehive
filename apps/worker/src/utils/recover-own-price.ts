@@ -47,6 +47,17 @@ export function buildOwnPriceQuery(product: OwnPriceProduct): string {
  * Eşleşme yoksa veya fiyat parse edilemezse null.
  */
 export async function recoverOwnPriceViaSerper(product: OwnPriceProduct): Promise<number | null> {
+  // Satıcıya özel URL'de (?merchantId=...) Google Shopping fiyatı buybox
+  // fiyatıdır, bu satıcının değil — urlMatchKey query'yi attığından ikisi
+  // aynı anahtara düşer. Yanlış fiyat yazmaktansa kurtarmayı atla.
+  if (/[?&]merchantId=\d+/i.test(product.productUrl)) {
+    logger.info(
+      { productUrl: product.productUrl.slice(0, 80) },
+      "Own-price recovery skipped: merchant-specific URL (Serper price would be buybox)",
+    );
+    return null;
+  }
+
   const query = buildOwnPriceQuery(product);
   let results;
   try {

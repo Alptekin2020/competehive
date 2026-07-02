@@ -473,10 +473,12 @@ export async function scrapeTrendyol(
   let puppeteerHasInitialState: boolean = false;
 
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
+  // NOT: public.trendyol.com DNS'ten kaldırıldı (NXDOMAIN — üretimde kalıcı
+  // ENOTFOUND'un nedeni buydu). Aynı productgw servisi apigw üzerinden sunuluyor.
   const contentId = extractTrendyolContentId(url);
   const merchantId = extractTrendyolMerchantId(url);
   if (contentId) {
-    const apiUrl = `https://public.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}${
+    const apiUrl = `https://apigw.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}${
       merchantId ? `?merchantId=${merchantId}` : ""
     }`;
     logger.info(`Trying Trendyol API: contentId=${contentId} merchantId=${merchantId ?? "none"}`);
@@ -548,13 +550,42 @@ export async function scrapeTrendyol(
         // merchantId istenmişse yanıtın gerçekten o satıcıya ait olduğunu
         // doğrula — API parametreyi yok sayarsa buybox fiyatı döner ve yanlış
         // satıcının fiyatı kaydedilir. Yanıtta merchant.id hiç yoksa da
-        // doğrulanamıyor demektir; iki durumda da HTML stratejisine düş
-        // (SSR sayfası merchantId'yi her zaman dikkate alır).
+        // doğrulanamıyor demektir. Uyuşmazlıkta önce istenen satıcıyı
+        // otherMerchants içinde ara (satıcı orada fiyatıyla listelenir);
+        // bulunamazsa HTML stratejisine düş.
         const responseMerchantId =
           merchant?.id != null ? String(merchant.id as string | number) : null;
         const merchantMismatch = merchantId !== null && responseMerchantId !== merchantId;
 
         if (merchantMismatch) {
+          const allSellers = parseTrendyolOtherMerchants(result, null);
+          // Buybox kazananı otherMerchants'ta yer almaz — istenen satıcının
+          // rakibi olarak listeye eklenir.
+          if (responseMerchantId && priceValue > 0) {
+            allSellers.push({
+              merchantId: responseMerchantId,
+              sellerName: typeof merchant?.name === "string" ? merchant.name : null,
+              price: priceValue,
+            });
+          }
+          const requestedSeller = allSellers.find((s) => s.merchantId === merchantId);
+          if (requestedSeller) {
+            const product: ScrapedProduct = {
+              name: (result.name as string) || (result.productName as string) || "",
+              price: requestedSeller.price,
+              currency: "TRY",
+              inStock: true,
+              imageUrl: images?.[0] ? `https://cdn.dsmcdn.com/${images[0]}` : undefined,
+              category: (category?.name as string) || undefined,
+              sellerName: requestedSeller.sellerName ?? undefined,
+              otherSellers: allSellers.filter((s) => s.merchantId !== merchantId),
+            };
+            logger.info(
+              `Trendyol API: istenen satıcı otherMerchants içinde bulundu (merchantId=${merchantId}) — ${product.price} TRY`,
+            );
+            await setCachedScrapeResult(url, product);
+            return product;
+          }
           logger.warn(
             `Trendyol API merchant mismatch: requested=${merchantId} got=${responseMerchantId ?? "unknown"} — falling back to HTML`,
           );
@@ -708,6 +739,13 @@ export async function scrapeTrendyol(
       await page.setExtraHTTPHeaders({
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
       });
+      // AB veri merkezi IP'leri uluslararası vitrine (/en, EUR fiyat) coğrafi
+      // yönlendirmeye takılıyor — TR vitrinini çerezle sabitlemeyi dene.
+      await page.setCookie(
+        { name: "countryCode", value: "TR", domain: ".trendyol.com", path: "/" },
+        { name: "storefrontId", value: "1", domain: ".trendyol.com", path: "/" },
+        { name: "language", value: "tr", domain: ".trendyol.com", path: "/" },
+      );
 
       await page.setRequestInterception(true);
       page.on("request", (req) => {
@@ -727,6 +765,48 @@ export async function scrapeTrendyol(
         await new Promise((r) => setTimeout(r, 3000));
         pageHtml = await page.content();
         puppeteerFinalUrl = page.url();
+
+        // Coğrafi yönlendirme uluslararası bir vitrine düşürdüyse (TL fiyat
+        // yok) TR yoluna bir kez daha zorla — site çerezleri artık yüklü
+        // olduğundan ikinci deneme TR'de kalabilir. IP'nin ülkesine göre
+        // /en dışında /de, /ro, /pl gibi vitrinlere de yönlendirme olabilir.
+        const intlPathRegex = /^\/(en|de|ar|ro|pl|cs|sk|hu|el|bg|uk|rs)(\/|$)/;
+        const landedOnIntl = (u: string | null) => {
+          if (!u) return false;
+          try {
+            return intlPathRegex.test(new URL(u).pathname);
+          } catch {
+            return false;
+          }
+        };
+        if (landedOnIntl(puppeteerFinalUrl)) {
+          const retryUrlObj = new URL(puppeteerFinalUrl!);
+          retryUrlObj.pathname = retryUrlObj.pathname.replace(intlPathRegex, "/");
+          const trRetryUrl = retryUrlObj.toString();
+          logger.info(
+            `Trendyol Puppeteer uluslararası vitrin yönlendirmesi — TR retry: ${trRetryUrl.slice(0, 100)}`,
+          );
+          await page.goto(trRetryUrl, {
+            waitUntil: "domcontentloaded",
+            timeout: config.timeout || 30000,
+          });
+          await new Promise((r) => setTimeout(r, 3000));
+          pageHtml = await page.content();
+          puppeteerFinalUrl = page.url();
+        }
+        // Hâlâ uluslararası vitrindeysek sayfayı AYRIŞTIRMA — EUR/RON vb.
+        // fiyatın TL sanılıp yazılmasındansa taramanın başarısız sayılması
+        // güvenlidir. Son kapı yol önekine değil <html lang="..."> özniteliğine
+        // bakar: tüm dilleri kapsar ve iki harfli marka yollarında yanlış
+        // pozitif üretmez.
+        const htmlLangMatch = pageHtml.match(/<html[^>]*\blang="([a-zA-Z-]+)"/);
+        const htmlLang = htmlLangMatch ? htmlLangMatch[1].toLowerCase() : null;
+        if (landedOnIntl(puppeteerFinalUrl) || (htmlLang !== null && !htmlLang.startsWith("tr"))) {
+          logger.warn(
+            `Trendyol Puppeteer uluslararası vitrinde kaldı (finalUrl=${puppeteerFinalUrl?.slice(0, 100)} lang=${htmlLang ?? "yok"}) — sonuç reddedildi`,
+          );
+          pageHtml = "";
+        }
         puppeteerContentLength = pageHtml.length;
         puppeteerHasInitialState = pageHtml.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
 

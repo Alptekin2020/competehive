@@ -7,6 +7,7 @@ import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/l
 import { detectMarketplaceFromUrl } from "@/lib/marketplaces";
 import { scrapeProduct } from "@/lib/scraper";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { addCompetitorScrapeJob } from "@/lib/queue";
 import { logger } from "@/lib/logger";
 
 // ============================================
@@ -20,8 +21,9 @@ import { logger } from "@/lib/logger";
 // (yine de fiyat bandı + tazelik kontrolünden geçmeden karara girmez).
 //
 // Fiyat: önce hızlı sunucu taraması denenir; alınamazsa kayıt fiyatsız açılır
-// ve worker'ın 30 dakikalık rakip-tazeleme döngüsü (lastScrapedAt=null
-// kayıtlarını ÖNCE işler) fiyatı kısa sürede doldurur.
+// ve worker'a doğrudan bir scrape işi kuyruklanır (tam zincir: API → HTML →
+// Puppeteer). Periyodik Serper döngüsü Google'da birebir görünmeyen URL'lere
+// fiyat getiremediği için bu iş manuel rakiplerin tek güvenilir fiyat yoludur.
 
 const addCompetitorSchema = z.object({
   competitorUrl: z
@@ -117,6 +119,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           inStock: true,
         },
       });
+    } else {
+      // Hızlı tarama fiyat alamadı (Vercel IP'leri bot korumalarına takılır) —
+      // worker'a doğrudan scrape işi kuyrukla: tam zincir (API → HTML →
+      // Puppeteer) datacenter engellerini aşabiliyor. Serper döngüsüne bel
+      // bağlanmaz; Google'da birebir görünmeyen URL'ler orada hiç fiyat alamaz.
+      try {
+        await addCompetitorScrapeJob(competitor.id);
+      } catch (queueError) {
+        logger.error(
+          { err: queueError, competitorId: competitor.id },
+          "Competitor scrape queue error (non-fatal)",
+        );
+      }
     }
 
     return apiSuccess(
@@ -132,7 +147,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         priceFetched: Boolean(scrapedPrice),
         message: scrapedPrice
           ? "Rakip eklendi ve fiyatı alındı."
-          : "Rakip eklendi. Fiyatı en geç 30 dakika içinde otomatik alınacak.",
+          : "Rakip eklendi. Fiyatı arka planda çekiliyor — birkaç dakika içinde görünecek.",
       },
       201,
     );

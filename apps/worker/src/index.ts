@@ -6,6 +6,7 @@ import { setGlobalDispatcher, ProxyAgent } from "undici";
 
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
+import { processCompetitorScrapeJob } from "./jobs/competitor-scrape";
 import { cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
 import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
@@ -118,6 +119,11 @@ const competitorWorker = new Worker(
   "competitors",
   async (job) => {
     logger.info({ jobName: job.name, jobId: job.id }, "Competitor search job received");
+
+    // Manuel eklenen rakip için doğrudan scrape — keşif turu değil.
+    if (job.name === "scrape-competitor") {
+      return processCompetitorScrapeJob(job.data);
+    }
 
     const { productId, productName, marketplace: _marketplace } = job.data;
     return processCompetitorJob({

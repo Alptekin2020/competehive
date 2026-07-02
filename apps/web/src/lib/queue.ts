@@ -44,3 +44,18 @@ export async function addCompetitorSearchJob(
     },
   );
 }
+
+// Manuel eklenen rakibin fiyatını worker'ın tam scraper zinciriyle (Puppeteer
+// dahil) doğrudan çektirir. Web tarafındaki hızlı tarama Vercel IP engellerine
+// takıldığında ve Serper döngüsü URL'yi Google'da bulamadığında tek çalışan yol.
+export async function addCompetitorScrapeJob(competitorId: string) {
+  const queue = getCompetitorQueue();
+  await queue.add(
+    "scrape-competitor",
+    { competitorId },
+    {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 15000 },
+    },
+  );
+}
