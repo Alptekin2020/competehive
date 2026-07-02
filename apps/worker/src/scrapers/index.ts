@@ -981,8 +981,15 @@ type HepsiburadaPuppeteerErrorShape = {
   stack?: string;
 };
 
-function isAkamaiBlockHtml(html: string, status: number, server: string | null): boolean {
+export function isAkamaiBlockHtml(html: string, status: number, server: string | null): boolean {
   if (status === 403 && server && server.toLowerCase().includes("akamai")) return true;
+  // Gerçek blok/challenge sayfaları KÜÇÜKTÜR (gözlemlenen: ~2KB, 403 +
+  // "hepsiburada | güvenlik" başlığı). Gerçek ürün sayfaları ise 100KB+ olur
+  // ve inline SPA bundle'ları güvenlik sayfası şablonunu ("güvenlik" başlık
+  // dizesi) ve "akamai"+"iframe" kelimelerini doğal olarak İÇERİR — imza
+  // taraması büyük gövdede yapılırsa 200'lük gerçek ürün sayfası blok sanılıp
+  // çöpe atılır (üretimde 607KB'lik sayfa bu yüzden hiç ayrıştırılmadı).
+  if (html.length >= 50_000) return false;
   const lower = html.toLowerCase();
   return (
     lower.includes("hepsiburada | güvenlik") ||
