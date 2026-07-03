@@ -75,6 +75,18 @@ export async function POST(req: NextRequest) {
 
     const scrapeInterval = features.scrapeIntervalMinutes;
 
+    // Pazaryeri sayısı limiti — tekli ekleme ucuyla aynı kural. Bu kontrol
+    // olmadan 2 pazaryerlik STARTER planı tek toplu istekle 9 pazaryerine
+    // yayılabiliyordu.
+    const usedMarketplaces = new Set(
+      (
+        await prisma.trackedProduct.groupBy({
+          by: ["marketplace"],
+          where: { userId: user.id },
+        })
+      ).map((m) => m.marketplace as string),
+    );
+
     // Process each URL
     const results: Array<{
       url: string;
@@ -105,6 +117,19 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      if (
+        features.marketplaceLimit < 99 &&
+        !usedMarketplaces.has(marketplace) &&
+        usedMarketplaces.size >= features.marketplaceLimit
+      ) {
+        results.push({
+          url,
+          status: "error",
+          message: `Pazaryeri limitinize ulaştınız (${features.marketplaceLimit}). Planınızı yükseltin.`,
+        });
+        continue;
+      }
+
       try {
         const product = await prisma.trackedProduct.create({
           data: {
@@ -118,6 +143,7 @@ export async function POST(req: NextRequest) {
         });
 
         existingUrls.add(url); // prevent same URL added twice in same batch
+        usedMarketplaces.add(marketplace); // batch içi pazaryeri limiti tutarlılığı
 
         // Tekli ekleme ucuyla ayni sekilde ilk taramayi hemen kuyrukla —
         // aksi halde urunler zamanlayicinin dongusunu bekleyip "Yükleniyor..."

@@ -1,5 +1,7 @@
 import * as cheerio from "cheerio";
 
+import { assertPublicHttpUrl, ssrfDispatcher } from "@/lib/ssrf-guard";
+
 export interface ScrapedProduct {
   name: string;
   price: number | null;
@@ -16,21 +18,43 @@ const HEADERS: Record<string, string> = {
   "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
 };
 
-async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: HEADERS,
-      signal: controller.signal,
-      cache: "no-store",
-    });
-    clearTimeout(timeout);
+// SSRF koruması: hedef URL fetch'ten önce doğrulanır ve yönlendirmeler
+// otomatik takip edilmez — her sıçrama yeniden doğrulanır. Aksi halde
+// pazaryeri allowlist'inden geçen bir URL, 302 ile iç ağa (localhost,
+// 169.254.169.254) yönlendirilebilirdi.
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs = 10000,
+  maxRedirects = 3,
+): Promise<Response> {
+  let currentUrl = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    await assertPublicHttpUrl(currentUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      // dispatcher: bağlantı anında DNS'i yeniden doğrular (DNS rebinding /
+      // TOCTOU koruması). Tip fetch imzasında yok — undici uzantısı.
+      res = await fetch(currentUrl, {
+        headers: HEADERS,
+        signal: controller.signal,
+        cache: "no-store",
+        redirect: "manual",
+        dispatcher: ssrfDispatcher,
+      } as RequestInit & { dispatcher: typeof ssrfDispatcher });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) return res;
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
     return res;
-  } catch (e) {
-    clearTimeout(timeout);
-    throw e;
   }
+  throw new Error("Çok fazla yönlendirme");
 }
 
 function parsePrice(priceStr: string): number | null {

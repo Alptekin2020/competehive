@@ -4,8 +4,20 @@ import { getProductQueue } from "@/lib/queue";
 import { unauthorized, notFound, serverError } from "@/lib/api-response";
 import { NextRequest, NextResponse } from "next/server";
 import { applyRateLimit } from "@/lib/with-rate-limit";
-import { RATE_LIMITS } from "@/lib/rate-limit";
+import { RATE_LIMITS, rateLimit } from "@/lib/rate-limit";
+import { resolveEffectivePlan } from "@/lib/plan-resolve";
 import { updateTrackedProductRefresh } from "@/lib/tracked-product-refresh";
+
+// Plana göre günlük manuel yenileme kotası. Manuel yenileme, plan tarama
+// aralığını fiilen deler (FREE = günde 1 tarama hakkı ama yenile butonu
+// sınırsızdı) ve her çağrı Serper maliyeti tetikleyebilir — ödenen özellik
+// olan "daha sık tarama"nın ücretsiz yolu kapanır.
+const DAILY_REFRESH_QUOTA: Record<string, number> = {
+  FREE: 5,
+  STARTER: 25,
+  PRO: 100,
+  ENTERPRISE: 300,
+};
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -14,6 +26,21 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
 
     const rateLimited = await applyRateLimit(_request, user?.id || null, RATE_LIMITS.refresh);
     if (rateLimited) return rateLimited;
+
+    const effectiveTier = resolveEffectivePlan(user).plan;
+    const dailyQuota = DAILY_REFRESH_QUOTA[effectiveTier] ?? DAILY_REFRESH_QUOTA.FREE;
+    const daily = await rateLimit(`rate:refresh-daily:${user.id}`, dailyQuota, 86400, {
+      failClosed: true,
+    });
+    if (!daily.success) {
+      return NextResponse.json(
+        {
+          error: `Günlük manuel yenileme limitinize ulaştınız (${dailyQuota}/gün). Planınızı yükselterek limiti artırabilirsiniz.`,
+          upgradeRequired: true,
+        },
+        { status: 429 },
+      );
+    }
 
     const { id: productId } = await params;
 

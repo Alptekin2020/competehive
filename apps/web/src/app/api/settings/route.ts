@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
+import { assertPublicHttpUrl } from "@/lib/ssrf-guard";
 
 // GET /api/settings - Kullanıcı ayarlarını getir
 export async function GET() {
@@ -61,12 +62,15 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    // Validate webhook URL if provided
+    // Validate webhook URL if provided. SSRF koruması: worker bu URL'ye
+    // bildirim POST'lar — iç ağ/localhost hedefleri kayıt anında reddedilir.
     if (webhookUrl !== undefined && webhookUrl !== null && webhookUrl !== "") {
       try {
-        new URL(webhookUrl);
+        await assertPublicHttpUrl(String(webhookUrl));
       } catch {
-        return badRequest("Geçersiz webhook URL formatı.");
+        return badRequest(
+          "Geçersiz webhook URL'i: yalnızca dışa açık http(s) adresleri kabul edilir.",
+        );
       }
     }
 
