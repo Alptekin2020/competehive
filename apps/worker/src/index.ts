@@ -11,6 +11,7 @@ import { cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
 import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
+import { pruneOldPriceHistory } from "./jobs/history-retention";
 import { prisma } from "./db";
 import { runMigrations } from "./migrate";
 import { logger } from "./utils/logger";
@@ -295,6 +296,25 @@ async function start() {
       });
     },
     2 * 60 * 1000,
+  );
+
+  // Günlük fiyat geçmişi budaması: plan bazlı saklama süresi (FREE 7 gün /
+  // STARTER 30 / PRO 365; ENTERPRISE silinmez). Açılıştan 10 dk sonra ilk tur.
+  setInterval(
+    () => {
+      pruneOldPriceHistory().catch((err) => {
+        logger.error({ err }, "History retention scheduler error");
+      });
+    },
+    24 * 60 * 60 * 1000,
+  );
+  setTimeout(
+    () => {
+      pruneOldPriceHistory().catch((err) => {
+        logger.error({ err }, "Initial history retention error");
+      });
+    },
+    10 * 60 * 1000,
   );
 
   // Start health check HTTP server (Railway uses this for health checks)

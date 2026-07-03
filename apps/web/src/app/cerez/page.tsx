@@ -57,14 +57,23 @@ export default function CerezPage() {
                   <span className="text-white">Analitik çerezler:</span> Sitenin nasıl
                   kullanıldığını anlamak ve hizmeti iyileştirmek için anonim istatistikler toplar.
                 </li>
+                <li>
+                  <span className="text-white">Reklam/pazarlama çerezleri:</span> Tanıtım
+                  kampanyalarının etkinliğini ölçmek için üçüncü taraf pixel&apos;leri (ör. Meta,
+                  TikTok) kullanılabilir. Bunlar yalnızca açık onayınızdan sonra yüklenir.
+                </li>
               </ul>
             </section>
 
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">3. Çerez Tercihleriniz</h2>
               <p>
-                Tarayıcınızın ayarlarından çerezleri silebilir veya engelleyebilirsiniz. Zorunlu
-                çerezleri engellemeniz halinde sitenin bazı bölümleri düzgün çalışmayabilir.
+                Analitik ve reklam çerezleri yalnızca site girişindeki çerez bildiriminde
+                <span className="text-white"> &quot;Kabul Et&quot;</span> seçmeniz durumunda
+                yüklenir; <span className="text-white">&quot;Reddet&quot;</span> seçerseniz bu
+                çerezler kullanılmaz ve yalnızca zorunlu çerezler çalışır. Tercihinizi tarayıcınızın
+                yerel depolamasını temizleyerek her zaman sıfırlayabilirsiniz. Zorunlu çerezleri
+                engellemeniz halinde sitenin bazı bölümleri düzgün çalışmayabilir.
               </p>
             </section>
 

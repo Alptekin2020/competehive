@@ -3,6 +3,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { trTR } from "@clerk/localizations";
 import "./globals.css";
 import CookieBanner from "@/components/CookieBanner";
+import AnalyticsScripts from "@/components/AnalyticsScripts";
 
 const SITE_TITLE = "CompeteHive — Rakip Fiyat Takip Platformu";
 const SITE_DESCRIPTION =
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <body className="bg-[#0A0A0B] text-white antialiased">
           {children}
           <CookieBanner />
+          <AnalyticsScripts />
         </body>
       </html>
     </ClerkProvider>
