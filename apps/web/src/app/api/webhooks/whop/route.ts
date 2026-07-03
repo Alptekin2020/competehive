@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { WHOP_PRODUCT_TO_PLAN, getPlanLimits, type PlanTier } from "@/lib/plans";
-import { isFreshWebhookTimestamp } from "@/lib/whop-webhook";
+import { isPaidTier } from "@/lib/plan-resolve";
+import { getWhopClient } from "@/lib/whop";
+import {
+  isFreshWebhookTimestamp,
+  isSupersededMembershipEvent,
+  parseWhopTimestamp,
+} from "@/lib/whop-webhook";
 
 export const runtime = "nodejs";
 
@@ -22,6 +28,9 @@ interface WhopMembershipData {
   plan?: { id?: string };
   renewal_period_end?: string | null;
   metadata?: Record<string, unknown> | null;
+  // Payment/invoice payloads carry the membership as a nested {id, status}
+  // reference instead of membership fields at the top level.
+  membership?: { id?: string; status?: string } | null;
 }
 
 interface WhopEvent {
@@ -226,12 +235,13 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "user not found" }, { status: 500 });
       }
       const limits = getPlanLimits(tier);
+      const previousMembershipId = user.whopMembershipId;
       await prisma.user.update({
         where: { id: user.id },
         data: {
           plan: tier,
           planStatus: "ACTIVE",
-          planExpiresAt: data.renewal_period_end ? new Date(data.renewal_period_end) : null,
+          planExpiresAt: parseWhopTimestamp(data.renewal_period_end),
           maxProducts: limits.maxProducts,
           whopUserId: data.user?.id ?? undefined,
           whopMembershipId: data.id ?? undefined,
@@ -239,6 +249,72 @@ export async function POST(request: Request) {
           whopPlanId: data.plan?.id ?? undefined,
         },
       });
+
+      // Plan değişikliği ürün satırlarına da yansımalı: tarama aralığı ürün
+      // oluşturulurken plandan set edilir ve ürün bazlı özelleştirme yoktur.
+      // Güncellenmezse PRO'ya yükselen kullanıcının mevcut ürünleri günlük
+      // taramada kalır — ödenen ana özellik teslim edilmez.
+      await prisma.trackedProduct.updateMany({
+        where: { userId: user.id },
+        data: { scrapeInterval: limits.scrapeInterval },
+      });
+
+      // Paid→paid geçişte yeni kapasite eskisinden küçükse kapasite üstünü
+      // durdur (iptal dalıyla aynı politika: en eski N ürün aktif kalır).
+      const activeCount = await prisma.trackedProduct.count({
+        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+      });
+      if (activeCount > limits.maxProducts) {
+        const keep = await prisma.trackedProduct.findMany({
+          where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+          orderBy: { createdAt: "asc" },
+          take: limits.maxProducts,
+          select: { id: true },
+        });
+        await prisma.trackedProduct.updateMany({
+          where: {
+            userId: user.id,
+            status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+            id: { notIn: keep.map((k) => k.id) },
+          },
+          data: { status: "PAUSED" },
+        });
+      }
+
+      // Yükseltme akışı yeni bir Whop aboneliği açar; eskisi iptal edilmezse
+      // kullanıcı iki planı birden ödemeye devam eder. Dönem sonunda iptal:
+      // ödenen süre kullanılır, bir sonraki tahsilat engellenir. (Aşağıdaki
+      // superseded-membership koruması sayesinde bu iptalin webhook'u mevcut
+      // planı düşürmez.)
+      if (isSupersededMembershipEvent(previousMembershipId, data.id)) {
+        try {
+          const whop = getWhopClient();
+          await whop.memberships.cancel(previousMembershipId as string, {
+            cancellation_mode: "at_period_end",
+          });
+          console.log(
+            "[whop] canceled superseded membership=" +
+              previousMembershipId +
+              " user=" +
+              user.id +
+              " (upgraded to " +
+              tier +
+              ")",
+          );
+        } catch (cancelError) {
+          // İptal başarısızsa çifte tahsilat riski sürer — manuel müdahale
+          // gerektirir, bu yüzden yüksek sesle logla ama aktivasyonu bozma.
+          console.error(
+            "[whop] FAILED to cancel superseded membership=" +
+              previousMembershipId +
+              " user=" +
+              user.id +
+              " — DOUBLE BILLING until manually canceled in Whop: " +
+              String(cancelError),
+          );
+        }
+      }
+
       console.log("[whop] activated user=" + user.id + " plan=" + tier);
       return NextResponse.json({ received: true });
     }
@@ -251,6 +327,20 @@ export async function POST(request: Request) {
       const user = await findUser(data);
       if (!user) {
         console.warn("[whop] membership terminated: user not found");
+        return NextResponse.json({ received: true });
+      }
+      // Yükseltmede iptal edilen ESKİ aboneliğin sonlanma webhook'u, hâlâ
+      // ödeme yapan kullanıcının YENİ planını düşürmemeli. Kullanıcının güncel
+      // membership'i bu event'teki değilse hiçbir şey yapma.
+      if (isSupersededMembershipEvent(user.whopMembershipId, data.id)) {
+        console.log(
+          "[whop] ignoring termination of superseded membership=" +
+            String(data.id) +
+            " current=" +
+            String(user.whopMembershipId) +
+            " user=" +
+            user.id,
+        );
         return NextResponse.json({ received: true });
       }
       // Access has ended — revert to the FREE plan and its product cap so the
@@ -296,21 +386,83 @@ export async function POST(request: Request) {
     }
 
     if (type === "payment.succeeded" || type === "invoice.paid") {
-      // Renewal / successful charge. Whop also emits membership.activated for
-      // access changes, so here we only refresh the expiry when we can match.
+      // Yenileme / başarılı tahsilat. Bu, ödeyen kullanıcının erişiminin devam
+      // etmesini sağlayan KRİTİK daldır: planExpiresAt uzatılmazsa worker ilk
+      // fatura döneminden sonra kullanıcının tüm taramalarını durdurur.
       const user = await findUser(data);
-      if (user && data.renewal_period_end) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            planStatus: "ACTIVE",
-            planExpiresAt: new Date(data.renewal_period_end),
-          },
-        });
-        console.log("[whop] payment renewal user=" + user.id);
-      } else {
-        console.log("[whop] payment event logged type=" + type);
+      if (!user) {
+        console.log("[whop] payment event: user not found type=" + type);
+        return NextResponse.json({ received: true });
       }
+
+      // Ödeme, kullanıcının GÜNCEL aboneliğine mi ait? Yükseltme sonrası eski
+      // aboneliğin son ödemesi yeni planın süresini etkilememeli.
+      const paymentMembershipId = data.membership?.id ?? null;
+      if (isSupersededMembershipEvent(user.whopMembershipId, paymentMembershipId)) {
+        console.log(
+          "[whop] ignoring payment for superseded membership=" +
+            String(paymentMembershipId) +
+            " user=" +
+            user.id,
+        );
+        return NextResponse.json({ received: true });
+      }
+
+      // 1) Membership-şekilli payload'larda dönem sonu doğrudan gelir.
+      let renewalEnd = parseWhopTimestamp(data.renewal_period_end);
+
+      // 2) Payment/invoice payload'ı membership'i yalnızca {id, status} olarak
+      // taşır — dönem sonunu Whop API'sinden tam membership kaydıyla al.
+      if (!renewalEnd) {
+        const membershipId = paymentMembershipId || user.whopMembershipId;
+        if (membershipId) {
+          try {
+            const whop = getWhopClient();
+            const membership = await whop.memberships.retrieve(membershipId);
+            renewalEnd = parseWhopTimestamp(membership?.renewal_period_end);
+          } catch (retrieveError) {
+            console.error(
+              "[whop] failed to retrieve membership=" +
+                membershipId +
+                " for renewal: " +
+                String(retrieveError),
+            );
+          }
+        }
+      }
+
+      // 3) Dönem sonu hâlâ bilinmiyorsa: ödeme başarılı, kullanıcıyı asla
+      // durdurma — 35 günlük güvenlik penceresi ver (aylık faturalamayı aşar,
+      // bir sonraki webhook doğru değeri yazar). Mevcut değeri asla geriye
+      // çekme.
+      if (!renewalEnd) {
+        renewalEnd = new Date(Date.now() + 35 * 24 * 60 * 60 * 1000);
+        console.warn(
+          "[whop] renewal_period_end unavailable — applying 35-day grace user=" + user.id,
+        );
+      }
+      if (user.planExpiresAt && user.planExpiresAt > renewalEnd) {
+        renewalEnd = user.planExpiresAt;
+      }
+
+      // İlk satın almada payment event'i membership.activated'dan ÖNCE
+      // gelebilir; kullanıcı henüz FREE ise plan kurulumunu activation dalına
+      // bırak (FREE satırına expiry yazmak etkisiz ama kafa karıştırıcı olur).
+      if (!isPaidTier(user.plan)) {
+        console.log("[whop] payment for non-paid user — awaiting activation user=" + user.id);
+        return NextResponse.json({ received: true });
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          planStatus: "ACTIVE",
+          planExpiresAt: renewalEnd,
+        },
+      });
+      console.log(
+        "[whop] payment renewal user=" + user.id + " expiresAt=" + renewalEnd.toISOString(),
+      );
       return NextResponse.json({ received: true });
     }
 

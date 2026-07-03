@@ -475,14 +475,19 @@ export default async function Home() {
                   "500 ürün",
                   "12 saatte 1 tarama",
                   "Tüm marketplace",
-                  "Oto-fiyat kuralları",
+                  "Analitik dashboard",
                 ],
                 hl: false,
               },
               {
                 plan: "Kurumsal",
                 price: "₺1.999",
-                features: ["Sınırsız ürün", "6 saatte 1 tarama", "API erişimi", "Webhook + Özel"],
+                features: [
+                  "Sınırsız ürün",
+                  "6 saatte 1 tarama",
+                  "Tüm bildirim kanalları",
+                  "Dedicated destek",
+                ],
                 hl: false,
               },
             ].map((p, i) => (

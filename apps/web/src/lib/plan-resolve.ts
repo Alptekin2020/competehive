@@ -27,6 +27,14 @@ export interface PlanInfo {
 
 const PAID_TIERS: ReadonlySet<string> = new Set(["STARTER", "PRO", "ENTERPRISE"]);
 
+// Zaman aşımıyla (planExpiresAt) düşüşte tolerans penceresi: yenileme
+// webhook'u gecikirse ya da kaçarsa, ödemesi devam eden müşteri anında FREE'ye
+// düşmesin. Açık iptal/sonlanma webhook'u planStatus'u değiştirdiği için bu
+// pencereden ETKİLENMEZ — yalnızca timestamp'i geçmiş ama hâlâ ACTIVE görünen
+// planlara uygulanır. Worker'daki kopyayla senkron tutulmalı
+// (apps/worker/src/shared.ts — Docker build context shared paketi import edemez).
+export const PLAN_EXPIRY_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+
 export function isPaidTier(plan: string | null | undefined): plan is PlanTier {
   return !!plan && PAID_TIERS.has(plan);
 }
@@ -61,7 +69,9 @@ export function resolveEffectivePlan(
 
   if (!user || !isPaidTier(user.plan)) return free;
   if (user.planStatus !== "ACTIVE") return free;
-  if (user.planExpiresAt && user.planExpiresAt < now) return free;
+  if (user.planExpiresAt && user.planExpiresAt.getTime() + PLAN_EXPIRY_GRACE_MS < now.getTime()) {
+    return free;
+  }
 
   const limits = PLAN_LIMITS[user.plan];
   if (!limits) return free;

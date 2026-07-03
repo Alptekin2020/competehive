@@ -3,7 +3,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
-import { getPlanFeatures } from "@/lib/plan-gates";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
 
 // ============================================
 // PATCH /api/alerts/[id] - Uyarı kuralını düzenle
@@ -74,7 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Kanal değişikliği plan kapısından geçer (POST ile aynı kural).
     if (parsed.data.notifyVia) {
-      const features = getPlanFeatures(user.plan);
+      const features = getEffectiveFeatures(user);
       const disallowed = parsed.data.notifyVia.filter(
         (ch) => !features.allowedChannels.includes(ch),
       );

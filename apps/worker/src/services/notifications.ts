@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
 import { sendMessage as tgSendMessage, TelegramApiError } from "../utils/telegram-api";
 import { postWebhookSafe } from "../utils/webhook-guard";
-import type { AlertRuleWithUser, AlertUser } from "../shared";
+import { resolveAllowedChannels, type AlertRuleWithUser, type AlertUser } from "../shared";
 
 const prisma = new PrismaClient();
 
@@ -365,11 +365,25 @@ function generateNotificationMessage(ruleType: string, data: AlertData): string 
 
 export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Promise<void> {
   // Yinelenen kanal kaydı çift gönderime (ve UI'da çift rozete) yol açmasın.
-  const channels: string[] = [...new Set(rule.notifyVia || [])];
+  const requestedChannels: string[] = [...new Set(rule.notifyVia || [])];
   const title = generateNotificationTitle(rule.ruleType, data);
   const message = generateNotificationMessage(rule.ruleType, data);
 
   const deliveries: ChannelDelivery[] = [];
+
+  // Send-time plan kapısı: kural oluşturulduktan SONRA planı düşen kullanıcının
+  // kurallarındaki ücretli kanallar (Telegram/Webhook) süresiz çalışmaya devam
+  // etmesin. İzin dışı kanallar SKIPPED olarak kaydedilir ki kullanıcı
+  // bildirim geçmişinde nedenini görebilsin.
+  const allowedChannels = resolveAllowedChannels(rule.user);
+  const channels = requestedChannels.filter((ch) => allowedChannels.includes(ch));
+  for (const blocked of requestedChannels.filter((ch) => !allowedChannels.includes(ch))) {
+    deliveries.push({
+      channel: blocked,
+      status: "SKIPPED",
+      error: "Bu kanal mevcut planınızda yer almıyor. Planınızı yükseltin.",
+    });
+  }
 
   for (const channel of channels) {
     // 1. Attempt the external send and capture the real outcome.
@@ -412,7 +426,7 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
   await writeNotificationToDB({
     userId: rule.userId,
     alertRuleId: rule.id,
-    channel: channels[0],
+    channel: channels[0] ?? requestedChannels[0] ?? "EMAIL",
     title,
     message,
     status: overall.status,
@@ -543,9 +557,19 @@ async function sendEmailAlert(
       </tr>`
     : "";
 
+  // Prod'da doğrulanmış gönderici zorunlu (env validasyonu boot'ta zorlar);
+  // onboarding@resend.dev yalnızca geliştirmede işe yarar — müşterilere
+  // teslim edemez, bu yüzden prod'da fallback YOK.
+  const fromAddress =
+    process.env.RESEND_FROM_EMAIL ||
+    (process.env.NODE_ENV === "production" ? null : "CompeteHive <onboarding@resend.dev>");
+  if (!fromAddress) {
+    return { status: "FAILED", error: "RESEND_FROM_EMAIL yapılandırılmamış" };
+  }
+
   try {
-    await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || "CompeteHive <onboarding@resend.dev>",
+    const { error: sendError } = await resend.emails.send({
+      from: fromAddress,
       to: user.email,
       subject: `${emoji} ${heading}: ${data.productName}`,
       html: `
@@ -631,6 +655,17 @@ async function sendEmailAlert(
         </div>
       `,
     });
+
+    // Resend SDK'sı API/ağ hatalarında throw ETMEZ — hatayı sonuç nesnesinde
+    // döndürür. Kontrol edilmezse reddedilen/bounce olan her e-posta "SENT"
+    // olarak kaydedilir ve kullanıcı hiç ulaşmayan bir kanala güvenir.
+    if (sendError) {
+      logger.error({ userId: user.id, error: sendError }, "Resend email failed");
+      return {
+        status: "FAILED",
+        error: sendError.message || sendError.name || String(sendError),
+      };
+    }
 
     logger.info({ userId: user.id, email: user.email }, "Email alert sent via Resend");
     return { status: "SENT" };

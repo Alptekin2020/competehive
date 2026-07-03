@@ -8,6 +8,11 @@ export interface AppUser {
   email: string;
   name: string | null;
   plan: string;
+  // Etkin plan çözümlemesi (plan-resolve.ts) ve abonelik yönetimi bu alanlara
+  // ihtiyaç duyar — ham `plan` tek başına süresi dolmuş aboneliği gizler.
+  planStatus: string | null;
+  planExpiresAt: Date | null;
+  whopMembershipId: string | null;
   maxProducts: number;
   isActive: boolean;
   alertThresholdPct: number;
@@ -54,6 +59,7 @@ async function applyAdminOverride(user: {
   isActive: boolean;
   planStatus: string | null;
   planExpiresAt: Date | null;
+  whopMembershipId?: string | null;
   alertThresholdPct: number;
 }): Promise<AppUser> {
   if (!user.clerkId || !isAdminUser({ clerkId: user.clerkId, email: user.email })) {
@@ -63,6 +69,9 @@ async function applyAdminOverride(user: {
       email: user.email,
       name: user.name,
       plan: user.plan,
+      planStatus: user.planStatus,
+      planExpiresAt: user.planExpiresAt,
+      whopMembershipId: user.whopMembershipId ?? null,
       maxProducts: user.maxProducts,
       isActive: user.isActive,
       alertThresholdPct: user.alertThresholdPct,
@@ -98,6 +107,9 @@ async function applyAdminOverride(user: {
       email: updatedUser.email,
       name: updatedUser.name,
       plan: updatedUser.plan,
+      planStatus: updatedUser.planStatus,
+      planExpiresAt: updatedUser.planExpiresAt,
+      whopMembershipId: updatedUser.whopMembershipId ?? null,
       maxProducts: updatedUser.maxProducts,
       isActive: updatedUser.isActive,
       alertThresholdPct: updatedUser.alertThresholdPct,
@@ -110,6 +122,9 @@ async function applyAdminOverride(user: {
     email: user.email,
     name: user.name,
     plan: ADMIN_OVERRIDE_PLAN,
+    planStatus: "ACTIVE",
+    planExpiresAt: null,
+    whopMembershipId: user.whopMembershipId ?? null,
     maxProducts: ADMIN_OVERRIDE_MAX_PRODUCTS,
     isActive: true,
     alertThresholdPct: user.alertThresholdPct,

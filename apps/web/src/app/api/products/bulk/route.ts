@@ -4,9 +4,8 @@ import { getCurrentUser } from "@/lib/current-user";
 import { detectMarketplaceFromUrl, isScraperSupportedMarketplace } from "@/lib/marketplaces";
 import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { z } from "zod";
-import { PLAN_LIMITS } from "@competehive/shared";
 import { Marketplace } from "@prisma/client";
-import { getPlanFeatures } from "@/lib/plan-gates";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { applyRateLimit } from "@/lib/with-rate-limit";
 import { RATE_LIMITS } from "@/lib/rate-limit";
 import { addScrapeJob } from "@/lib/queue";
@@ -36,8 +35,8 @@ export async function POST(req: NextRequest) {
 
     const { urls } = parsed.data;
 
-    // Plan-based bulk import check
-    const features = getPlanFeatures(user.plan);
+    // Plan-based bulk import check (etkin plan: süresi dolmuş abonelik FREE sayılır)
+    const features = getEffectiveFeatures(user);
     if (!features.hasBulkImport) {
       return new Response(
         JSON.stringify({
@@ -74,7 +73,7 @@ export async function POST(req: NextRequest) {
     });
     const existingUrls = new Set(existingProducts.map((p) => p.productUrl));
 
-    const scrapeInterval = PLAN_LIMITS[user.plan]?.scrapeIntervalMinutes ?? 1440;
+    const scrapeInterval = features.scrapeIntervalMinutes;
 
     // Process each URL
     const results: Array<{

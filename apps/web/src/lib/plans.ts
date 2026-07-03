@@ -79,7 +79,7 @@ export const PLANS: PlanInfo[] = [
       "Tüm marketplace'ler (8+)",
       "1 yıl fiyat geçmişi",
       "E-posta + Telegram + Webhook",
-      "Otomatik fiyat kuralları",
+      "100 uyarı kuralı",
       "Analitik dashboard",
       "Öncelikli destek",
     ],
@@ -103,8 +103,8 @@ export const PLANS: PlanInfo[] = [
       "Tüm marketplace'ler (8+)",
       "Sınırsız fiyat geçmişi",
       "Tüm bildirim kanalları",
-      "API erişimi",
-      "Özel entegrasyonlar",
+      "Sınırsız uyarı kuralı ve etiket",
+      "Analitik dashboard",
       "Dedicated destek",
     ],
     highlighted: false,
@@ -130,10 +130,9 @@ export function getCompeteHivePlanByWhopId(whopPlanId: string): string {
   return "FREE"; // fallback
 }
 
-// Get plan limits by plan ID. Numbers mirror PLAN_LIMITS (paid tiers) below;
-// FREE keeps its legacy values so any legacy code path that still imports
-// this helper doesn't crash, even though canAddProduct() treats FREE as
-// "no active plan" and rejects creation before this is consulted.
+// Get plan limits by plan ID (interval in minutes). Numbers mirror
+// PLAN_LIMITS (paid tiers) below; FREE is a real, usable 5-product tier
+// (see plan-resolve.ts) and uses the default branch here.
 export function getPlanLimits(planId: string): { maxProducts: number; scrapeInterval: number } {
   switch (planId) {
     case "STARTER":

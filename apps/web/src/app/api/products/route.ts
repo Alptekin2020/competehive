@@ -16,7 +16,7 @@ import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-res
 import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
-import { getPlanFeatures } from "@/lib/plan-gates";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { canAddProduct } from "@/lib/limits";
 import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
 import { normalizeProductImage } from "@competehive/shared";
@@ -227,8 +227,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Marketplace limit check
-    const features = getPlanFeatures(user.plan);
+    // Marketplace limit check (etkin plan: süresi dolmuş abonelik FREE sayılır)
+    const features = getEffectiveFeatures(user);
     if (features.marketplaceLimit < 99) {
       const usedMarketplaces = await prisma.trackedProduct.groupBy({
         by: ["marketplace"],

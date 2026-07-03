@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, badRequest, notFound, serverError } from "@/lib/api-response";
-import { getPlanFeatures } from "@/lib/plan-gates";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
 
 // ============================================
 // GET /api/alerts - Kullanıcının uyarı kurallarını listele
@@ -65,12 +65,12 @@ export async function POST(req: NextRequest) {
       return badRequest(parsed.error.errors[0].message);
     }
 
-    // Plan-based restrictions
+    // Plan-based restrictions (etkin plan: süresi dolmuş abonelik FREE sayılır)
     const userRecord = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { plan: true },
+      select: { plan: true, planStatus: true, planExpiresAt: true },
     });
-    const features = getPlanFeatures(userRecord?.plan || "FREE");
+    const features = getEffectiveFeatures(userRecord);
 
     // Check alert rule count limit
     const currentRuleCount = await prisma.alertRule.count({
