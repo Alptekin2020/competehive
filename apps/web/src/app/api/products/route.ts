@@ -121,6 +121,10 @@ export async function GET() {
         current_price: p.currentPrice,
         cost: p.cost,
         last_scraped_at: p.lastScrapedAt,
+        // Son BAŞARILI fiyat güncellemesi: PriceHistory yalnızca başarılı
+        // taramada yazılır. lastScrapedAt ise "son deneme"dir (başarısız
+        // taramada da ilerler) — tazelik rozetleri bu alanı kullanmalı.
+        last_success_at: latestHistory?.scrapedAt ?? null,
         status: p.status,
         refresh_status: p.refreshStatus,
         refresh_error: p.refreshError,

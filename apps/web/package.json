@@ -16,6 +16,7 @@
     "@clerk/nextjs": "^7.0.1",
     "@competehive/shared": "*",
     "@prisma/client": "^6.4.0",
+    "@sentry/nextjs": "^9.47.1",
     "@whop/sdk": "^0.0.35",
     "bullmq": "^5.30.0",
     "cheerio": "^1.2.0",

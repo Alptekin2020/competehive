@@ -32,6 +32,9 @@ interface DashboardProduct {
   marketplace: string;
   current_price: string | null;
   last_scraped_at: string | null;
+  // Son BAŞARILI tarama — tazelik rozetleri bunu kullanır (last_scraped_at
+  // başarısız denemede de ilerlediği için bayat veriyi taze gösterebilir).
+  last_success_at?: string | null;
   status?: string;
   competitorCount?: number;
   competitors?: { current_price: string | null }[];
@@ -229,7 +232,7 @@ export default function DashboardPage() {
       return {
         ...product,
         competitorCount,
-        isStale: isStale(product.last_scraped_at),
+        isStale: isStale(product.last_success_at ?? null),
         hasPriceChange,
         hasCriticalIssue,
       };
@@ -796,7 +799,8 @@ export default function DashboardPage() {
                           </div>
                         </div>
                         {(() => {
-                          const ageBadge = priceAgeBadge(item.last_scraped_at);
+                          const freshness = item.last_success_at ?? null;
+                          const ageBadge = priceAgeBadge(freshness);
                           if (ageBadge) {
                             return (
                               <span
@@ -808,8 +812,8 @@ export default function DashboardPage() {
                           }
                           return (
                             <span className="text-xs text-gray-400 whitespace-nowrap">
-                              {item.last_scraped_at
-                                ? (formatRelativeTime(new Date(item.last_scraped_at)) ?? "-")
+                              {freshness
+                                ? (formatRelativeTime(new Date(freshness)) ?? "-")
                                 : "güncel değil"}
                             </span>
                           );

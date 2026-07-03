@@ -5,6 +5,23 @@ import { logger } from "./utils/logger";
 
 const prisma = new PrismaClient();
 
+// Platform healthcheck'leri sık gelir — istek başına yeni bağlantı açmak
+// yerine tek kalıcı Redis istemcisi kullanılır.
+let healthRedis: IORedis | null = null;
+
+function getHealthRedis(): IORedis {
+  if (!healthRedis) {
+    healthRedis = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3000,
+    });
+    healthRedis.on("error", (err) => {
+      logger.warn({ err: err.message }, "Health Redis error");
+    });
+  }
+  return healthRedis;
+}
+
 export function startHealthServer(port: number = 8080) {
   const server = http.createServer(async (req, res) => {
     if (req.url === "/health" && req.method === "GET") {
@@ -13,14 +30,7 @@ export function startHealthServer(port: number = 8080) {
         await prisma.$queryRaw`SELECT 1`;
 
         // Check Redis
-        const redis = new IORedis(process.env.REDIS_URL || "", {
-          maxRetriesPerRequest: 1,
-          connectTimeout: 3000,
-          lazyConnect: true,
-        });
-        await redis.connect();
-        await redis.ping();
-        await redis.quit();
+        await getHealthRedis().ping();
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "healthy", timestamp: new Date().toISOString() }));

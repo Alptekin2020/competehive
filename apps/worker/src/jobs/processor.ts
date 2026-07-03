@@ -9,6 +9,12 @@ import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { isUsableCompetitor } from "../utils/competitor-quality";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
 import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
+import {
+  clearScrapeFailures,
+  incrementScrapeFailure,
+  SCRAPE_FAILURE_THRESHOLD,
+} from "../utils/scrape-failures";
+import { captureError } from "../sentry";
 import { PLAN_EXPIRY_GRACE_MS } from "../shared";
 import { evaluateAlertRule, resolveApplicableRules } from "./alert-rules";
 
@@ -267,7 +273,8 @@ export const scrapeWorker = new Worker(
         },
       });
 
-      // Ürünü güncelle
+      // Ürünü güncelle. status ataması ERROR'daki bir ürünü de otomatik
+      // iyileştirir (başarılı tarama = ürün tekrar sağlıklı).
       await prisma.trackedProduct.update({
         where: { id: productId },
         data: {
@@ -281,6 +288,9 @@ export const scrapeWorker = new Worker(
           metadata: toPrismaJsonObject(result.metadata) as never,
         },
       });
+
+      // Başarılı tarama ardışık hata sayacını sıfırlar.
+      await clearScrapeFailures(productId);
 
       // Aynı ilandaki diğer satıcıları rakip olarak senkronla — alert
       // kuyruğundan ÖNCE ki COMPETITOR_CHEAPER taze buybox fiyatlarını görsün.
@@ -388,6 +398,8 @@ export const scrapeWorker = new Worker(
                 status: "ACTIVE",
               },
             });
+            // Serper üzerinden kurtarılan fiyat da başarı sayılır.
+            await clearScrapeFailures(productId);
             await maybeEnqueueAlerts({
               productId,
               previousPrice,
@@ -407,6 +419,11 @@ export const scrapeWorker = new Worker(
         logger.warn({ productId, err: recoveryError }, "Own-price Serper recovery failed");
       }
 
+      // lastScrapedAt burada "son deneme" anlamındadır ve yalnızca zamanlayıcı
+      // temposunu belirler (başarısız ürünü her 60 sn'de yeniden denememek
+      // için). Kullanıcıya gösterilen tazelik bilgisi PriceHistory'nin son
+      // kaydından (= son BAŞARILI tarama) gelir — başarısız deneme kullanıcıya
+      // asla "az önce güncellendi" olarak yansımaz.
       await prisma.trackedProduct.update({
         where: { id: productId },
         data: {
@@ -414,13 +431,35 @@ export const scrapeWorker = new Worker(
         },
       });
 
+      // Ardışık hata eşiği: sürekli başarısız olan ürün sessizce bayat fiyat
+      // göstermek yerine ERROR durumuna alınır (UI'da hata rozeti + zamanlayıcı
+      // 24 saatte bir yeniden dener; ilk başarılı taramada kendini iyileştirir).
+      const failureCount = await incrementScrapeFailure(productId);
+      if (failureCount !== null && failureCount >= SCRAPE_FAILURE_THRESHOLD) {
+        await prisma.trackedProduct.update({
+          where: { id: productId },
+          data: { status: "ERROR" },
+        });
+        logger.error(
+          { productId, failureCount, code: scraperError.code },
+          "Product marked ERROR after consecutive scrape failures",
+        );
+        captureError(scraperError, {
+          productId,
+          failureCount,
+          code: scraperError.code,
+          stage: "scrape-consecutive-failures",
+        });
+      }
+
       logger.warn(
         {
           productId,
           attemptsMade,
           code: scraperError.code,
+          failureCount,
         },
-        "Scrape failed after retries; applying soft-fail policy without setting ERROR status",
+        "Scrape failed after retries; applying soft-fail policy",
       );
 
       return {
@@ -637,11 +676,13 @@ export async function scheduleScans() {
 async function runScheduleScans() {
   logger.info("Scheduling product scans...");
 
-  // Taranması gereken ürünleri bul
+  // Taranması gereken ürünleri bul. ERROR ürünler de dahil edilir ki blok
+  // kalkınca kendiliğinden iyileşsinler — ama günde 1 denemeyle (aşağıdaki
+  // interval kontrolü) kaynak yakmadan.
   const now = new Date();
   const products = await prisma.trackedProduct.findMany({
     where: {
-      status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+      status: { in: ["ACTIVE", "OUT_OF_STOCK", "ERROR"] },
       OR: [
         { lastScrapedAt: null },
         {
@@ -669,15 +710,22 @@ async function runScheduleScans() {
       productUrl: true,
       scrapeInterval: true,
       lastScrapedAt: true,
+      status: true,
     },
   });
 
   let scheduled = 0;
 
   for (const product of products) {
-    // Scrape interval kontrolü
+    // Scrape interval kontrolü. ERROR ürünlerde plan aralığı yerine 24 saatlik
+    // iyileşme denemesi uygulanır — sürekli bloklanan bir ürünü plan
+    // frekansında yeniden denemek kota/limitleri boşa harcar.
     if (product.lastScrapedAt) {
-      const intervalMs = product.scrapeInterval * 60 * 1000;
+      const intervalMinutes =
+        product.status === "ERROR"
+          ? Math.max(product.scrapeInterval, 1440)
+          : product.scrapeInterval;
+      const intervalMs = intervalMinutes * 60 * 1000;
       const elapsed = now.getTime() - product.lastScrapedAt.getTime();
       if (elapsed < intervalMs) continue;
     }
@@ -704,8 +752,15 @@ async function runScheduleScans() {
 // Worker event listeners
 scrapeWorker.on("failed", (job, err) => {
   logger.error({ jobId: job?.id }, `Scrape worker event - job failed: ${err.message}`);
+  // Retry'ları tüketmiş job'lar Sentry'ye gider — tek tek retry gürültüsü değil.
+  if (job && job.attemptsMade >= (typeof job.opts.attempts === "number" ? job.opts.attempts : 1)) {
+    captureError(err, { jobId: job.id, queue: "scrape", data: job.data });
+  }
 });
 
 alertWorker.on("failed", (job, err) => {
   logger.error({ jobId: job?.id }, `Alert worker event - job failed: ${err.message}`);
+  if (job && job.attemptsMade >= (typeof job.opts.attempts === "number" ? job.opts.attempts : 1)) {
+    captureError(err, { jobId: job.id, queue: "alerts", data: job.data });
+  }
 });

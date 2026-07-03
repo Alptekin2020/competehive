@@ -16,9 +16,11 @@ import { runMigrations } from "./migrate";
 import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
 import { setWebhook, setMyCommands } from "./utils/telegram-api";
-import { validateWorkerEnv } from "./shared";
+import { validateWorkerEnv, PLAN_EXPIRY_GRACE_MS } from "./shared";
 import { getProxyConfig } from "./utils/proxy";
 import { closeBrowser } from "./scrapers";
+import { initSentry, captureError, flushSentry } from "./sentry";
+import { beatHeartbeat } from "./utils/heartbeat";
 
 type TelegramRegistrationResult =
   | { status: "registered"; webhookUrl: string }
@@ -155,6 +157,9 @@ competitorWorker.on("failed", (job, err) => {
 async function start() {
   logger.info("CompeteHive Worker starting...");
 
+  // Hata takibi mümkün olduğunca erken açılır ki boot hataları da yakalansın.
+  initSentry();
+
   // Fail fast on invalid/missing configuration instead of failing late on the
   // first job (e.g. a missing DATABASE_URL surfacing as a deep Prisma error).
   validateWorkerEnv();
@@ -192,7 +197,10 @@ async function start() {
   try {
     await runMigrations();
   } catch (err) {
+    // Şema mutabakatı başarısızsa web tarafı yeni kolonlarda 500 verebilir —
+    // bu, sahibinin MUTLAKA haberdar olması gereken bir durumdur.
     logger.error({ err }, "Schema reconciliation (runMigrations) failed — continuing");
+    captureError(err, { stage: "runMigrations" });
   }
 
   // Eski keşif turlarından kalan bariz çöp rakipleri (ambalaj/koli ürünleri,
@@ -206,16 +214,21 @@ async function start() {
 
   await registerTelegramBot();
 
-  // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri kuyruğa ekle
+  // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri
+  // kuyruğa ekle. Aynı tick worker canlılık sinyalini (heartbeat) de yazar;
+  // web'in /api/health'i bu sinyalin yaşına bakarak ölü worker'ı raporlar.
   setInterval(async () => {
+    await beatHeartbeat();
     try {
       await scheduleScans();
     } catch (err) {
       logger.error({ err }, "Schedule scan error");
+      captureError(err, { stage: "scheduleScans" });
     }
   }, 60 * 1000);
 
-  // İlk çalıştırmada da tarama planla
+  // İlk çalıştırmada da tarama planla + heartbeat yaz
+  await beatHeartbeat();
   await scheduleScans();
 
   // 6 saatlik URL-DEDUP refresh scheduler
@@ -228,9 +241,13 @@ async function start() {
           where: {
             status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
             // Plan kapısı (B1): süresi dolmuş ücretli planların ürünleri için
-            // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural.
+            // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural
+            // (3 günlük yenileme toleransı dahil).
             user: {
-              OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: new Date() } }],
+              OR: [
+                { planExpiresAt: null },
+                { planExpiresAt: { gte: new Date(Date.now() - PLAN_EXPIRY_GRACE_MS) } },
+              ],
             },
           },
           distinct: ["productUrl"],
@@ -299,6 +316,7 @@ async function shutdown() {
     competitorWorker.close(),
   ]);
   await closeBrowser();
+  await flushSentry();
   await prisma.$disconnect();
   logger.info("Workers shut down successfully");
   process.exit(0);
@@ -307,7 +325,23 @@ async function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
+// Yakalanmamış hatalar sahibinin haberi olmadan worker'ı sessizce
+// çürütmemeli — logla + Sentry'ye gönder. uncaughtException'da süreç
+// tanımsız durumda olabileceği için çıkıp Railway'in yeniden başlatmasına
+// bırakıyoruz.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "Unhandled promise rejection");
+  captureError(reason, { stage: "unhandledRejection" });
+});
+
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "Uncaught exception — exiting for clean restart");
+  captureError(err, { stage: "uncaughtException" });
+  void flushSentry().finally(() => process.exit(1));
+});
+
 start().catch((err) => {
   logger.error({ err }, "Worker failed to start");
-  process.exit(1);
+  captureError(err, { stage: "start" });
+  void flushSentry().finally(() => process.exit(1));
 });
