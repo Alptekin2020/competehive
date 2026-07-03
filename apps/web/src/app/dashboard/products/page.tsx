@@ -250,7 +250,7 @@ function ProductsPageInner() {
           .map((c) => Number(c.current_price))
           .filter((price): price is number => Number.isFinite(price));
         const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
-        const stale = isStale(p.last_success_at ?? p.last_scraped_at ?? null);
+        const stale = isStale(p.last_success_at ?? null);
         const priceChange = p.trend?.priceChange ?? null;
         // Maliyet girilmişse marj — katalog genelinde kâr sağlığı tek bakışta.
         const margin = computeMargin(myPrice, p.cost ?? null);
@@ -736,9 +736,9 @@ function ProductsPageInner() {
                           Veri Eski
                         </span>
                       )}
-                      {(product.last_success_at ?? product.last_scraped_at) && (
+                      {product.last_success_at && (
                         <span className="text-gray-600 hidden sm:inline">
-                          · {timeAgo((product.last_success_at ?? product.last_scraped_at)!)}
+                          · {timeAgo(product.last_success_at)}
                         </span>
                       )}
                       <span
@@ -938,9 +938,7 @@ function ProductsPageInner() {
                   </td>
                   <td className="px-4 py-3 text-gray-300">{competitorCount}</td>
                   <td className="px-4 py-3 text-gray-400">
-                    {(product.last_success_at ?? product.last_scraped_at)
-                      ? timeAgo((product.last_success_at ?? product.last_scraped_at)!)
-                      : "—"}
+                    {product.last_success_at ? timeAgo(product.last_success_at) : "—"}
                     {stale && <span className="ml-2 text-amber-300 text-xs">(Veri Eski)</span>}
                   </td>
                   <td className="px-4 py-3">

@@ -115,8 +115,9 @@ export async function GET(req: Request) {
 
         const staleProducts = products.filter((product) => {
           // Tazelik = son BAŞARILI tarama (PriceHistory'nin son kaydı);
-          // lastScrapedAt başarısız denemede de ilerlediği için kullanılamaz.
-          const lastSuccess = product.priceHistory[0]?.scrapedAt ?? product.lastScrapedAt;
+          // lastScrapedAt başarısız denemede de ilerlediği için fallback bile
+          // yapılmaz — hiç başarı yoksa ürün "bayat" sayılır.
+          const lastSuccess = product.priceHistory[0]?.scrapedAt ?? null;
           if (!lastSuccess) return true;
           return now - lastSuccess.getTime() > STALE_MS;
         }).length;
@@ -207,7 +208,7 @@ export async function GET(req: Request) {
 
     const dataIssues = products
       .map((product) => {
-        const lastSuccess = product.priceHistory[0]?.scrapedAt ?? product.lastScrapedAt;
+        const lastSuccess = product.priceHistory[0]?.scrapedAt ?? null;
         const stale = !lastSuccess || now - lastSuccess.getTime() > STALE_MS;
         const missingPrice = toNumber(product.currentPrice) === null;
         const hasError = product.status === "ERROR";

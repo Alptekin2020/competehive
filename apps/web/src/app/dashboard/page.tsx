@@ -232,7 +232,7 @@ export default function DashboardPage() {
       return {
         ...product,
         competitorCount,
-        isStale: isStale(product.last_success_at ?? product.last_scraped_at ?? null),
+        isStale: isStale(product.last_success_at ?? null),
         hasPriceChange,
         hasCriticalIssue,
       };
@@ -799,7 +799,7 @@ export default function DashboardPage() {
                           </div>
                         </div>
                         {(() => {
-                          const freshness = item.last_success_at ?? item.last_scraped_at ?? null;
+                          const freshness = item.last_success_at ?? null;
                           const ageBadge = priceAgeBadge(freshness);
                           if (ageBadge) {
                             return (
