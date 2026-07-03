@@ -4,6 +4,12 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 
+interface ChannelDelivery {
+  channel: string;
+  status?: string | null;
+  error?: string | null;
+}
+
 interface Notification {
   id: string;
   title: string;
@@ -11,6 +17,9 @@ interface Notification {
   channel: string;
   status?: string | null;
   error?: string | null;
+  // Uyarı başına tek satır yazan yeni worker, kanal bazlı teslimat
+  // sonuçlarını metadata.deliveries'e koyar; eski satırlarda bulunmaz.
+  metadata?: { deliveries?: ChannelDelivery[] } | null;
   is_read: boolean;
   sent_at: string;
   rule_type?: string | null;
@@ -41,6 +50,15 @@ const RULE_TYPE_META: Record<
 // (sessiz geç) ve hiç yapılandırılmamış kanal (ayarlara yönlendir).
 const DELIBERATE_SKIP_ERRORS = ["E-posta uyarıları kapalı"];
 
+// Tek-satır formatında error "KANAL: mesaj · KANAL: mesaj" özetidir; bilinçli
+// kapatma metni de bu önekle gelebilir — eşitlik yerine içerme kontrolü yapılır.
+function isDeliberateSkip(error: string | null | undefined): boolean {
+  if (!error) return false;
+  return error
+    .split(" · ")
+    .every((part) => DELIBERATE_SKIP_ERRORS.some((phrase) => part.includes(phrase)));
+}
+
 function deliveryBadge(notification: {
   status?: string | null;
   error?: string | null;
@@ -53,7 +71,7 @@ function deliveryBadge(notification: {
     };
   }
   if (notification.status === "SKIPPED") {
-    if (notification.error && DELIBERATE_SKIP_ERRORS.includes(notification.error)) return null;
+    if (isDeliberateSkip(notification.error)) return null;
     return {
       label: "Kanal ayarlı değil",
       className: "bg-dark-800 text-dark-400",
@@ -61,6 +79,16 @@ function deliveryBadge(notification: {
     };
   }
   return null;
+}
+
+// Kanal rozetleri: yeni satırlarda metadata.deliveries'ten (kanal + teslimat
+// durumu), eski satırlarda tekil channel/status alanlarından üretilir.
+function channelChips(notification: Notification): ChannelDelivery[] {
+  const deliveries = notification.metadata?.deliveries;
+  if (Array.isArray(deliveries) && deliveries.length > 0) return deliveries;
+  return [
+    { channel: notification.channel, status: notification.status, error: notification.error },
+  ];
 }
 
 export default function NotificationsPage() {
@@ -496,9 +524,22 @@ export default function NotificationsPage() {
                               {notification.marketplace && (
                                 <MarketplaceBadge marketplace={notification.marketplace} />
                               )}
-                              <span className="text-xs text-dark-600 bg-dark-800 px-1.5 py-0.5 rounded">
-                                {notification.channel}
-                              </span>
+                              {channelChips(notification).map((d, chipIndex) => (
+                                <span
+                                  key={`${d.channel}-${chipIndex}`}
+                                  title={d.error || undefined}
+                                  className={`text-xs px-1.5 py-0.5 rounded ${
+                                    d.status === "FAILED"
+                                      ? "text-red-300 bg-red-500/15"
+                                      : d.status === "SKIPPED"
+                                        ? "text-dark-500 bg-dark-800/60"
+                                        : "text-dark-600 bg-dark-800"
+                                  }`}
+                                >
+                                  {d.channel}
+                                  {d.status === "FAILED" && " ✗"}
+                                </span>
+                              ))}
                               {delivery && (
                                 <span
                                   className={`text-[10px] px-2 py-0.5 rounded-full ${delivery.className}`}
@@ -508,10 +549,16 @@ export default function NotificationsPage() {
                                 </span>
                               )}
                             </div>
-                            {delivery && notification.error && (
+                            {/* Hata metni genel duruma bağlı değil: kısmi başarısızlıkta
+                                (genel durum SENT) da düşen kanalın sebebi görünmeli —
+                                mobilde rozet tooltip'ine erişilemez. */}
+                            {notification.error && !isDeliberateSkip(notification.error) && (
                               <p className="text-[11px] text-dark-500 mt-1.5">
                                 {notification.error}
-                                {delivery.linkToSettings && (
+                                {(delivery?.linkToSettings ||
+                                  channelChips(notification).some(
+                                    (d) => d.status === "SKIPPED" && !isDeliberateSkip(d.error),
+                                  )) && (
                                   <>
                                     {" · "}
                                     <Link
