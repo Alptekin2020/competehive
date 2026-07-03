@@ -25,10 +25,10 @@ export async function GET() {
     return NextResponse.json({
       subscription: {
         plan: user.plan,
-        status: membership.status,
-        manageUrl: membership.manage_url ?? null,
-        cancelAtPeriodEnd: membership.cancel_at_period_end ?? false,
-        renewalPeriodEnd: membership.renewal_period_end ?? null,
+        status: membership?.status ?? null,
+        manageUrl: membership?.manage_url ?? null,
+        cancelAtPeriodEnd: membership?.cancel_at_period_end ?? false,
+        renewalPeriodEnd: membership?.renewal_period_end ?? null,
       },
     });
   } catch (error) {

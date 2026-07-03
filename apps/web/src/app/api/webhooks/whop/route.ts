@@ -419,7 +419,7 @@ export async function POST(request: Request) {
           try {
             const whop = getWhopClient();
             const membership = await whop.memberships.retrieve(membershipId);
-            renewalEnd = parseWhopTimestamp(membership.renewal_period_end);
+            renewalEnd = parseWhopTimestamp(membership?.renewal_period_end);
           } catch (retrieveError) {
             console.error(
               "[whop] failed to retrieve membership=" +

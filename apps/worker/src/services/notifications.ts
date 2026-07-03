@@ -426,7 +426,7 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
   await writeNotificationToDB({
     userId: rule.userId,
     alertRuleId: rule.id,
-    channel: channels[0] ?? requestedChannels[0],
+    channel: channels[0] ?? requestedChannels[0] ?? "EMAIL",
     title,
     message,
     status: overall.status,
@@ -663,7 +663,7 @@ async function sendEmailAlert(
       logger.error({ userId: user.id, error: sendError }, "Resend email failed");
       return {
         status: "FAILED",
-        error: sendError.message || sendError.name || "Resend hatası",
+        error: sendError.message || sendError.name || String(sendError),
       };
     }
 
