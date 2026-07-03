@@ -162,6 +162,7 @@ function CheckoutContent() {
               <Link
                 href="/mesafeli-satis"
                 target="_blank"
+                rel="noopener noreferrer"
                 className="text-hive-500 hover:underline"
               >
                 Ön Bilgilendirme Formu ve Mesafeli Satış Sözleşmesi
