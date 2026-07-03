@@ -108,16 +108,25 @@ export default function PrivacyPage() {
             <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-sm text-dark-400">&copy; 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
-          <div className="flex gap-6 text-sm text-dark-500">
+          <div className="flex gap-6 text-sm text-dark-500 flex-wrap justify-center">
             <Link href="/privacy" className="hover:text-white transition text-white">
               Gizlilik
             </Link>
             <Link href="/terms" className="hover:text-white transition">
               Kullanım Şartları
             </Link>
-            <a href="mailto:support@competehive.com" className="hover:text-white transition">
-              İletişim
-            </a>
+            <Link href="/kvkk" className="hover:text-white transition">
+              KVKK
+            </Link>
+            <Link href="/cerez" className="hover:text-white transition">
+              Çerez
+            </Link>
+            <Link href="/mesafeli-satis" className="hover:text-white transition">
+              Mesafeli Satış
+            </Link>
+            <Link href="/destek" className="hover:text-white transition">
+              Destek
+            </Link>
           </div>
         </div>
       </footer>

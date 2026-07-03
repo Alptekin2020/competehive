@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import LegalEntityBlock from "@/components/LegalEntityBlock";
+
 export const metadata: Metadata = {
   title: "Kullanım Koşulları — CompeteHive",
   description: "CompeteHive kullanım koşulları ve hizmet şartları.",
@@ -67,8 +69,17 @@ export default function TermsPage() {
               <h2 className="text-xl font-semibold text-white mb-3">4. Abonelik ve Ödeme</h2>
               <p>
                 Ücretsiz plan ile sınırlı sayıda ürün takip edebilirsiniz. Ücretli planlar aylık
-                faturalandırılır. İptal etmediğiniz sürece aboneliğiniz otomatik olarak yenilenir.
-                İptal işlemi mevcut dönemin sonunda geçerli olur.
+                veya yıllık faturalandırılır ve ödemeler, ödeme altyapısı sağlayıcısı{" "}
+                <span className="text-white">Whop</span> üzerinden tahsil edilir; kart bilgileriniz
+                CompeteHive tarafından saklanmaz. Fiyatlar Türk Lirası (₺) olarak ilan edilir; ödeme
+                sağlayıcısının çalıştığı para birimine bağlı olarak ekstrede döviz karşılığı
+                yansıyabilir. İptal etmediğiniz sürece aboneliğiniz otomatik olarak yenilenir; iptal
+                işlemi mevcut ödenmiş dönemin sonunda geçerli olur ve o tarihe kadar hizmeti
+                kullanmaya devam edersiniz. Cayma hakkı ve iade koşulları{" "}
+                <Link href="/mesafeli-satis" className="text-hive-500 hover:underline">
+                  Mesafeli Satış Sözleşmesi
+                </Link>{" "}
+                sayfasında düzenlenmiştir.
               </p>
             </section>
 
@@ -99,14 +110,17 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-3">8. İletişim</h2>
-              <p>
+              <h2 className="text-xl font-semibold text-white mb-3">
+                8. Hizmet Sağlayıcı ve İletişim
+              </h2>
+              <p className="mb-3">
                 Kullanım şartları ile ilgili sorularınız için{" "}
                 <a href="mailto:support@competehive.com" className="text-hive-500 hover:underline">
                   support@competehive.com
                 </a>{" "}
                 adresinden bize ulaşabilirsiniz.
               </p>
+              <LegalEntityBlock title="Hizmet Sağlayıcı" />
             </section>
 
             <p className="text-dark-500 text-xs pt-4 border-t border-dark-800">
@@ -122,16 +136,25 @@ export default function TermsPage() {
             <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-sm text-dark-400">&copy; 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
-          <div className="flex gap-6 text-sm text-dark-500">
+          <div className="flex gap-6 text-sm text-dark-500 flex-wrap justify-center">
             <Link href="/privacy" className="hover:text-white transition">
               Gizlilik
             </Link>
             <Link href="/terms" className="hover:text-white transition text-white">
               Kullanım Şartları
             </Link>
-            <a href="mailto:support@competehive.com" className="hover:text-white transition">
-              İletişim
-            </a>
+            <Link href="/kvkk" className="hover:text-white transition">
+              KVKK
+            </Link>
+            <Link href="/cerez" className="hover:text-white transition">
+              Çerez
+            </Link>
+            <Link href="/mesafeli-satis" className="hover:text-white transition">
+              Mesafeli Satış
+            </Link>
+            <Link href="/destek" className="hover:text-white transition">
+              Destek
+            </Link>
           </div>
         </div>
       </footer>
