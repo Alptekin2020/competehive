@@ -1,8 +1,7 @@
-import { PrismaClient, type Plan } from "@prisma/client";
+import { type Plan } from "@prisma/client";
 
+import { prisma } from "../db";
 import { logger } from "../utils/logger";
-
-const prisma = new PrismaClient();
 
 // Plan bazlı fiyat geçmişi saklama süresi (gün). Satış sayfasındaki vaadin
 // aynası: FREE 7 / STARTER 30 / PRO 365; ENTERPRISE sınırsız (silinmez).

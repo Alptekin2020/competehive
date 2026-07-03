@@ -150,7 +150,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      if (existing.telegramStatus === "stopped") {
+      // "stopped" (kullanıcı /stop dedi) ve "blocked" (worker kalıcı hata
+      // sonrası işaretledi) durumlarının ikisi de /start ile yeniden bağlanır;
+      // aksi halde botu engelleyip tekrar açan kullanıcı "blocked"ta takılı
+      // kalır ve bildirim alamazdı.
+      if (existing.telegramStatus === "stopped" || existing.telegramStatus === "blocked") {
         await prisma.user.update({
           where: { id: existing.id },
           data: { telegramStatus: "connected" },
