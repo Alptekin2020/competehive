@@ -15,6 +15,13 @@ interface TelegramUpdate {
 
 export const dynamic = "force-dynamic";
 
+// Hardcoded competehive.com yerine yapılandırılmış uygulama URL'i — canlı
+// alan adı farklıysa bot mesajları ölü linke gitmesin.
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || "https://competehive-web.vercel.app").replace(
+  /\/$/,
+  "",
+);
+
 export async function POST(req: NextRequest) {
   try {
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
@@ -138,7 +145,7 @@ export async function POST(req: NextRequest) {
         await sendMessage(
           botToken,
           chatId,
-          "👋 Merhaba! CompeteHive bildirimlerini almak için Ayarlar sayfasından bağlantı linki oluştur:\nhttps://competehive.com/dashboard/settings",
+          `👋 Merhaba! CompeteHive bildirimlerini almak için Ayarlar sayfasından bağlantı linki oluştur:\n${APP_URL}/dashboard/settings`,
         );
         return NextResponse.json({ ok: true });
       }
@@ -169,7 +176,7 @@ export async function POST(req: NextRequest) {
       await sendMessage(
         botToken,
         chatId,
-        "Bu sohbet bir CompeteHive hesabına bağlı değil. Ayarlar'dan bağlantı linki oluştur:\nhttps://competehive.com/dashboard/settings",
+        `Bu sohbet bir CompeteHive hesabına bağlı değil. Ayarlar'dan bağlantı linki oluştur:\n${APP_URL}/dashboard/settings`,
       );
       return NextResponse.json({ ok: true });
     }

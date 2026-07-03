@@ -95,6 +95,21 @@ async function sendTelegramAlert(
   } catch (error) {
     if (error instanceof TelegramApiError) {
       logger.warn({ userId: user.id, code: error.code, msg: error.message }, "Telegram API error");
+      // Kalıcı hatalar (bot engellendi / sohbet silindi): bağlantıyı kopmuş
+      // işaretle ki kullanıcı ayarlarda "connected" görüp bildirimlerin
+      // gelmediğini fark etmemezlik yaşamasın; ayrıca boşuna deneme yapılmasın.
+      const message = String(error.message || "").toLowerCase();
+      if (error.code === 403 || message.includes("chat not found") || message.includes("blocked")) {
+        try {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { telegramStatus: "blocked" },
+          });
+          logger.warn({ userId: user.id }, "Telegram marked as blocked (permanent send failure)");
+        } catch (updateError) {
+          logger.error({ userId: user.id, updateError }, "Failed to mark telegram as blocked");
+        }
+      }
     } else {
       logger.error({ userId: user.id, error }, "Telegram alert failed");
     }
@@ -385,28 +400,40 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
     });
   }
 
-  for (const channel of channels) {
-    // 1. Attempt the external send and capture the real outcome.
-    let outcome: DeliveryOutcome;
+  const attemptChannel = async (channel: string): Promise<DeliveryOutcome> => {
     try {
       switch (channel) {
         case "EMAIL":
-          outcome = await sendEmailAlert(rule.user, data, rule.ruleType);
-          break;
+          return await sendEmailAlert(rule.user, data, rule.ruleType);
         case "TELEGRAM":
-          outcome = await sendTelegramAlert(rule.user, rule.ruleType, data);
-          break;
+          return await sendTelegramAlert(rule.user, rule.ruleType, data);
         case "WEBHOOK":
-          outcome = await sendWebhookAlert(rule.user, data);
-          break;
+          return await sendWebhookAlert(rule.user, data);
         default:
-          outcome = { status: "SKIPPED", error: `Bilinmeyen kanal: ${channel}` };
+          return { status: "SKIPPED", error: `Bilinmeyen kanal: ${channel}` };
       }
     } catch (error) {
       // Senders are written not to throw, but guard so one bad channel can't
       // abort the rest or skip the DB record.
-      outcome = { status: "FAILED", error: errorMessage(error) };
       logger.error({ channel, userId: rule.userId, error }, "Failed to send alert");
+      return { status: "FAILED", error: errorMessage(error) };
+    }
+  };
+
+  for (const channel of channels) {
+    // 1. Attempt the external send and capture the real outcome. Geçici sağlayıcı
+    // hatalarında (5xx/timeout) tek uyarının tamamen kaybolmaması için kanal
+    // bazlı BİR yeniden deneme yapılır — job seviyesinde retry yok (throw yok),
+    // bu yüzden bu, teslimatın tek telafi mekanizmasıdır.
+    let outcome = await attemptChannel(channel);
+    if (outcome.status === "FAILED") {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const retryOutcome = await attemptChannel(channel);
+      if (retryOutcome.status !== "FAILED") {
+        outcome = retryOutcome;
+      } else {
+        outcome = retryOutcome.error ? retryOutcome : outcome;
+      }
     }
 
     deliveries.push({ channel, status: outcome.status, error: outcome.error ?? null });

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, notFound, badRequest, serverError } from "@/lib/api-response";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -11,8 +12,15 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     const { id } = await params;
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Fiyat geçmişi penceresi plana göre belirlenir (FREE 7 gün / STARTER 30 /
+    // PRO 365 / ENTERPRISE sınırsız). Önceden herkes için 30 gün sabitti: FREE,
+    // 7 günlük hakkının 4 katını görüyor; PRO, ödediği 1 yıllık geçmişi hiçbir
+    // yerde göremiyordu. Worker'daki retention işi de aynı süreleri uygular.
+    const features = getEffectiveFeatures(user);
+    const historyWindowStart =
+      features.priceHistoryDays >= 99999
+        ? new Date(0)
+        : new Date(Date.now() - features.priceHistoryDays * 24 * 60 * 60 * 1000);
 
     const product = await prisma.trackedProduct.findFirst({
       where: { id, userId: user.id },
@@ -45,7 +53,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           },
         },
         priceHistory: {
-          where: { scrapedAt: { gte: thirtyDaysAgo } },
+          where: { scrapedAt: { gte: historyWindowStart } },
           orderBy: { scrapedAt: "asc" },
           select: {
             id: true,

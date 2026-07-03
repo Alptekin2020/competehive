@@ -8,6 +8,7 @@ import { normalizeProductImage } from "../utils/normalize-product-image";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { isUsableCompetitor } from "../utils/competitor-quality";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
+import { getAlertConditionState, setAlertConditionState } from "../utils/alert-state";
 import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
 import {
   clearScrapeFailures,
@@ -483,6 +484,13 @@ export const scrapeWorker = new Worker(
 // ALERT WORKER
 // ============================================
 
+// Koşulu "olay" değil "seviye" olan kurallar: koşul haftalarca doğru
+// kalabilir (rakip sürekli ucuz, fiyat hedefin altında, marj düşük). Bunlar
+// edge detection ile yalnızca koşulun yeni oluştuğu anda bildirir; olay
+// tabanlı kurallar (PRICE_DROP, stok geçişleri vb.) zaten doğaları gereği
+// yalnızca değişimde tetiklenir.
+const LEVEL_TRIGGERED_RULE_TYPES = new Set(["PRICE_THRESHOLD", "COMPETITOR_CHEAPER", "LOW_MARGIN"]);
+
 export const alertWorker = new Worker(
   "alerts",
   async (job: Job) => {
@@ -587,19 +595,7 @@ export const alertWorker = new Worker(
     }
 
     for (const rule of rules) {
-      // Cooldown (kural, ürün) bazlıdır: genel bir kuralın A ürünündeki
-      // tetiklenmesi B ürününün bildirimini bastırmamalı. Redis erişilemezse
-      // kural bazlı lastTriggered'a geri düşülür.
-      const onCooldown = await isOnCooldown(rule.id, productId);
-      if (onCooldown === true) continue;
-      if (onCooldown === null && rule.lastTriggered) {
-        const cooldownMs = rule.cooldownMinutes * 60 * 1000;
-        if (Date.now() - rule.lastTriggered.getTime() < cooldownMs) {
-          continue;
-        }
-      }
-
-      const shouldAlert = evaluateAlertRule(rule.ruleType, {
+      const conditionMet = evaluateAlertRule(rule.ruleType, {
         currentPrice,
         priceChange,
         priceChangePct,
@@ -614,7 +610,35 @@ export const alertWorker = new Worker(
         userThresholdPct: rule.user.alertThresholdPct,
       });
 
-      if (shouldAlert) {
+      // Seviye-tetiklemeli kurallarda edge detection: koşul sürekli doğruysa
+      // (ör. rakip haftalardır bizden ucuz) her fiyat olayında aynı uyarıyı
+      // tekrar gönderme — yalnızca false→true geçişinde bildir. Durum,
+      // cooldown'dan BAĞIMSIZ olarak her değerlendirmede güncellenir ki koşul
+      // düşüp yeniden oluştuğunda uyarı tekrar kurulabilsin.
+      let shouldAlert = conditionMet;
+      if (LEVEL_TRIGGERED_RULE_TYPES.has(rule.ruleType)) {
+        const wasActive = await getAlertConditionState(rule.id, productId);
+        await setAlertConditionState(rule.id, productId, conditionMet);
+        if (conditionMet && wasActive === true) {
+          shouldAlert = false; // koşul zaten aktifti — yeni geçiş yok
+        }
+      }
+
+      if (!shouldAlert) continue;
+
+      // Cooldown (kural, ürün) bazlıdır: genel bir kuralın A ürünündeki
+      // tetiklenmesi B ürününün bildirimini bastırmamalı. Redis erişilemezse
+      // kural bazlı lastTriggered'a geri düşülür.
+      const onCooldown = await isOnCooldown(rule.id, productId);
+      if (onCooldown === true) continue;
+      if (onCooldown === null && rule.lastTriggered) {
+        const cooldownMs = rule.cooldownMinutes * 60 * 1000;
+        if (Date.now() - rule.lastTriggered.getTime() < cooldownMs) {
+          continue;
+        }
+      }
+
+      {
         await sendAlerts(rule, {
           productName: product.productName,
           currentPrice,
