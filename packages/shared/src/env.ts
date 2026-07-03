@@ -51,28 +51,57 @@ export const webEnvSchema = baseSchema.extend({
   ADMIN_CLERK_IDS: z.string().optional(),
 });
 
-export const workerEnvSchema = baseSchema.extend({
-  // Optional notifications
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
-  RESEND_FROM_EMAIL: z.string().optional(),
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().optional(),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().optional(),
+export const workerEnvSchema = baseSchema
+  .extend({
+    // Notifications. EMAIL is the only FREE-plan channel, so Resend config is
+    // enforced in production via the superRefine below — a prod worker booting
+    // without a working sender means the core product promise silently fails.
+    TELEGRAM_BOT_TOKEN: z.string().optional(),
+    TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+    RESEND_API_KEY: z.string().optional(),
+    RESEND_FROM_EMAIL: z.string().optional(),
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASS: z.string().optional(),
+    SMTP_FROM: z.string().optional(),
 
-  // Optional proxy
-  PROXY_HOST: z.string().optional(),
-  PROXY_PORT: z.coerce.number().optional(),
-  PROXY_USER: z.string().optional(),
-  PROXY_PASS: z.string().optional(),
+    // Optional proxy
+    PROXY_HOST: z.string().optional(),
+    PROXY_PORT: z.coerce.number().optional(),
+    PROXY_USER: z.string().optional(),
+    PROXY_PASS: z.string().optional(),
 
-  // Optional monitoring
-  SENTRY_DSN: z.string().optional(),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "fatal"]).default("info"),
-});
+    // Optional monitoring
+    SENTRY_DSN: z.string().optional(),
+    LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "fatal"]).default("info"),
+  })
+  .superRefine((env, ctx) => {
+    // Keep in sync with apps/worker/src/shared.ts (the worker's Docker build
+    // context cannot import this package).
+    if (env.NODE_ENV !== "production") return;
+    if (!env.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["RESEND_API_KEY"],
+        message: "RESEND_API_KEY is required in production (EMAIL is the only FREE-plan channel)",
+      });
+    }
+    if (!env.RESEND_FROM_EMAIL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["RESEND_FROM_EMAIL"],
+        message: "RESEND_FROM_EMAIL is required in production",
+      });
+    } else if (env.RESEND_FROM_EMAIL.includes("resend.dev")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["RESEND_FROM_EMAIL"],
+        message:
+          "RESEND_FROM_EMAIL must be a sender on a verified custom domain — the resend.dev onboarding address cannot deliver to customers",
+      });
+    }
+  });
 
 export type WebEnv = z.infer<typeof webEnvSchema>;
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;

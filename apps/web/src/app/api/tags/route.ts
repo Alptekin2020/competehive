@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { z } from "zod";
-import { getPlanFeatures } from "@/lib/plan-gates";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
 
 // GET /api/tags — list user's tags with product counts
 export async function GET() {
@@ -49,12 +49,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.errors[0].message }, { status: 400 });
     }
 
-    // Plan-based tag system check
+    // Plan-based tag system check (etkin plan: süresi dolmuş abonelik FREE sayılır)
     const userRecord = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { plan: true },
+      select: { plan: true, planStatus: true, planExpiresAt: true },
     });
-    const features = getPlanFeatures(userRecord?.plan || "FREE");
+    const features = getEffectiveFeatures(userRecord);
 
     if (!features.hasTagSystem) {
       return NextResponse.json(

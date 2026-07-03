@@ -9,6 +9,7 @@ import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { isUsableCompetitor } from "../utils/competitor-quality";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
 import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
+import { PLAN_EXPIRY_GRACE_MS } from "../shared";
 import { evaluateAlertRule, resolveApplicableRules } from "./alert-rules";
 
 const prisma = new PrismaClient();
@@ -653,8 +654,13 @@ async function runScheduleScans() {
       // tarama. FREE/aktif kullanıcılarda planExpiresAt null veya gelecekte
       // olur; iptal edilen abonelikler webhook tarafında FREE'ye düşürülüp
       // kapasite üstü ürünleri PAUSED yapıldığı için zaten elenir.
+      // 3 günlük tolerans: yenileme webhook'u gecikirse ödeyen müşterinin
+      // taraması anında durmasın (web tarafındaki PLAN_EXPIRY_GRACE_MS aynası).
       user: {
-        OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: now } }],
+        OR: [
+          { planExpiresAt: null },
+          { planExpiresAt: { gte: new Date(now.getTime() - PLAN_EXPIRY_GRACE_MS) } },
+        ],
       },
     },
     select: {

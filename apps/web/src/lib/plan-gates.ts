@@ -1,6 +1,8 @@
 // Centralized plan permission checks
 import { PLAN_LIMITS } from "@competehive/shared";
 
+import { resolveEffectivePlan, type PlanUserFields } from "./plan-resolve";
+
 export interface PlanFeatures {
   maxProducts: number;
   maxAlertRules: number;
@@ -77,6 +79,14 @@ export const PLAN_FEATURES: Record<string, PlanFeatures> = {
 
 export function getPlanFeatures(plan: string): PlanFeatures {
   return PLAN_FEATURES[plan] || PLAN_FEATURES.FREE;
+}
+
+// Ham `user.plan` yerine SÜRESİ/DURUMU hesaba katılmış etkin planın
+// özelliklerini döndürür. API rotaları bunu kullanmalı: aboneliği bitmiş ama
+// webhook'u kaçmış bir kullanıcı ücretli kanalları/özellikleri süresiz
+// kullanmaya devam etmesin (ürün limiti zaten resolveEffectivePlan kullanıyor).
+export function getEffectiveFeatures(user: PlanUserFields | null): PlanFeatures {
+  return getPlanFeatures(resolveEffectivePlan(user).plan);
 }
 
 export function canUseFeature(plan: string, feature: keyof PlanFeatures): boolean {

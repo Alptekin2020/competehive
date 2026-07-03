@@ -12,3 +12,34 @@ export function isFreshWebhookTimestamp(
   const ageSec = Math.abs(nowMs / 1000 - ts);
   return ageSec <= toleranceSec;
 }
+
+// Whop timestamps arrive in mixed formats depending on the payload type: the
+// SDK docs describe `renewal_period_end` as a Unix timestamp while webhook
+// payloads have been observed with ISO 8601 strings. Accept both (plus Unix
+// milliseconds) so a format drift on Whop's side can't silently break renewal
+// expiry extension for paying customers.
+export function parseWhopTimestamp(value: string | number | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" || /^\d+$/.test(String(value))) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    // Heuristic: values past ~year 33658 in seconds are really milliseconds.
+    const ms = n > 1e12 ? n : n * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(String(value));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// A termination event for a membership the user has already replaced (e.g.
+// the canceled STARTER subscription after an upgrade to PRO) must not demote
+// the user's current, still-paying plan.
+export function isSupersededMembershipEvent(
+  currentMembershipId: string | null | undefined,
+  eventMembershipId: string | null | undefined,
+): boolean {
+  return Boolean(
+    currentMembershipId && eventMembershipId && currentMembershipId !== eventMembershipId,
+  );
+}

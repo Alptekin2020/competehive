@@ -60,4 +60,32 @@ describe("resolveEffectivePlan", () => {
     expect(info.isPaid).toBe(true);
     expect(info.maxProducts).toBe(99999);
   });
+
+  it("keeps paid limits within the expiry grace window (late renewal webhook)", () => {
+    const justExpired = new Date(NOW.getTime() - 24 * 60 * 60 * 1000); // 1 gün önce
+    const info = resolveEffectivePlan(
+      { plan: "PRO", planStatus: "ACTIVE", planExpiresAt: justExpired },
+      NOW,
+    );
+    expect(info.plan).toBe("PRO");
+    expect(info.isPaid).toBe(true);
+  });
+
+  it("downgrades once the expiry grace window has passed", () => {
+    const wellPastGrace = new Date(NOW.getTime() - 4 * 24 * 60 * 60 * 1000); // 4 gün önce
+    const info = resolveEffectivePlan(
+      { plan: "PRO", planStatus: "ACTIVE", planExpiresAt: wellPastGrace },
+      NOW,
+    );
+    expect(info.plan).toBe("FREE");
+    expect(info.isPaid).toBe(false);
+  });
+
+  it("ignores the grace window for explicit terminations (non-ACTIVE status)", () => {
+    const info = resolveEffectivePlan(
+      { plan: "PRO", planStatus: "EXPIRED", planExpiresAt: FUTURE },
+      NOW,
+    );
+    expect(info.plan).toBe("FREE");
+  });
 });

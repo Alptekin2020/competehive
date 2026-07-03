@@ -8,6 +8,8 @@ export default function PricingPage() {
   const [currentPlan, setCurrentPlan] = useState<string>("FREE");
   const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
   const [loading, setLoading] = useState(true);
+  const [manageUrl, setManageUrl] = useState<string | null>(null);
+  const [cancelAtPeriodEnd, setCancelAtPeriodEnd] = useState(false);
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -28,7 +30,20 @@ export default function PricingPage() {
         setLoading(false);
       }
     }
+    async function fetchSubscription() {
+      try {
+        const res = await fetch("/api/account/subscription");
+        if (res.ok) {
+          const data = await res.json();
+          setManageUrl(data.subscription?.manageUrl ?? null);
+          setCancelAtPeriodEnd(Boolean(data.subscription?.cancelAtPeriodEnd));
+        }
+      } catch {
+        // Yönetim linki alınamazsa bölüm gizlenir.
+      }
+    }
     fetchPlan();
+    fetchSubscription();
   }, []);
 
   const handleUpgrade = (planId: string) => {
@@ -73,6 +88,26 @@ export default function PricingPage() {
         <p className="text-dark-500 text-sm sm:text-base">
           E-ticaret fiyat takibinde bir adım öne geçin
         </p>
+
+        {/* Abonelik yönetimi: uygulama içi iptal/fatura yolu olmazsa
+            kullanıcılar temiz iptal yerine chargeback'e gider. */}
+        {manageUrl && (
+          <div className="mt-4">
+            {cancelAtPeriodEnd && (
+              <p className="text-xs text-amber-400 mb-1">
+                Aboneliğiniz dönem sonunda iptal edilecek.
+              </p>
+            )}
+            <a
+              href={manageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-hive-400 hover:text-hive-300 underline underline-offset-4"
+            >
+              Aboneliğinizi yönetin (iptal, ödeme yöntemi, faturalar) →
+            </a>
+          </div>
+        )}
 
         {/* Billing toggle */}
         <div className="flex items-center justify-center gap-3 mt-6">
@@ -229,7 +264,13 @@ export default function PricingPage() {
             <tbody className="text-sm">
               {[
                 { label: "Ürün takibi", values: ["5", "50", "500", "Sınırsız"] },
-                { label: "Tarama sıklığı", values: ["Günde 1", "Saatte 1", "15 dk", "5 dk"] },
+                {
+                  // Değerler PLAN_LIMITS/plans.ts ile birebir aynı olmalı —
+                  // satış sayfasında teslim edilenden hızlı bir vaat, tüketici
+                  // hukuku riski ve garanti iade sebebidir.
+                  label: "Tarama sıklığı",
+                  values: ["Günde 1", "Günde 1", "12 saatte 1", "6 saatte 1"],
+                },
                 { label: "Marketplace", values: ["1", "2", "8+", "8+"] },
                 {
                   label: "Fiyat geçmişi",
@@ -240,12 +281,10 @@ export default function PricingPage() {
                 { label: "Webhook", values: ["\u2014", "\u2014", "\u2713", "\u2713"] },
                 { label: "Toplu URL import", values: ["\u2014", "\u2713", "\u2713", "\u2713"] },
                 { label: "Etiketleme", values: ["\u2014", "\u2713", "\u2713", "\u2713"] },
-                { label: "Oto-fiyat kuralları", values: ["\u2014", "\u2014", "\u2713", "\u2713"] },
                 {
                   label: "Analitik dashboard",
                   values: ["\u2014", "\u2014", "\u2713", "\u2713"],
                 },
-                { label: "API erişimi", values: ["\u2014", "\u2014", "\u2014", "\u2713"] },
                 { label: "Öncelikli destek", values: ["\u2014", "\u2014", "\u2713", "\u2713"] },
               ].map((row, i) => (
                 <tr key={i} className="border-b border-dark-800 last:border-b-0">
@@ -283,7 +322,7 @@ export default function PricingPage() {
           {[
             {
               q: "Planımı istediğim zaman değiştirebilir miyim?",
-              a: "Evet, planınızı istediğiniz zaman yükseltebilir veya düşürebilirsiniz. Yükseltmede fark anında tahsil edilir.",
+              a: "Evet. Yükseltmede yeni planınız hemen başlar ve yeni planın ücreti tahsil edilir; eski aboneliğiniz dönem sonunda otomatik iptal edilir (tekrar ücretlendirilmez). Düşürmek için mevcut aboneliğinizi iptal edip dönem sonunda dilediğiniz plana geçebilirsiniz.",
             },
             {
               q: "Ücretsiz plan ne kadar sürer?",

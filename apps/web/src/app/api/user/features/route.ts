@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { getPlanFeatures } from "@/lib/plan-gates";
+import { getEffectiveFeatures } from "@/lib/plan-gates";
+import { resolveEffectivePlan } from "@/lib/plan-resolve";
 
 function isMissingTagsTableError(error: unknown): boolean {
   const prismaError = error as { code?: unknown; meta?: { table?: unknown } } | undefined;
@@ -23,11 +24,13 @@ export async function GET() {
 
     const userRecord = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { plan: true, maxProducts: true },
+      select: { plan: true, planStatus: true, planExpiresAt: true, maxProducts: true },
     });
 
-    const plan = userRecord?.plan || "FREE";
-    const features = getPlanFeatures(plan);
+    // Etkin plan: süresi dolmuş/iptal edilmiş abonelik FREE olarak raporlanır,
+    // böylece UI kapıları ile API kapıları aynı gerçeği görür.
+    const plan = resolveEffectivePlan(userRecord ?? null).plan;
+    const features = getEffectiveFeatures(userRecord ?? null);
 
     const [productCount, alertRuleCount, tagCount, marketplaceCount] = await Promise.all([
       prisma.trackedProduct.count({
