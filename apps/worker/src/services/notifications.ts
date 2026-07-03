@@ -364,7 +364,8 @@ function generateNotificationMessage(ruleType: string, data: AlertData): string 
 // ============================================
 
 export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Promise<void> {
-  const channels: string[] = rule.notifyVia || [];
+  // Yinelenen kanal kaydı çift gönderime (ve UI'da çift rozete) yol açmasın.
+  const channels: string[] = [...new Set(rule.notifyVia || [])];
   const title = generateNotificationTitle(rule.ruleType, data);
   const message = generateNotificationMessage(rule.ruleType, data);
 

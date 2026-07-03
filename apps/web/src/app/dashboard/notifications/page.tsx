@@ -524,9 +524,9 @@ export default function NotificationsPage() {
                               {notification.marketplace && (
                                 <MarketplaceBadge marketplace={notification.marketplace} />
                               )}
-                              {channelChips(notification).map((d) => (
+                              {channelChips(notification).map((d, chipIndex) => (
                                 <span
-                                  key={d.channel}
+                                  key={`${d.channel}-${chipIndex}`}
                                   title={d.error || undefined}
                                   className={`text-xs px-1.5 py-0.5 rounded ${
                                     d.status === "FAILED"
@@ -549,10 +549,16 @@ export default function NotificationsPage() {
                                 </span>
                               )}
                             </div>
-                            {delivery && notification.error && (
+                            {/* Hata metni genel duruma bağlı değil: kısmi başarısızlıkta
+                                (genel durum SENT) da düşen kanalın sebebi görünmeli —
+                                mobilde rozet tooltip'ine erişilemez. */}
+                            {notification.error && !isDeliberateSkip(notification.error) && (
                               <p className="text-[11px] text-dark-500 mt-1.5">
                                 {notification.error}
-                                {delivery.linkToSettings && (
+                                {(delivery?.linkToSettings ||
+                                  channelChips(notification).some(
+                                    (d) => d.status === "SKIPPED" && !isDeliberateSkip(d.error),
+                                  )) && (
                                   <>
                                     {" · "}
                                     <Link
