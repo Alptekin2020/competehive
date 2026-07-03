@@ -12,6 +12,7 @@ const isPublicRoute = createRouteMatcher([
   "/kvkk(.*)",
   "/cerez(.*)",
   "/destek(.*)",
+  "/mesafeli-satis(.*)",
   "/api/webhooks(.*)",
   "/api/telegram/webhook(.*)",
   "/api/health",

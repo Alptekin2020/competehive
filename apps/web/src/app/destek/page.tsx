@@ -124,6 +124,9 @@ export default function DestekPage() {
             <Link href="/cerez" className="hover:text-white transition">
               Çerez
             </Link>
+            <Link href="/mesafeli-satis" className="hover:text-white transition">
+              Mesafeli Satış
+            </Link>
             <Link href="/destek" className="hover:text-white transition text-white">
               Destek
             </Link>

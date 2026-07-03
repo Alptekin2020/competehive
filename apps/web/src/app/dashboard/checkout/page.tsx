@@ -13,6 +13,9 @@ function CheckoutContent() {
   const [status, setStatus] = useState<"idle" | "loading" | "opened" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  // Mesafeli satış mevzuatı: ön bilgilendirme onayı alınmadan ödeme
+  // başlatılamaz (6502 sayılı Kanun + Mesafeli Sözleşmeler Yönetmeliği).
+  const [consentAccepted, setConsentAccepted] = useState(false);
 
   const plan = PLANS.find((p) => p.id === planId);
 
@@ -49,6 +52,7 @@ function CheckoutContent() {
   }, [initiateCheckout]);
 
   const openCheckout = () => {
+    if (!consentAccepted) return;
     if (checkoutUrl) {
       window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       setStatus("opened");
@@ -146,6 +150,29 @@ function CheckoutContent() {
           </div>
         )}
 
+        {status !== "opened" && (
+          <label className="flex items-start gap-3 mb-4 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={consentAccepted}
+              onChange={(e) => setConsentAccepted(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded border-dark-700 bg-dark-800 accent-hive-500"
+            />
+            <span className="text-xs text-dark-400 leading-relaxed">
+              <Link
+                href="/mesafeli-satis"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-hive-500 hover:underline"
+              >
+                Ön Bilgilendirme Formu ve Mesafeli Satış Sözleşmesi
+              </Link>
+              &apos;ni okudum, kabul ediyorum. Aboneliğin ödemeyle birlikte derhal başlatılmasına
+              açık onay veriyorum.
+            </span>
+          </label>
+        )}
+
         {status === "opened" ? (
           <div className="text-center py-4">
             <div className="w-10 h-10 border-2 border-hive-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -169,7 +196,7 @@ function CheckoutContent() {
         ) : (
           <button
             onClick={openCheckout}
-            disabled={status === "loading" || !checkoutUrl}
+            disabled={status === "loading" || !checkoutUrl || !consentAccepted}
             className="w-full py-3 rounded-xl font-semibold text-sm transition-all bg-hive-500 hover:bg-hive-600 text-dark-1000 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {status === "loading" ? (

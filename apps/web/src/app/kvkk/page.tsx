@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import LegalEntityBlock from "@/components/LegalEntityBlock";
+
 export const metadata = {
   title: "KVKK Aydınlatma Metni — CompeteHive",
   description:
@@ -36,12 +38,12 @@ export default function KvkkPage() {
           <div className="space-y-8 text-dark-300 text-sm leading-relaxed">
             <section>
               <h2 className="text-xl font-semibold text-white mb-3">1. Veri Sorumlusu</h2>
-              <p>
+              <p className="mb-3">
                 6698 sayılı Kişisel Verilerin Korunması Kanunu (&quot;KVKK&quot;) uyarınca kişisel
-                verileriniz, veri sorumlusu sıfatıyla{" "}
-                <span className="text-white">CompeteHive</span> tarafından aşağıda açıklanan
-                kapsamda işlenmektedir.
+                verileriniz, veri sorumlusu sıfatıyla aşağıda kimliği belirtilen işletme tarafından
+                bu metinde açıklanan kapsamda işlenmektedir.
               </p>
+              <LegalEntityBlock title="Veri Sorumlusu" />
             </section>
 
             <section>
@@ -152,6 +154,9 @@ export default function KvkkPage() {
             </Link>
             <Link href="/cerez" className="hover:text-white transition">
               Çerez
+            </Link>
+            <Link href="/mesafeli-satis" className="hover:text-white transition">
+              Mesafeli Satış
             </Link>
             <Link href="/destek" className="hover:text-white transition">
               Destek
