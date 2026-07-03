@@ -192,28 +192,11 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
         console.warn(`⚠️ Source scrape price bulunamadı: ${productUrl}`);
       }
     } catch (sourceError) {
+      // Başarısız scrape'te ESKİ fiyatla "taze" PriceHistory satırı ÜRETME:
+      // PriceHistory'nin son kaydı kullanıcıya "son başarılı güncelleme"
+      // olarak gösterilir — sahte satır, bayat fiyatı taze gibi gösterir ve
+      // grafikte gerçek olmayan veri noktaları oluşturur.
       console.error(`⚠️ Source scrape hatası: ${productUrl}`, sourceError);
-      // Source scrape failure → siblings için fallback PriceHistory yaz (mevcut fiyatla)
-      const ownRetailer = extractRetailer(productUrl);
-      const fallbackSellerName = ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm";
-      const fallbackHistory = siblings
-        .filter((s) => s.currentPrice && Number(s.currentPrice) > 0)
-        .map((s) => ({
-          trackedProductId: s.id,
-          price: Number(s.currentPrice),
-          currency: s.currency,
-          inStock: s.status !== "OUT_OF_STOCK",
-          sellerName: fallbackSellerName,
-          scrapedAt: now,
-        }));
-
-      if (fallbackHistory.length > 0) {
-        try {
-          await prisma.priceHistory.createMany({ data: fallbackHistory });
-        } catch {
-          // ignore — bir snapshot kaybı kritik değil
-        }
-      }
     }
 
     // 5. Tüm siblings'in bilinen competitor URL'lerini topla (URL → [competitor records])

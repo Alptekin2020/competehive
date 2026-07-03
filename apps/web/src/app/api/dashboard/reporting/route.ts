@@ -114,8 +114,11 @@ export async function GET(req: Request) {
         }, 0);
 
         const staleProducts = products.filter((product) => {
-          if (!product.lastScrapedAt) return true;
-          return now - product.lastScrapedAt.getTime() > STALE_MS;
+          // Tazelik = son BAŞARILI tarama (PriceHistory'nin son kaydı);
+          // lastScrapedAt başarısız denemede de ilerlediği için kullanılamaz.
+          const lastSuccess = product.priceHistory[0]?.scrapedAt ?? product.lastScrapedAt;
+          if (!lastSuccess) return true;
+          return now - lastSuccess.getTime() > STALE_MS;
         }).length;
 
         const competitorPressureSignals = products.filter((product) => {
@@ -204,7 +207,8 @@ export async function GET(req: Request) {
 
     const dataIssues = products
       .map((product) => {
-        const stale = !product.lastScrapedAt || now - product.lastScrapedAt.getTime() > STALE_MS;
+        const lastSuccess = product.priceHistory[0]?.scrapedAt ?? product.lastScrapedAt;
+        const stale = !lastSuccess || now - lastSuccess.getTime() > STALE_MS;
         const missingPrice = toNumber(product.currentPrice) === null;
         const hasError = product.status === "ERROR";
         const issueScore = Number(stale) + Number(missingPrice) + Number(hasError);
