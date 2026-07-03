@@ -17,6 +17,38 @@ interface DeliveryOutcome {
   error?: string;
 }
 
+// Kanal bazlı teslimat sonucu — uyarı başına TEK bildirim satırının
+// metadata.deliveries alanında saklanır; UI kanal rozetlerini buradan çizer.
+export interface ChannelDelivery {
+  channel: string;
+  status: DeliveryStatus;
+  error: string | null;
+}
+
+// Kanal sonuçlarını satırın tekil status/error alanlarına indirger:
+// herhangi bir kanal gönderildiyse SENT (düşen kanallar error özetinde),
+// hiçbiri gönderilemeyip hata varsa FAILED, kalan durumda SKIPPED.
+export function summarizeDeliveries(deliveries: ChannelDelivery[]): {
+  status: DeliveryStatus;
+  error: string | null;
+} {
+  const describe = (items: ChannelDelivery[]) =>
+    items.map((d) => `${d.channel}: ${d.error ?? "hata"}`).join(" · ");
+  const failed = deliveries.filter((d) => d.status === "FAILED");
+
+  if (deliveries.some((d) => d.status === "SENT")) {
+    return { status: "SENT", error: failed.length > 0 ? describe(failed) : null };
+  }
+  if (failed.length > 0) {
+    return { status: "FAILED", error: describe(failed) };
+  }
+  const skippedWithReason = deliveries.filter((d) => d.status === "SKIPPED" && d.error);
+  return {
+    status: "SKIPPED",
+    error: skippedWithReason.length > 0 ? describe(skippedWithReason) : null,
+  };
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -336,6 +368,8 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
   const title = generateNotificationTitle(rule.ruleType, data);
   const message = generateNotificationMessage(rule.ruleType, data);
 
+  const deliveries: ChannelDelivery[] = [];
+
   for (const channel of channels) {
     // 1. Attempt the external send and capture the real outcome.
     let outcome: DeliveryOutcome;
@@ -360,33 +394,50 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
       logger.error({ channel, userId: rule.userId, error }, "Failed to send alert");
     }
 
-    // 2. ALWAYS record the notification — the in-app feed shows it regardless
-    // of external delivery — now annotated with the actual delivery outcome.
-    await writeNotificationToDB({
-      userId: rule.userId,
-      alertRuleId: rule.id,
-      channel,
-      title,
-      message,
-      status: outcome.status,
-      error: outcome.error ?? null,
-      metadata: {
-        productName: data.productName,
-        currentPrice: data.currentPrice,
-        previousPrice: data.previousPrice,
-        priceChange: data.priceChange,
-        priceChangePct: data.priceChangePct,
-        marketplace: data.marketplace,
-        productUrl: data.productUrl,
-        ruleType: rule.ruleType,
-      },
-    });
-
+    deliveries.push({ channel, status: outcome.status, error: outcome.error ?? null });
     logger.info(
       { channel, userId: rule.userId, ruleType: rule.ruleType, status: outcome.status },
-      "Alert processed",
+      "Alert channel processed",
     );
   }
+
+  if (deliveries.length === 0) return;
+
+  // 2. Uyarı başına TEK bildirim satırı yaz — kanal başına ayrı satır,
+  // uygulama içi akışta aynı uyarıyı kanal sayısı kadar (3 kanal = 3 özdeş
+  // kart) gösteriyor ve okunmamış sayacını şişiriyordu. Kanal bazlı teslimat
+  // sonuçları metadata.deliveries'te; satırın status/error alanları özettir.
+  const overall = summarizeDeliveries(deliveries);
+  await writeNotificationToDB({
+    userId: rule.userId,
+    alertRuleId: rule.id,
+    channel: channels[0],
+    title,
+    message,
+    status: overall.status,
+    error: overall.error,
+    metadata: {
+      productName: data.productName,
+      currentPrice: data.currentPrice,
+      previousPrice: data.previousPrice,
+      priceChange: data.priceChange,
+      priceChangePct: data.priceChangePct,
+      marketplace: data.marketplace,
+      productUrl: data.productUrl,
+      ruleType: rule.ruleType,
+      deliveries,
+    },
+  });
+
+  logger.info(
+    {
+      userId: rule.userId,
+      ruleType: rule.ruleType,
+      status: overall.status,
+      channels: deliveries.map((d) => `${d.channel}:${d.status}`).join(","),
+    },
+    "Alert processed",
+  );
 }
 
 // ============================================
