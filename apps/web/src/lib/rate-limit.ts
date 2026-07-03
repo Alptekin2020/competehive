@@ -16,6 +16,7 @@ export async function rateLimit(
   key: string,
   maxRequests: number,
   windowSeconds: number,
+  options?: { failClosed?: boolean },
 ): Promise<RateLimitResult> {
   try {
     const current = await redis.incr(key);
@@ -32,8 +33,13 @@ export async function rateLimit(
       reset: ttl > 0 ? ttl : windowSeconds,
     };
   } catch (error) {
-    // If Redis is down, allow the request (fail open) — consistent with checkRateLimit.
     console.warn("Rate limit check failed:", error);
+    // Varsayılan fail-open (kullanıcı deneyimi), ama ücretli dış API çağrısı
+    // tetikleyen rotalar (Serper/OpenAI) fail-closed ister: Redis kesintisi
+    // maliyet korumasını sessizce kaldırmamalı.
+    if (options?.failClosed) {
+      return { success: false, remaining: 0, reset: windowSeconds };
+    }
     return { success: true, remaining: maxRequests, reset: windowSeconds };
   }
 }

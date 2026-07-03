@@ -355,21 +355,6 @@ export async function POST(req: NextRequest) {
       logger.error({ err }, "Default alert rules error (non-fatal)");
     }
 
-    // 7. Trigger scrape fallback
-    try {
-      const baseUrl = req.nextUrl.origin;
-      fetch(`${baseUrl}/api/scrape/trigger`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          cookie: req.headers.get("cookie") || "",
-        },
-        body: JSON.stringify({ productId: product.id }),
-      }).catch((err) => logger.error({ err }, "Scrape trigger fire-and-forget error"));
-    } catch (err) {
-      logger.error({ err }, "Scrape trigger setup error");
-    }
-
     // Liste sayfasi bu nesneyi oldugu gibi basa ekler (GET ile ayni sekil):
     // last_scraped_at/status eksik kalirsa saniyelik urun "Veri Eski" gorunur.
     return apiSuccess({
