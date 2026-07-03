@@ -21,12 +21,19 @@ describe("isPrivateIp", () => {
     expect(isPrivateIp("100.128.0.1")).toBe(false); // CGNAT dışı
   });
 
-  it("özel IPv6 adreslerini yakalar", () => {
+  it("özel IPv6 adreslerini tüm gösterimleriyle yakalar", () => {
     expect(isPrivateIp("::1")).toBe(true);
+    expect(isPrivateIp("0:0:0:0:0:0:0:1")).toBe(true); // loopback tam yazım
+    expect(isPrivateIp("::")).toBe(true); // unspecified
     expect(isPrivateIp("fe80::1")).toBe(true);
-    expect(isPrivateIp("fd00::1")).toBe(true);
+    expect(isPrivateIp("fe81::1")).toBe(true); // link-local aralığı içi
+    expect(isPrivateIp("febf::1")).toBe(true); // link-local aralığı sınırı
+    expect(isPrivateIp("fc00::1")).toBe(true); // unique-local
+    expect(isPrivateIp("fd12:3456::1")).toBe(true); // unique-local
     expect(isPrivateIp("::ffff:127.0.0.1")).toBe(true); // mapped v4 loopback
-    expect(isPrivateIp("::ffff:8.8.8.8")).toBe(false);
+    expect(isPrivateIp("::ffff:169.254.169.254")).toBe(true); // mapped v4 metadata
+    expect(isPrivateIp("::ffff:8.8.8.8")).toBe(false); // mapped v4 public
+    expect(isPrivateIp("2001:4860:4860::8888")).toBe(false); // genel IPv6 (Google DNS)
   });
 });
 

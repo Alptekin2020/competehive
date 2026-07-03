@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 
-import { assertPublicHttpUrl } from "@/lib/ssrf-guard";
+import { assertPublicHttpUrl, ssrfDispatcher } from "@/lib/ssrf-guard";
 
 export interface ScrapedProduct {
   name: string;
@@ -34,12 +34,15 @@ async function fetchWithTimeout(
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;
     try {
+      // dispatcher: bağlantı anında DNS'i yeniden doğrular (DNS rebinding /
+      // TOCTOU koruması). Tip fetch imzasında yok — undici uzantısı.
       res = await fetch(currentUrl, {
         headers: HEADERS,
         signal: controller.signal,
         cache: "no-store",
         redirect: "manual",
-      });
+        dispatcher: ssrfDispatcher,
+      } as RequestInit & { dispatcher: typeof ssrfDispatcher });
     } finally {
       clearTimeout(timeout);
     }
