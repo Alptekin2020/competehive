@@ -58,6 +58,13 @@ Bu adımlar koddan yapılamaz — panellerden ve dış hizmetlerden ayarlanmalı
 - [ ] **Vercel**'de 3 Whop product ID'sini doğrula: `WHOP_STARTER_PRODUCT_ID`,
       `WHOP_PRO_PRODUCT_ID`, `WHOP_ENTERPRISE_PRODUCT_ID` (webhook plan eşlemesi)
 - [ ] `WHOP_API_KEY` ve `WHOP_WEBHOOK_SECRET` ayarlı mı?
+- [ ] **Whop panosunda webhook URL'i `https://www.competehive.com/api/webhooks/whop`
+      olmalı (www ile!)** — apex `competehive.com` tüm istekleri www'ye 307 ile
+      yönlendirir ve webhook göndericileri yönlendirme takip etmez; apex ile
+      kayıtlı bir webhook hiç teslim edilmez
+- [ ] `NEXT_PUBLIC_APP_URL` Vercel'de `https://www.competehive.com` olarak ayarlı
+      mı? (ödeme sonrası dönüş adresi bundan üretilir; apex ayarlanırsa dönüş
+      fazladan bir 307 üzerinden geçer)
 - [ ] **Canlı bir yenileme testi yap:** Bir test aboneliği alıp bir sonraki
       fatura döneminin `planExpiresAt`'i uzattığını doğrula (bu, otomatik test
       edilemeyen tek kritik akış)
