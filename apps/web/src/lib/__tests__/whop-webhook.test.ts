@@ -1,8 +1,10 @@
+import crypto from "crypto";
 import { describe, it, expect } from "vitest";
 import {
   isFreshWebhookTimestamp,
   isSupersededMembershipEvent,
   parseWhopTimestamp,
+  verifyWhopSignature,
 } from "../whop-webhook";
 
 const NOW_SEC = 1_700_000_000;
@@ -64,6 +66,81 @@ describe("parseWhopTimestamp", () => {
     expect(parseWhopTimestamp("not-a-date")).toBeNull();
     expect(parseWhopTimestamp(0)).toBeNull();
     expect(parseWhopTimestamp(-5)).toBeNull();
+  });
+});
+
+describe("verifyWhopSignature", () => {
+  const SECRET = "ws_test_secret_123";
+  const MSG_ID = "msg_abc";
+  const TS = String(NOW_SEC);
+  const BODY = JSON.stringify({ type: "membership.activated", data: { id: "mem_1" } });
+
+  function sign(secret: string, id: string, ts: string, body: string): string {
+    return crypto
+      .createHmac("sha256", Buffer.from(secret, "utf8"))
+      .update(`${id}.${ts}.${body}`)
+      .digest("base64");
+  }
+
+  it("accepts a valid v1 signature keyed with the raw secret string", () => {
+    const sig = `v1,${sign(SECRET, MSG_ID, TS, BODY)}`;
+    const result = verifyWhopSignature(BODY, MSG_ID, TS, sig, SECRET);
+    expect(result.verified).toBe(true);
+    expect(result.scheme).toBe("raw-utf8");
+  });
+
+  it("accepts a bare (unprefixed) signature token", () => {
+    const sig = sign(SECRET, MSG_ID, TS, BODY);
+    expect(verifyWhopSignature(BODY, MSG_ID, TS, sig, SECRET).verified).toBe(true);
+  });
+
+  it("accepts a valid signature among multiple space-separated tokens", () => {
+    const good = `v1,${sign(SECRET, MSG_ID, TS, BODY)}`;
+    const bad = `v1,${sign("ws_other", MSG_ID, TS, BODY)}`;
+    expect(verifyWhopSignature(BODY, MSG_ID, TS, `${bad} ${good}`, SECRET).verified).toBe(true);
+  });
+
+  it("accepts the classic Standard Webhooks derivation (whsec_ + base64 key)", () => {
+    const rawKey = crypto.randomBytes(24);
+    const secret = `whsec_${rawKey.toString("base64")}`;
+    const sig = `v1,${crypto
+      .createHmac("sha256", rawKey)
+      .update(`${MSG_ID}.${TS}.${BODY}`)
+      .digest("base64")}`;
+    const result = verifyWhopSignature(BODY, MSG_ID, TS, sig, secret);
+    expect(result.verified).toBe(true);
+    expect(result.scheme).toBe("b64-stripped");
+  });
+
+  it("rejects a signature over tampered content", () => {
+    const sig = `v1,${sign(SECRET, MSG_ID, TS, BODY)}`;
+    expect(verifyWhopSignature(BODY + "x", MSG_ID, TS, sig, SECRET).verified).toBe(false);
+    expect(verifyWhopSignature(BODY, "msg_other", TS, sig, SECRET).verified).toBe(false);
+    expect(verifyWhopSignature(BODY, MSG_ID, String(NOW_SEC + 1), sig, SECRET).verified).toBe(
+      false,
+    );
+  });
+
+  it("rejects a signature made with the wrong secret", () => {
+    const sig = `v1,${sign("ws_wrong", MSG_ID, TS, BODY)}`;
+    expect(verifyWhopSignature(BODY, MSG_ID, TS, sig, SECRET).verified).toBe(false);
+  });
+
+  it("rejects missing inputs without throwing", () => {
+    expect(verifyWhopSignature("", MSG_ID, TS, "v1,abc", SECRET)).toEqual({
+      verified: false,
+      scheme: "missing-input",
+    });
+    expect(verifyWhopSignature(BODY, "", TS, "v1,abc", SECRET).verified).toBe(false);
+    expect(verifyWhopSignature(BODY, MSG_ID, "", "v1,abc", SECRET).verified).toBe(false);
+    expect(verifyWhopSignature(BODY, MSG_ID, TS, "", SECRET).verified).toBe(false);
+    expect(verifyWhopSignature(BODY, MSG_ID, TS, "v1,abc", "").verified).toBe(false);
+  });
+
+  it("tolerates garbage signature tokens without throwing", () => {
+    expect(verifyWhopSignature(BODY, MSG_ID, TS, "v1,!!!not-base64!!!", SECRET).verified).toBe(
+      false,
+    );
   });
 });
 
