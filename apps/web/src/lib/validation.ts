@@ -22,6 +22,14 @@ export const scrapeTrigerSchema = z.object({
   productId: z.string().uuid("Geçerli bir ürün ID gerekli"),
 });
 
+export const checkoutSchema = z.object({
+  // FREE checkout'a giremez; bilinmeyen plan adları da burada elenir.
+  planId: z.enum(["STARTER", "PRO", "ENTERPRISE"], {
+    errorMap: () => ({ message: "Geçersiz plan" }),
+  }),
+  billing: z.enum(["monthly", "yearly"]).default("monthly"),
+});
+
 export const updateSettingsSchema = z.object({
   telegramChatId: z.string().optional(),
   webhookUrl: z.string().url().optional().or(z.literal("")),

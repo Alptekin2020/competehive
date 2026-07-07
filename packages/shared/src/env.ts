@@ -10,46 +10,126 @@ const baseSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });
 
-export const webEnvSchema = baseSchema.extend({
-  CLERK_SECRET_KEY: z.string().min(1, "CLERK_SECRET_KEY is required"),
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z
-    .string()
-    .min(1, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required"),
-  NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
+export const webEnvSchema = baseSchema
+  .extend({
+    CLERK_SECRET_KEY: z.string().min(1, "CLERK_SECRET_KEY is required"),
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z
+      .string()
+      .min(1, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required"),
+    NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 
-  // Optional integrations
-  OPENAI_API_KEY: z.string().optional(),
-  SERPER_API_KEY: z.string().optional(),
-  SENTRY_DSN: z.string().optional(),
+    // Optional integrations
+    OPENAI_API_KEY: z.string().optional(),
+    SERPER_API_KEY: z.string().optional(),
+    SENTRY_DSN: z.string().optional(),
 
-  // Optional SMTP
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().optional(),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().optional(),
+    // Optional SMTP
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASS: z.string().optional(),
+    SMTP_FROM: z.string().optional(),
 
-  // Optional Telegram
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+    // Optional Telegram
+    TELEGRAM_BOT_TOKEN: z.string().optional(),
+    TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
 
-  // Optional Whop billing
-  WHOP_API_KEY: z.string().optional(),
-  WHOP_WEBHOOK_SECRET: z.string().optional(),
-  WHOP_STARTER_PRODUCT_ID: z.string().optional(),
-  WHOP_PRO_PRODUCT_ID: z.string().optional(),
-  WHOP_ENTERPRISE_PRODUCT_ID: z.string().optional(),
-  NEXT_PUBLIC_WHOP_STARTER_PLAN_ID: z.string().optional(),
-  NEXT_PUBLIC_WHOP_PRO_PLAN_ID: z.string().optional(),
-  NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID: z.string().optional(),
-  NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID: z.string().optional(),
-  NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID: z.string().optional(),
-  NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID: z.string().optional(),
+    // Optional Whop billing
+    WHOP_API_KEY: z.string().optional(),
+    WHOP_WEBHOOK_SECRET: z.string().optional(),
+    WHOP_STARTER_PRODUCT_ID: z.string().optional(),
+    WHOP_PRO_PRODUCT_ID: z.string().optional(),
+    WHOP_ENTERPRISE_PRODUCT_ID: z.string().optional(),
+    // Plan ID'lerinin runtime'da okunan öneksiz adları (tercih edilen) ve
+    // build'e gömülen NEXT_PUBLIC eşdeğerleri (geriye dönük uyumluluk).
+    WHOP_STARTER_PLAN_ID: z.string().optional(),
+    WHOP_PRO_PLAN_ID: z.string().optional(),
+    WHOP_ENTERPRISE_PLAN_ID: z.string().optional(),
+    WHOP_STARTER_YEARLY_PLAN_ID: z.string().optional(),
+    WHOP_PRO_YEARLY_PLAN_ID: z.string().optional(),
+    WHOP_ENTERPRISE_YEARLY_PLAN_ID: z.string().optional(),
+    NEXT_PUBLIC_WHOP_STARTER_PLAN_ID: z.string().optional(),
+    NEXT_PUBLIC_WHOP_PRO_PLAN_ID: z.string().optional(),
+    NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID: z.string().optional(),
+    NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID: z.string().optional(),
+    NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID: z.string().optional(),
+    NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID: z.string().optional(),
 
-  // Optional admin bootstrap override
-  ADMIN_EMAILS: z.string().optional(),
-  ADMIN_CLERK_IDS: z.string().optional(),
-});
+    // Optional admin bootstrap override
+    ADMIN_EMAILS: z.string().optional(),
+    ADMIN_CLERK_IDS: z.string().optional(),
+  })
+  .superRefine((env, ctx) => {
+    // Yarı yapılandırılmış Whop dağıtımını açılışta yakala: checkout tarafı
+    // (plan ID'leri) ayarlanıp webhook eşleme tarafı (product ID) eksikse
+    // müşteri ÖDER ama webhook ürünü plana eşleyemez ve yükseltme kaybolur.
+    // Bu, ödeme sırasında değil deploy sırasında patlamalı.
+    if (env.NODE_ENV !== "production") return;
+
+    const tiers = [
+      {
+        name: "STARTER",
+        planIds: [
+          env.WHOP_STARTER_PLAN_ID,
+          env.NEXT_PUBLIC_WHOP_STARTER_PLAN_ID,
+          env.WHOP_STARTER_YEARLY_PLAN_ID,
+          env.NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID,
+        ],
+        productId: env.WHOP_STARTER_PRODUCT_ID,
+        productVar: "WHOP_STARTER_PRODUCT_ID",
+      },
+      {
+        name: "PRO",
+        planIds: [
+          env.WHOP_PRO_PLAN_ID,
+          env.NEXT_PUBLIC_WHOP_PRO_PLAN_ID,
+          env.WHOP_PRO_YEARLY_PLAN_ID,
+          env.NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID,
+        ],
+        productId: env.WHOP_PRO_PRODUCT_ID,
+        productVar: "WHOP_PRO_PRODUCT_ID",
+      },
+      {
+        name: "ENTERPRISE",
+        planIds: [
+          env.WHOP_ENTERPRISE_PLAN_ID,
+          env.NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID,
+          env.WHOP_ENTERPRISE_YEARLY_PLAN_ID,
+          env.NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID,
+        ],
+        productId: env.WHOP_ENTERPRISE_PRODUCT_ID,
+        productVar: "WHOP_ENTERPRISE_PRODUCT_ID",
+      },
+    ];
+
+    const anyPlanConfigured = tiers.some((t) => t.planIds.some(Boolean));
+    for (const tier of tiers) {
+      if (tier.planIds.some(Boolean) && !tier.productId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [tier.productVar],
+          message: `${tier.productVar} is required when a ${tier.name} plan ID is configured — without it the webhook cannot map a paid membership to a plan and paying customers are never upgraded`,
+        });
+      }
+    }
+    if (anyPlanConfigured) {
+      if (!env.WHOP_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["WHOP_API_KEY"],
+          message: "WHOP_API_KEY is required when Whop plan IDs are configured (checkout creation)",
+        });
+      }
+      if (!env.WHOP_WEBHOOK_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["WHOP_WEBHOOK_SECRET"],
+          message:
+            "WHOP_WEBHOOK_SECRET is required when Whop plan IDs are configured (webhook verification)",
+        });
+      }
+    }
+  });
 
 export const workerEnvSchema = baseSchema
   .extend({

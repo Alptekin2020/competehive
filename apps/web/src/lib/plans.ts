@@ -15,6 +15,14 @@ export interface PlanInfo {
   badge?: string;
 }
 
+// Whop plan ID'lerinde okuma sırası: önce öneksiz WHOP_*_PLAN_ID (sunucuda
+// runtime'da çözülür — rebuild gerektirmez), sonra NEXT_PUBLIC_* (build anında
+// gömülür; yalnızca runtime'da eklenirse placeholder kalır ve tüm satışlar
+// 'satışa hazır değil' hatasına düşer). NEXT_PUBLIC adları mevcut dağıtımlarla
+// geriye dönük uyumluluk ve istemcideki yıllık-plan-mevcut kontrolü için
+// korunur. Statik process.env.X erişimi şart: dinamik anahtar kullanımı
+// Next.js'in istemci paketine değer gömmesini bozar.
+
 export const PLANS: PlanInfo[] = [
   {
     id: "FREE",
@@ -42,8 +50,14 @@ export const PLANS: PlanInfo[] = [
     name: "Başlangıç",
     price: 299,
     yearlyPrice: 249,
-    whopPlanId: process.env.NEXT_PUBLIC_WHOP_STARTER_PLAN_ID || "plan_STARTER_PLACEHOLDER",
-    whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID || null,
+    whopPlanId:
+      process.env.WHOP_STARTER_PLAN_ID ||
+      process.env.NEXT_PUBLIC_WHOP_STARTER_PLAN_ID ||
+      "plan_STARTER_PLACEHOLDER",
+    whopYearlyPlanId:
+      process.env.WHOP_STARTER_YEARLY_PLAN_ID ||
+      process.env.NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID ||
+      null,
     maxProducts: 50,
     scrapeInterval: "Günde 1",
     marketplaces: "2 marketplace",
@@ -66,8 +80,14 @@ export const PLANS: PlanInfo[] = [
     name: "Profesyonel",
     price: 799,
     yearlyPrice: 649,
-    whopPlanId: process.env.NEXT_PUBLIC_WHOP_PRO_PLAN_ID || "plan_PRO_PLACEHOLDER",
-    whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID || null,
+    whopPlanId:
+      process.env.WHOP_PRO_PLAN_ID ||
+      process.env.NEXT_PUBLIC_WHOP_PRO_PLAN_ID ||
+      "plan_PRO_PLACEHOLDER",
+    whopYearlyPlanId:
+      process.env.WHOP_PRO_YEARLY_PLAN_ID ||
+      process.env.NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID ||
+      null,
     maxProducts: 500,
     scrapeInterval: "12 saatte 1",
     marketplaces: "Tüm marketplace'ler",
@@ -90,8 +110,14 @@ export const PLANS: PlanInfo[] = [
     name: "Kurumsal",
     price: 1999,
     yearlyPrice: 1599,
-    whopPlanId: process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID || "plan_ENTERPRISE_PLACEHOLDER",
-    whopYearlyPlanId: process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID || null,
+    whopPlanId:
+      process.env.WHOP_ENTERPRISE_PLAN_ID ||
+      process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_PLAN_ID ||
+      "plan_ENTERPRISE_PLACEHOLDER",
+    whopYearlyPlanId:
+      process.env.WHOP_ENTERPRISE_YEARLY_PLAN_ID ||
+      process.env.NEXT_PUBLIC_WHOP_ENTERPRISE_YEARLY_PLAN_ID ||
+      null,
     maxProducts: 99999,
     scrapeInterval: "6 saatte 1",
     marketplaces: "Tüm marketplace'ler",
@@ -120,14 +146,11 @@ export function isUpgrade(currentPlan: string, targetPlan: string): boolean {
   return order.indexOf(targetPlan) > order.indexOf(currentPlan);
 }
 
-// Map Whop plan IDs back to CompeteHive plan IDs
-export function getCompeteHivePlanByWhopId(whopPlanId: string): string {
-  for (const plan of PLANS) {
-    if (plan.whopPlanId === whopPlanId || plan.whopYearlyPlanId === whopPlanId) {
-      return plan.id;
-    }
-  }
-  return "FREE"; // fallback
+// Bir planın gerçekten satılabilir bir Whop plan ID'si var mı? Placeholder
+// sentinel'leri ve null (yıllık yapılandırılmamış) satılamaz sayılır — UI bu
+// kontrole göre yıllık seçeneğini gizler, API aynı kontrole göre reddeder.
+export function isSellablePlanId(whopPlanId: string | null): whopPlanId is string {
+  return Boolean(whopPlanId && !whopPlanId.includes("PLACEHOLDER"));
 }
 
 // Get plan limits by plan ID (interval in minutes). Numbers mirror

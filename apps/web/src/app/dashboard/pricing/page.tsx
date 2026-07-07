@@ -2,7 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { PLANS, isUpgrade } from "@/lib/plans";
+import { PLANS, isUpgrade, isSellablePlanId } from "@/lib/plans";
+
+// Yıllık toggle yalnızca en az bir planın gerçekten satılabilir yıllık Whop
+// plan ID'si varsa gösterilir — aksi halde UI, checkout'ta ölü sona çarpacak
+// bir seçeneği pazarlamış olur.
+const anyYearlyAvailable = PLANS.some((p) => isSellablePlanId(p.whopYearlyPlanId));
+
+function yearlySavingsPercent(plan: { price: number; yearlyPrice: number }): number {
+  return plan.price > 0 ? Math.round((1 - plan.yearlyPrice / plan.price) * 100) : 0;
+}
 
 export default function PricingPage() {
   const [currentPlan, setCurrentPlan] = useState<string>("FREE");
@@ -14,7 +23,9 @@ export default function PricingPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const checkoutSuccess = searchParams.get("success") === "true";
-  const upgradedPlan = searchParams.get("plan");
+  // Query parametresi elle yazılabilir — yalnızca bilinen plan adlarını göster.
+  const expectedPlan = PLANS.find((p) => p.id === searchParams.get("plan"))?.id ?? null;
+  const planActivated = expectedPlan !== null && currentPlan === expectedPlan;
 
   useEffect(() => {
     async function fetchPlan() {
@@ -46,9 +57,34 @@ export default function PricingPage() {
     fetchSubscription();
   }, []);
 
-  const handleUpgrade = (planId: string) => {
+  // Ödeme sonrası dönüşte plan webhook ile asenkron aktifleşir; banner yalan
+  // söylemesin diye aktivasyon görülene kadar planı arka planda yokla.
+  useEffect(() => {
+    if (!checkoutSuccess || !expectedPlan || planActivated) return;
+    let attempts = 0;
+    const timer = setInterval(async () => {
+      attempts += 1;
+      if (attempts > 15) {
+        clearInterval(timer);
+        return;
+      }
+      try {
+        const res = await fetch("/api/user/plan");
+        if (res.ok) {
+          const data = await res.json();
+          const plan = data.data?.plan || data.plan;
+          if (plan) setCurrentPlan(plan);
+        }
+      } catch {
+        // Geçici ağ hatası — bir sonraki denemede tekrar sorulur.
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [checkoutSuccess, expectedPlan, planActivated]);
+
+  const handleUpgrade = (planId: string, billingPeriod: "monthly" | "yearly") => {
     if (planId === "FREE") return;
-    router.push(`/dashboard/checkout?plan=${planId}&billing=${billing}`);
+    router.push(`/dashboard/checkout?plan=${planId}&billing=${billingPeriod}`);
   };
 
   if (loading) {
@@ -62,21 +98,29 @@ export default function PricingPage() {
   return (
     <div>
       {/* Success banner */}
-      {checkoutSuccess && (
+      {checkoutSuccess && expectedPlan && (
         <div className="bg-green-500/10 border border-green-500/30 text-green-400 rounded-xl px-5 py-4 mb-8 flex items-center gap-3">
-          <svg
-            className="w-5 h-5 shrink-0"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          >
-            <path d="M20 6L9 17l-5-5" />
-          </svg>
+          {planActivated ? (
+            <svg
+              className="w-5 h-5 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+          ) : (
+            <div className="w-5 h-5 shrink-0 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+          )}
           <div>
-            <p className="font-semibold">Ödeme başarılı!</p>
+            <p className="font-semibold">
+              {planActivated ? "Ödeme başarılı!" : "Ödemeniz alındı!"}
+            </p>
             <p className="text-sm text-green-400/80">
-              {upgradedPlan} planınız aktif edildi. Sayfayı yenilemeniz gerekebilir.
+              {planActivated
+                ? `${expectedPlan} planınız aktif edildi.`
+                : `${expectedPlan} planınız birkaç dakika içinde aktifleşecek — bu sayfa otomatik güncellenir.`}
             </p>
           </div>
         </div>
@@ -109,36 +153,38 @@ export default function PricingPage() {
           </div>
         )}
 
-        {/* Billing toggle */}
-        <div className="flex items-center justify-center gap-3 mt-6">
-          <span
-            className={`text-sm font-medium ${billing === "monthly" ? "text-white" : "text-dark-500"}`}
-          >
-            Aylık
-          </span>
-          <button
-            onClick={() => setBilling(billing === "monthly" ? "yearly" : "monthly")}
-            className="relative w-14 h-7 rounded-full transition-colors"
-            style={{ backgroundColor: billing === "yearly" ? "#F59E0B" : "#1F1F23" }}
-          >
+        {/* Billing toggle — yalnızca satılabilir yıllık plan varsa */}
+        {anyYearlyAvailable && (
+          <div className="flex items-center justify-center gap-3 mt-6">
             <span
-              className="absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform"
-              style={{
-                transform: billing === "yearly" ? "translateX(28px)" : "translateX(0)",
-              }}
-            />
-          </button>
-          <span
-            className={`text-sm font-medium ${billing === "yearly" ? "text-white" : "text-dark-500"}`}
-          >
-            Yıllık
-          </span>
-          {billing === "yearly" && (
-            <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full font-medium">
-              %17 tasarruf
+              className={`text-sm font-medium ${billing === "monthly" ? "text-white" : "text-dark-500"}`}
+            >
+              Aylık
             </span>
-          )}
-        </div>
+            <button
+              onClick={() => setBilling(billing === "monthly" ? "yearly" : "monthly")}
+              className="relative w-14 h-7 rounded-full transition-colors"
+              style={{ backgroundColor: billing === "yearly" ? "#F59E0B" : "#1F1F23" }}
+            >
+              <span
+                className="absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform"
+                style={{
+                  transform: billing === "yearly" ? "translateX(28px)" : "translateX(0)",
+                }}
+              />
+            </button>
+            <span
+              className={`text-sm font-medium ${billing === "yearly" ? "text-white" : "text-dark-500"}`}
+            >
+              Yıllık
+            </span>
+            {billing === "yearly" && (
+              <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full font-medium">
+                Yıllık ödemede indirim
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Plan Cards */}
@@ -146,7 +192,11 @@ export default function PricingPage() {
         {PLANS.map((plan) => {
           const isCurrent = plan.id === currentPlan;
           const canUpgrade = isUpgrade(currentPlan, plan.id);
-          const price = billing === "yearly" ? plan.yearlyPrice : plan.price;
+          // Yıllık ID'si olmayan plan için yıllık fiyat/checkout sunma —
+          // kart o durumda aylık fiyata ve aylık ödemeye düşer.
+          const yearlyAvailable = isSellablePlanId(plan.whopYearlyPlanId);
+          const effectiveBilling = billing === "yearly" && yearlyAvailable ? "yearly" : "monthly";
+          const price = effectiveBilling === "yearly" ? plan.yearlyPrice : plan.price;
 
           return (
             <div
@@ -185,9 +235,17 @@ export default function PricingPage() {
                     <span className="text-dark-500 text-sm">/ay</span>
                   </div>
                 )}
-                {billing === "yearly" && price > 0 && (
-                  <p className="text-dark-600 text-xs mt-1 line-through">
-                    ₺{plan.price.toLocaleString("tr-TR")}/ay
+                {effectiveBilling === "yearly" && price > 0 && (
+                  <p className="text-xs mt-1">
+                    <span className="text-dark-600 line-through">
+                      ₺{plan.price.toLocaleString("tr-TR")}/ay
+                    </span>{" "}
+                    <span className="text-green-400">%{yearlySavingsPercent(plan)} tasarruf</span>
+                  </p>
+                )}
+                {billing === "yearly" && !yearlyAvailable && price > 0 && (
+                  <p className="text-dark-600 text-xs mt-1">
+                    Yıllık seçenek yakında — aylık fiyat gösteriliyor
                   </p>
                 )}
               </div>
@@ -204,7 +262,7 @@ export default function PricingPage() {
                       ? "bg-hive-500 hover:bg-hive-400 text-black"
                       : "border border-dark-800 text-white hover:border-hive-500/30 hover:text-hive-400"
                   }`}
-                  onClick={() => handleUpgrade(plan.id)}
+                  onClick={() => handleUpgrade(plan.id, effectiveBilling)}
                 >
                   Yükselt
                 </button>

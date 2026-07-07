@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
+import { resolveEffectivePlan } from "@/lib/plan-resolve";
 import { apiSuccess, unauthorized, notFound, serverError } from "@/lib/api-response";
 
 export async function GET() {
@@ -13,6 +14,8 @@ export async function GET() {
       where: { id: user.id },
       select: {
         plan: true,
+        planStatus: true,
+        planExpiresAt: true,
         maxProducts: true,
         stripeCustomerId: true,
         whopMembershipId: true,
@@ -44,9 +47,15 @@ export async function GET() {
       where: { userId: user.id },
     });
 
+    // Ham kolon değil EFEKTİF plan dönülür: limitleri fiilen FREE uygulanan
+    // (süresi dolmuş/iptal edilmiş) bir kullanıcıya UI "PRO — Mevcut Plan"
+    // gösterirse yeniden satın alma butonu hiç çıkmaz. Diğer tüm özellik
+    // kapıları da resolveEffectivePlan kullanır — burada da aynı gerçek geçerli.
+    const effective = resolveEffectivePlan(userRecord);
+
     return apiSuccess({
-      plan: userRecord.plan,
-      maxProducts: userRecord.maxProducts,
+      plan: effective.plan,
+      maxProducts: effective.maxProducts,
       hasStripe: !!userRecord.stripeCustomerId,
       hasWhopMembership: !!userRecord.whopMembershipId,
       memberSince: userRecord.createdAt,

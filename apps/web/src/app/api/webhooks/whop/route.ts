@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import prisma from "@/lib/prisma";
+import redis from "@/lib/redis";
 import { WHOP_PRODUCT_TO_PLAN, getPlanLimits, type PlanTier } from "@/lib/plans";
 import { isPaidTier } from "@/lib/plan-resolve";
 import { getWhopClient } from "@/lib/whop";
@@ -8,6 +8,7 @@ import {
   isFreshWebhookTimestamp,
   isSupersededMembershipEvent,
   parseWhopTimestamp,
+  verifyWhopSignature,
 } from "@/lib/whop-webhook";
 
 export const runtime = "nodejs";
@@ -28,9 +29,13 @@ interface WhopMembershipData {
   plan?: { id?: string };
   renewal_period_end?: string | null;
   metadata?: Record<string, unknown> | null;
-  // Payment/invoice payloads carry the membership as a nested {id, status}
-  // reference instead of membership fields at the top level.
+  // Payment payloads carry the membership as a nested {id, status} reference
+  // instead of membership fields at the top level.
   membership?: { id?: string; status?: string } | null;
+  // invoice.paid payload'ında müşteri e-postası user.email'de DEĞİL, üst
+  // düzey email_address alanındadır (SDK Shared.Invoice); user nesnesi
+  // yalnızca id/name/username taşır.
+  email_address?: string;
 }
 
 interface WhopEvent {
@@ -41,63 +46,68 @@ interface WhopEvent {
   company_id?: string | null;
 }
 
-// ---- Standard Webhooks signature verification (Whop V1) ----
-// Whop signs `${webhook-id}.${webhook-timestamp}.${rawBody}` with HMAC-SHA256
-// and sends the signature in the `webhook-signature` header as a
-// space-separated list of `v1,<base64>` tokens. The webhook secret looks like
-// `ws_...`; the Whop docs hand that raw string to the SDK (wrapped in btoa),
-// so the HMAC key is the raw secret string bytes. We also try the classic
-// Standard Webhooks key derivations as a safety net and log which one matched.
-function candidateKeys(secret: string): { name: string; key: Buffer }[] {
-  const keys: { name: string; key: Buffer }[] = [];
-  keys.push({ name: "raw-utf8", key: Buffer.from(secret, "utf8") });
-  const stripped = secret.replace(/^ws_/, "").replace(/^whsec_/, "");
+// Whop at-least-once teslimat yapar ve her yeniden gönderim taze imza/
+// timestamp taşır — replay penceresi çift işlemi YAKALAYAMAZ. Başarıyla
+// işlenen event id'leri Redis'te işaretlenir; anahtar yalnızca 2xx dönen
+// işlemlerden SONRA yazılır ki kasıtlı 5xx-retry akışları (unmapped product,
+// user not found) sonraki denemede atlanmasın. Redis erişilemezse akış
+// bozulmaz (fail-open): çift işlem koruması zaten ikinci savunma hattı.
+const EVENT_DEDUP_TTL_SEC = 48 * 60 * 60;
+
+async function isDuplicateEvent(eventId: string | undefined): Promise<boolean> {
+  if (!eventId) return false;
   try {
-    keys.push({ name: "b64-stripped", key: Buffer.from(stripped, "base64") });
-  } catch {
-    // ignore non-base64 secret
+    return (await redis.exists(`whop-event:${eventId}`)) === 1;
+  } catch (redisError) {
+    console.warn("[whop] dedup check unavailable (redis): " + String(redisError));
+    return false;
   }
-  try {
-    keys.push({ name: "b64-full", key: Buffer.from(secret, "base64") });
-  } catch {
-    // ignore non-base64 secret
-  }
-  return keys;
 }
 
-function verifyWhopSignature(
-  rawBody: string,
-  msgId: string,
-  msgTimestamp: string,
-  sigHeader: string,
-  secret: string,
-): { verified: boolean; scheme: string } {
-  if (!rawBody || !msgId || !msgTimestamp || !sigHeader || !secret) {
-    return { verified: false, scheme: "missing-input" };
+async function markEventProcessed(eventId: string | undefined): Promise<void> {
+  if (!eventId) return;
+  try {
+    await redis.set(`whop-event:${eventId}`, "1", "EX", EVENT_DEDUP_TTL_SEC);
+  } catch (redisError) {
+    console.warn("[whop] dedup mark unavailable (redis): " + String(redisError));
   }
-  const signedContent = msgId + "." + msgTimestamp + "." + rawBody;
-  const passedSigs = sigHeader
-    .split(" ")
-    .map((token) => (token.includes(",") ? token.split(",")[1] : token))
-    .filter(Boolean);
+}
 
-  for (const { name, key } of candidateKeys(secret)) {
-    if (key.length === 0) continue;
-    const expected = crypto.createHmac("sha256", key).update(signedContent).digest("base64");
-    const expectedBuf = Buffer.from(expected, "base64");
-    for (const sig of passedSigs) {
-      let sigBuf: Buffer;
-      try {
-        sigBuf = Buffer.from(sig, "base64");
-      } catch {
-        continue;
+function isP2002(e: unknown): e is { code: string; meta?: { target?: unknown } } {
+  return typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+}
+
+// whopUserId/whopMembershipId @unique kolonlarında çakışma (aynı Whop hesabı
+// daha önce başka bir CompeteHive kullanıcısına bağlanmış) plan aktivasyonunu
+// engellememeli: çakışan bağlantı alanlarını sırayla düşürerek yeniden dene.
+// Aksi halde P2002 → 500 → Whop aynı payload'ı sonsuza dek yeniden dener ve
+// ödeyen kullanıcı hiç yükseltilmez.
+async function updateUserForActivation(
+  userId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const attempts: Array<(d: Record<string, unknown>) => Record<string, unknown>> = [
+    (d) => d,
+    (d) => ({ ...d, whopUserId: undefined }),
+    (d) => ({ ...d, whopUserId: undefined, whopMembershipId: undefined }),
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      await prisma.user.update({ where: { id: userId }, data: attempts[i](data) });
+      if (i > 0) {
+        console.error(
+          "[whop] unique collision on Whop link columns — activated user=" +
+            userId +
+            " WITHOUT " +
+            (i === 1 ? "whopUserId" : "whopUserId+whopMembershipId") +
+            "; another account holds the same Whop link, reconcile manually",
+        );
       }
-      if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-        return { verified: true, scheme: name };
-      }
+      return;
+    } catch (updateError) {
+      if (!isP2002(updateError) || i === attempts.length - 1) throw updateError;
     }
   }
-  return { verified: false, scheme: "no-match" };
 }
 
 function header(headers: Headers, ...names: string[]): string {
@@ -118,6 +128,8 @@ async function findUser(data: WhopMembershipData) {
     md.competehive_user_id || md.userId || md.user_id || md.internalUserId || md.internal_user_id;
   const metaEmail = typeof md.competehive_email === "string" ? md.competehive_email : undefined;
   const email = data.user?.email;
+  // invoice.paid müşteri e-postasını üst düzey email_address'te taşır.
+  const invoiceEmail = typeof data.email_address === "string" ? data.email_address : undefined;
   const whopUserId = data.user?.id;
 
   // Priority: internal id (from checkout) -> clerk metadata -> checkout email
@@ -138,7 +150,7 @@ async function findUser(data: WhopMembershipData) {
     });
     if (u) return u;
   }
-  for (const candidate of [metaEmail, email]) {
+  for (const candidate of [metaEmail, email, invoiceEmail]) {
     if (!candidate) continue;
     const u = await prisma.user.findFirst({
       where: { email: { equals: candidate, mode: "insensitive" } },
@@ -197,12 +209,32 @@ export async function POST(request: Request) {
   const data = event.data || {};
   console.log("[whop] verified type=" + type + " scheme=" + scheme);
 
+  if (await isDuplicateEvent(event.id)) {
+    console.log("[whop] duplicate delivery skipped event=" + String(event.id) + " type=" + type);
+    return NextResponse.json({ received: true, duplicate: true });
+  }
+
   try {
     if (type === "membership.activated") {
       const productId = data.product?.id;
-      const tier = productId
-        ? (WHOP_PRODUCT_TO_PLAN[productId] as PlanTier | undefined)
-        : undefined;
+      let tier = productId ? (WHOP_PRODUCT_TO_PLAN[productId] as PlanTier | undefined) : undefined;
+      if (!tier) {
+        // Product eşlemesi eksikse checkout'un kendi yazdığı
+        // metadata.competehive_plan'a düş: env eşlemesi yanlış diye ödeyen
+        // müşteri kaybedilmez, ama config hatası yine yüksek sesle loglanır.
+        const md = (data.metadata || {}) as Record<string, unknown>;
+        const metaPlan = typeof md.competehive_plan === "string" ? md.competehive_plan : undefined;
+        if (metaPlan && isPaidTier(metaPlan)) {
+          tier = metaPlan;
+          console.error(
+            "[whop] product=" +
+              String(productId) +
+              " is UNMAPPED — using checkout metadata plan=" +
+              metaPlan +
+              " as fallback; FIX the WHOP_*_PRODUCT_ID env mapping",
+          );
+        }
+      }
       if (!productId || !tier) {
         // A paid activation we can't map to a tier means our WHOP_*_PRODUCT_ID
         // env mapping is missing/wrong. Do NOT silently 200 it away — return a
@@ -236,18 +268,105 @@ export async function POST(request: Request) {
       }
       const limits = getPlanLimits(tier);
       const previousMembershipId = user.whopMembershipId;
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          plan: tier,
-          planStatus: "ACTIVE",
-          planExpiresAt: parseWhopTimestamp(data.renewal_period_end),
-          maxProducts: limits.maxProducts,
-          whopUserId: data.user?.id ?? undefined,
-          whopMembershipId: data.id ?? undefined,
-          whopProductId: productId,
-          whopPlanId: data.plan?.id ?? undefined,
-        },
+
+      // Whop at-least-once teslimat + sırasız retry'lara karşı canlı doğrulama:
+      // payload eski olabilir, API'deki güncel membership kaydı gerçektir.
+      // API erişilemezse payload ile devam edilir (meşru yükseltmeyi bloklama).
+      let liveMembership: {
+        status?: string;
+        renewal_period_end?: string | null;
+        created_at?: string;
+      } | null = null;
+      if (data.id) {
+        try {
+          liveMembership = await getWhopClient().memberships.retrieve(data.id);
+        } catch (retrieveError) {
+          console.error(
+            "[whop] could not retrieve membership=" +
+              data.id +
+              " for live validation, proceeding with payload: " +
+              String(retrieveError),
+          );
+        }
+      }
+
+      // Gecikmiş bir activated retry'ı, bu arada iade/iptal edilmiş bir
+      // aboneliği diriltmemeli (deactivated tekrar GÖNDERİLMEZ).
+      if (
+        liveMembership &&
+        (liveMembership.status === "canceled" || liveMembership.status === "expired")
+      ) {
+        console.log(
+          "[whop] ignoring stale activation: membership=" +
+            String(data.id) +
+            " live status=" +
+            String(liveMembership.status) +
+            " user=" +
+            user.id,
+        );
+        await markEventProcessed(event.id);
+        return NextResponse.json({ received: true });
+      }
+
+      // Sıralama koruması: kullanıcının kayıtlı membership'i bu event'tekinden
+      // farklıysa hangisinin daha yeni olduğunu CANLI created_at ile belirle.
+      // Eski membership'in gecikmiş aktivasyonu yeni planı ezmemeli ve
+      // kullanıcının hâlâ ödediği yeni aboneliği iptal ETMEMELİ.
+      let cancelSuperseded = isSupersededMembershipEvent(previousMembershipId, data.id);
+      if (cancelSuperseded) {
+        try {
+          const previous = await getWhopClient().memberships.retrieve(
+            previousMembershipId as string,
+          );
+          const previousCreated = parseWhopTimestamp(previous?.created_at);
+          const incomingCreated = parseWhopTimestamp(liveMembership?.created_at ?? null);
+          if (previousCreated && incomingCreated && previousCreated > incomingCreated) {
+            console.log(
+              "[whop] ignoring out-of-order activation of OLDER membership=" +
+                String(data.id) +
+                " (current=" +
+                String(previousMembershipId) +
+                " is newer) user=" +
+                user.id,
+            );
+            await markEventProcessed(event.id);
+            return NextResponse.json({ received: true });
+          }
+        } catch (orderError) {
+          // Sıra belirlenemedi: aktivasyonu işle ama yanlış aboneliği iptal
+          // etme riskine karşı otomatik iptali atla. Olası çifte tahsilat,
+          // mevcut cancel-failure yolundaki gibi manuel müdahale için loglanır.
+          cancelSuperseded = false;
+          console.error(
+            "[whop] could not order memberships current=" +
+              String(previousMembershipId) +
+              " incoming=" +
+              String(data.id) +
+              " — activating WITHOUT auto-cancel, check for double billing: " +
+              String(orderError),
+          );
+        }
+      }
+
+      // Dönem sonu: canlı değer > payload değeri; hiçbir durumda mevcut
+      // planExpiresAt geriye sarılmaz (duplicate teslimat payment.succeeded'ın
+      // uzattığı tarihi ezmemeli).
+      let renewalEnd =
+        parseWhopTimestamp(liveMembership?.renewal_period_end ?? null) ??
+        parseWhopTimestamp(data.renewal_period_end);
+      if (renewalEnd && user.planExpiresAt && user.planExpiresAt > renewalEnd) {
+        renewalEnd = user.planExpiresAt;
+      }
+
+      await updateUserForActivation(user.id, {
+        plan: tier,
+        planStatus: "ACTIVE",
+        planExpiresAt: renewalEnd ?? user.planExpiresAt ?? null,
+        maxProducts: limits.maxProducts,
+        whopUserId: data.user?.id ?? undefined,
+        whopMembershipId: data.id ?? undefined,
+        whopProductId: productId,
+        whopPlanId: data.plan?.id ?? undefined,
       });
 
       // Plan değişikliği ürün satırlarına da yansımalı: tarama aralığı ürün
@@ -261,12 +380,14 @@ export async function POST(request: Request) {
 
       // Paid→paid geçişte yeni kapasite eskisinden küçükse kapasite üstünü
       // durdur (iptal dalıyla aynı politika: en eski N ürün aktif kalır).
+      // ERROR da dahil: worker ERROR ürünleri de günlük taramaya sokar, kapsam
+      // dışı bırakılırlarsa kapasite üstü tarama tüketmeye devam ederler.
       const activeCount = await prisma.trackedProduct.count({
-        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK", "ERROR"] } },
       });
       if (activeCount > limits.maxProducts) {
         const keep = await prisma.trackedProduct.findMany({
-          where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+          where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK", "ERROR"] } },
           orderBy: { createdAt: "asc" },
           take: limits.maxProducts,
           select: { id: true },
@@ -274,7 +395,7 @@ export async function POST(request: Request) {
         await prisma.trackedProduct.updateMany({
           where: {
             userId: user.id,
-            status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+            status: { in: ["ACTIVE", "OUT_OF_STOCK", "ERROR"] },
             id: { notIn: keep.map((k) => k.id) },
           },
           data: { status: "PAUSED" },
@@ -285,8 +406,9 @@ export async function POST(request: Request) {
       // kullanıcı iki planı birden ödemeye devam eder. Dönem sonunda iptal:
       // ödenen süre kullanılır, bir sonraki tahsilat engellenir. (Aşağıdaki
       // superseded-membership koruması sayesinde bu iptalin webhook'u mevcut
-      // planı düşürmez.)
-      if (isSupersededMembershipEvent(previousMembershipId, data.id)) {
+      // planı düşürmez.) cancelSuperseded, yukarıdaki sıralama korumasından
+      // geçmiş olmayı da içerir.
+      if (cancelSuperseded) {
         try {
           const whop = getWhopClient();
           await whop.memberships.cancel(previousMembershipId as string, {
@@ -316,14 +438,14 @@ export async function POST(request: Request) {
       }
 
       console.log("[whop] activated user=" + user.id + " plan=" + tier);
+      await markEventProcessed(event.id);
       return NextResponse.json({ received: true });
     }
 
-    if (
-      type === "membership.deactivated" ||
-      type === "membership.went_invalid" ||
-      type === "membership.expired"
-    ) {
+    // membership.deactivated, Whop V1'de TEK sonlanma event'idir (iptal, süre
+    // dolumu ve geçersizleşme dahil) — SDK'nın WebhookEvent union'ında
+    // went_invalid/expired diye ayrı adlar yoktur.
+    if (type === "membership.deactivated") {
       const user = await findUser(data);
       if (!user) {
         console.warn("[whop] membership terminated: user not found");
@@ -341,11 +463,13 @@ export async function POST(request: Request) {
             " user=" +
             user.id,
         );
+        await markEventProcessed(event.id);
         return NextResponse.json({ received: true });
       }
       // Access has ended — revert to the FREE plan and its product cap so the
       // UI and limit checks stop treating the user as a paying customer.
-      const freeCap = getPlanLimits("FREE").maxProducts;
+      const freeLimits = getPlanLimits("FREE");
+      const freeCap = freeLimits.maxProducts;
       await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -356,13 +480,23 @@ export async function POST(request: Request) {
         },
       });
 
+      // Tarama sıklığı da FREE'ye dönmeli: worker doğrudan ürün satırındaki
+      // scrapeInterval'dan planlama yapar; sıfırlanmazsa aboneliği biten
+      // kullanıcının kalan ürünleri ücretli tier sıklığında taranmaya devam
+      // eder (ör. ENTERPRISE'ın 6 saatte 1'i).
+      await prisma.trackedProduct.updateMany({
+        where: { userId: user.id },
+        data: { scrapeInterval: freeLimits.scrapeInterval },
+      });
+
       // Enforce the FREE product cap (B1): a lapsed subscriber must stop
       // receiving paid-tier scraping. Keep the oldest `freeCap` tracked
       // products active and pause the rest — the worker skips PAUSED products,
       // so this is what actually stops over-cap scraping/alerting. Re-upgrading
       // raises the cap again; paused products can be resumed manually.
+      // ERROR da dahil: worker ERROR ürünleri de günlük taramaya sokar.
       const keep = await prisma.trackedProduct.findMany({
-        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK"] } },
+        where: { userId: user.id, status: { in: ["ACTIVE", "OUT_OF_STOCK", "ERROR"] } },
         orderBy: { createdAt: "asc" },
         take: freeCap,
         select: { id: true },
@@ -370,7 +504,7 @@ export async function POST(request: Request) {
       const paused = await prisma.trackedProduct.updateMany({
         where: {
           userId: user.id,
-          status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+          status: { in: ["ACTIVE", "OUT_OF_STOCK", "ERROR"] },
           id: { notIn: keep.map((k) => k.id) },
         },
         data: { status: "PAUSED" },
@@ -382,6 +516,7 @@ export async function POST(request: Request) {
           paused.count +
           " over-cap products",
       );
+      await markEventProcessed(event.id);
       return NextResponse.json({ received: true });
     }
 
@@ -405,6 +540,7 @@ export async function POST(request: Request) {
             " user=" +
             user.id,
         );
+        await markEventProcessed(event.id);
         return NextResponse.json({ received: true });
       }
 
@@ -463,6 +599,7 @@ export async function POST(request: Request) {
       console.log(
         "[whop] payment renewal user=" + user.id + " expiresAt=" + renewalEnd.toISOString(),
       );
+      await markEventProcessed(event.id);
       return NextResponse.json({ received: true });
     }
 
