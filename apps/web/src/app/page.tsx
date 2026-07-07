@@ -449,8 +449,9 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* Pricing */}
-      <section className="py-12 sm:py-20 px-4 sm:px-6 bg-dark-950">
+      {/* Pricing — id, mesafeli satış sözleşmesinin fiyat-bilgilendirme
+          bağlantısının (/#pricing) hedefi: kaldırılırsa yasal link kopar. */}
+      <section id="pricing" className="py-12 sm:py-20 px-4 sm:px-6 bg-dark-950">
         <div className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-bold text-white text-center mb-4">Basit Fiyatlandırma</h2>
           <p className="text-dark-400 text-center mb-16">Her ölçekte e-ticaret satıcıları için</p>
@@ -523,10 +524,10 @@ export default async function Home() {
                   ))}
                 </ul>
                 <Link
-                  href="/register"
+                  href={userId ? "/dashboard/pricing" : "/register"}
                   className={`block text-center mt-6 py-2.5 rounded-xl text-sm font-semibold transition ${p.hl ? "bg-hive-500 text-dark-1000 hover:bg-hive-600" : "border border-dark-700 text-white hover:border-dark-500"}`}
                 >
-                  Başla
+                  {userId ? "Planı İncele" : "Başla"}
                 </Link>
               </div>
             ))}

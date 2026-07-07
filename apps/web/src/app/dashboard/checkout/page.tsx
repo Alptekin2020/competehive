@@ -3,12 +3,12 @@
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { PLANS } from "@/lib/plans";
+import { PLANS, isSellablePlanId } from "@/lib/plans";
 
 function CheckoutContent() {
   const searchParams = useSearchParams();
   const planId = searchParams.get("plan");
-  const billing = searchParams.get("billing") === "yearly" ? "yearly" : "monthly";
+  const requestedBilling = searchParams.get("billing") === "yearly" ? "yearly" : "monthly";
 
   const [status, setStatus] = useState<"idle" | "loading" | "opened" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -18,9 +18,19 @@ function CheckoutContent() {
   const [consentAccepted, setConsentAccepted] = useState(false);
 
   const plan = PLANS.find((p) => p.id === planId);
+  // Yıllık istenmiş ama bu plan için yıllık Whop plan ID'si yoksa aylığa düş:
+  // gösterilen fiyat her zaman tahsil edilecek fiyat olmalı, "satışa hazır
+  // değil" ölü sonu yerine satın alınabilir seçenek sunulmalı.
+  const yearlyAvailable = plan ? isSellablePlanId(plan.whopYearlyPlanId) : false;
+  const billing = requestedBilling === "yearly" && yearlyAvailable ? "yearly" : "monthly";
+  const billingDowngraded = requestedBilling === "yearly" && !yearlyAvailable;
+
+  const planValid = Boolean(plan && planId && planId !== "FREE");
 
   const initiateCheckout = useCallback(async () => {
-    if (!planId) return;
+    // Geçersiz/FREE plan zaten hata ekranına düşer — sunucuya boşa istek
+    // atıp rate-limit hakkı tüketme.
+    if (!planValid) return;
     setStatus("loading");
     setError(null);
 
@@ -45,21 +55,13 @@ function CheckoutContent() {
       setError("Bağlantı hatası. Lütfen tekrar deneyin.");
       setStatus("error");
     }
-  }, [planId, billing]);
+  }, [planValid, planId, billing]);
 
   useEffect(() => {
     initiateCheckout();
   }, [initiateCheckout]);
 
-  const openCheckout = () => {
-    if (!consentAccepted) return;
-    if (checkoutUrl) {
-      window.open(checkoutUrl, "_blank", "noopener,noreferrer");
-      setStatus("opened");
-    }
-  };
-
-  if (!plan || !planId || planId === "FREE") {
+  if (!planValid || !plan) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4">
         <p className="text-dark-400">Geçersiz plan seçimi.</p>
@@ -115,6 +117,11 @@ function CheckoutContent() {
             {((plan.price - plan.yearlyPrice) * 12).toLocaleString("tr-TR")} tasarruf
           </p>
         )}
+        {billingDowngraded && (
+          <p className="text-xs text-amber-400 mb-4">
+            Bu plan için yıllık ödeme henüz aktif değil — aylık fiyat üzerinden devam ediyorsunuz.
+          </p>
+        )}
 
         <div className="border-t border-dark-800 pt-4 mt-4">
           <p className="text-sm text-dark-400 mb-3">Plan dahilinde:</p>
@@ -146,7 +153,13 @@ function CheckoutContent() {
 
         {error && (
           <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">
-            {error}
+            <p>{error}</p>
+            <button
+              onClick={initiateCheckout}
+              className="mt-2 text-sm font-semibold text-red-300 hover:text-red-200 underline underline-offset-4"
+            >
+              Tekrar dene
+            </button>
           </div>
         )}
 
@@ -179,12 +192,16 @@ function CheckoutContent() {
             <p className="text-sm text-dark-300 mb-1">Ödeme sayfası yeni sekmede açıldı</p>
             <p className="text-xs text-dark-500 mb-4">Ödemeyi tamamladıktan sonra buraya dönün.</p>
             <div className="flex flex-col gap-2">
-              <button
-                onClick={openCheckout}
-                className="text-sm text-hive-500 hover:text-hive-400 font-medium"
-              >
-                Ödeme sayfası açılmadı mı? Tekrar aç
-              </button>
+              {checkoutUrl && (
+                <a
+                  href={checkoutUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-hive-500 hover:text-hive-400 font-medium"
+                >
+                  Ödeme sayfası açılmadı mı? Tekrar aç
+                </a>
+              )}
               <Link
                 href="/dashboard/pricing"
                 className="text-sm text-dark-400 hover:text-dark-300 font-medium mt-2"
@@ -193,11 +210,36 @@ function CheckoutContent() {
               </Link>
             </div>
           </div>
+        ) : checkoutUrl && consentAccepted ? (
+          // Gerçek link (anchor): kullanıcı jestiyle tetiklenen yeni-sekme
+          // navigasyonu popup engelleyicilere takılmaz — window.open +
+          // noopener'ın aksine (dönüş değeri her zaman null olduğundan
+          // engellenme tespit bile edilemiyordu).
+          <a
+            href={checkoutUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setStatus("opened")}
+            className="block w-full py-3 rounded-xl font-semibold text-sm text-center transition-all bg-hive-500 hover:bg-hive-600 text-dark-1000"
+          >
+            <span className="flex items-center justify-center gap-2">
+              <svg
+                className="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <rect x="1" y="4" width="22" height="16" rx="2" />
+                <line x1="1" y1="10" x2="23" y2="10" />
+              </svg>
+              Ödemeye Geç
+            </span>
+          </a>
         ) : (
           <button
-            onClick={openCheckout}
-            disabled={status === "loading" || !checkoutUrl || !consentAccepted}
-            className="w-full py-3 rounded-xl font-semibold text-sm transition-all bg-hive-500 hover:bg-hive-600 text-dark-1000 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled
+            className="w-full py-3 rounded-xl font-semibold text-sm transition-all bg-hive-500 text-dark-1000 opacity-50 cursor-not-allowed"
           >
             {status === "loading" ? (
               <span className="flex items-center justify-center gap-2">

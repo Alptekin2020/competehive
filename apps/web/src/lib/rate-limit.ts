@@ -114,7 +114,10 @@ export const RATE_LIMITS = {
   api: { limit: 60, window: 60, prefix: "rl:api" },
   productAdd: { limit: 10, window: 60, prefix: "rl:add" },
   bulkImport: { limit: 3, window: 300, prefix: "rl:bulk" },
-  checkout: { limit: 5, window: 300, prefix: "rl:checkout" },
+  // Checkout sayfası her açılışta bir oturum oluşturur — plan kıyaslayan meşru
+  // bir kullanıcı 5 dakikada 5'ten fazla sayfa görüntüleyebilir; limit satın
+  // almayı bloklamayacak kadar geniş, kötüye kullanımı kesecek kadar dar olmalı.
+  checkout: { limit: 10, window: 300, prefix: "rl:checkout" },
   refresh: { limit: 10, window: 300, prefix: "rl:refresh" },
   auth: { limit: 10, window: 900, prefix: "rl:auth" },
 };

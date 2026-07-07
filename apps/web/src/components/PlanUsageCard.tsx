@@ -43,7 +43,7 @@ export function PlanUsageCard() {
         <p className="text-amber-400 text-sm font-semibold">Aktif Plan Yok</p>
         <p className="text-gray-400 text-xs mt-1">Ürün takibine başlamak için bir plan seçin.</p>
         <Link
-          href="/dashboard/checkout"
+          href="/dashboard/pricing"
           className="inline-block mt-3 bg-amber-500 hover:bg-amber-400 text-black font-semibold px-3 py-1.5 rounded-lg text-sm transition-colors"
         >
           Plan Seç
@@ -81,7 +81,7 @@ export function PlanUsageCard() {
           </span>
         </p>
         {(isNearLimit || isAtLimit) && (
-          <Link href="/dashboard/checkout" className="text-amber-400 text-xs hover:text-amber-300">
+          <Link href="/dashboard/pricing" className="text-amber-400 text-xs hover:text-amber-300">
             Yükselt →
           </Link>
         )}
