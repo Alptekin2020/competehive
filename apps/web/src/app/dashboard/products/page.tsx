@@ -646,7 +646,7 @@ function ProductsPageInner() {
         <div>
           <EmptyState
             title="Henüz ürün eklenmedi"
-            description="Marketplace ürün linkini yapıştırarak rakip fiyatlarını takip etmeye başlayın."
+            description="Pazaryeri ürün linkini yapıştırarak rakip fiyatlarını takip etmeye başlayın."
             actionLabel="İlk Ürünü Ekle"
             onAction={() => setShowModal(true)}
           />
@@ -926,7 +926,7 @@ function ProductsPageInner() {
             <thead className="bg-[#151519] text-gray-400">
               <tr>
                 <th className="text-left font-medium px-4 py-3">Ürün</th>
-                <th className="text-left font-medium px-4 py-3">Marketplace</th>
+                <th className="text-left font-medium px-4 py-3">Pazaryeri</th>
                 <th className="text-left font-medium px-4 py-3">Fiyatım</th>
                 <th className="text-left font-medium px-4 py-3">Rakip</th>
                 <th className="text-left font-medium px-4 py-3">Son Güncelleme</th>

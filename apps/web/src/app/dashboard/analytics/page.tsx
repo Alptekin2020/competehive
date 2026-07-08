@@ -113,13 +113,13 @@ export default function AnalyticsPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-white mb-1">Analitik</h1>
           <p className="text-gray-500 text-sm">
-            Marketplace performansı ve güvenilirlik istatistikleri.
+            Pazaryeri performansı ve güvenilirlik istatistikleri.
           </p>
         </div>
         <UpgradeGate
           feature="Analitik Dashboard"
           requiredPlan="Profesyonel"
-          description="Marketplace başarı oranları, eşleşme skorları ve detaylı performans istatistiklerini görüntülemek için Profesyonel plana yükseltin."
+          description="Pazaryeri başarı oranları, eşleşme skorları ve detaylı performans istatistiklerini görüntülemek için Profesyonel plana yükseltin."
         />
       </div>
     );
@@ -131,7 +131,7 @@ export default function AnalyticsPage() {
       <div className="mb-6 sm:mb-8">
         <h1 className="text-xl sm:text-2xl font-bold text-white mb-0.5 sm:mb-1">Analitik</h1>
         <p className="text-gray-500 text-sm">
-          Marketplace performansı ve güvenilirlik istatistikleri.
+          Pazaryeri performansı ve güvenilirlik istatistikleri.
         </p>
       </div>
 
@@ -225,7 +225,7 @@ export default function AnalyticsPage() {
           </div>
 
           {/* Per-Marketplace Cards */}
-          <h2 className="text-lg font-semibold text-white mb-4">Marketplace Detayları</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Pazaryeri Detayları</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
             {marketplaces.map((mp) => {
               const info = getMarketplaceInfo(mp.marketplace);

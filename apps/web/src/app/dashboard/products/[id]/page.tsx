@@ -843,7 +843,7 @@ export default function ProductDetailPage() {
               )}
             </div>
           </div>
-          <div className="flex items-center sm:flex-col sm:items-end gap-3 sm:gap-2 flex-shrink-0">
+          <div className="flex-shrink-0">
             {ownPrice && ownPrice > 0 && (
               <div className="text-left sm:text-right">
                 <p className="text-xs text-gray-500 mb-0.5 sm:mb-1">
@@ -857,94 +857,98 @@ export default function ProductDetailPage() {
                 </p>
               </div>
             )}
-            <div className="flex flex-col items-start sm:items-end gap-2">
-              <RefreshButton
-                productId={product.id}
-                initialStatus={product.refreshStatus}
-                onRefreshComplete={() => fetchProduct()}
-              />
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-500/30 text-red-300 hover:text-red-200 hover:bg-red-500/10 transition"
-              >
-                <svg
-                  className="w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                </svg>
-                Ürünü Sil
-              </button>
-              <button
-                onClick={handleCompare}
-                disabled={isComparing}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                  isComparing
-                    ? "bg-blue-500/10 text-blue-400 border border-blue-500/20 cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-500 text-white"
-                }`}
-              >
-                {isComparing && (
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      className="opacity-25"
-                    />
-                    <path
-                      d="M4 12a8 8 0 018-8"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                )}
-                {isComparing ? "Rakipler Taranıyor..." : "Rakipleri Tara"}
-              </button>
-              <button
-                onClick={() => {
-                  setAddCompetitorError(null);
-                  setShowAddCompetitor(true);
-                }}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-dark-700 text-gray-300 hover:text-white hover:border-hive-500/40 text-sm font-medium transition"
-                title="Bildiğiniz bir rakibin linkini elle ekleyin"
-              >
-                <svg
-                  className="w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                Rakip Ekle
-              </button>
-              {compareStatus && (
-                <span className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md">
-                  {compareStatus}
-                </span>
-              )}
-              {compareError && (
-                <span className="text-xs text-red-300 bg-red-500/10 border border-red-500/25 px-2 py-1 rounded-md">
-                  {compareError}
-                </span>
-              )}
-            </div>
           </div>
+        </div>
+
+        {/* Aksiyon satırı: eski dikey buton yığını sağ üstte dengesiz bir kule
+            oluşturuyordu. Birincil aksiyonlar solda yan yana, yıkıcı "Ürünü
+            Sil" sağa ayrık — simetrik ve tek bakışta taranabilir. */}
+        <div className="mt-4 pt-4 border-t border-[#1F1F23] flex flex-wrap items-center gap-2">
+          <RefreshButton
+            productId={product.id}
+            initialStatus={product.refreshStatus}
+            onRefreshComplete={() => fetchProduct()}
+          />
+          <button
+            onClick={handleCompare}
+            disabled={isComparing}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+              isComparing
+                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-500 text-white"
+            }`}
+          >
+            {isComparing && (
+              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  className="opacity-25"
+                />
+                <path
+                  d="M4 12a8 8 0 018-8"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                />
+              </svg>
+            )}
+            {isComparing ? "Rakipler Taranıyor..." : "Rakipleri Tara"}
+          </button>
+          <button
+            onClick={() => {
+              setAddCompetitorError(null);
+              setShowAddCompetitor(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-dark-700 text-gray-300 hover:text-white hover:border-hive-500/40 text-sm font-medium transition"
+            title="Bildiğiniz bir rakibin linkini elle ekleyin"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Rakip Ekle
+          </button>
+          {compareStatus && (
+            <span className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md">
+              {compareStatus}
+            </span>
+          )}
+          {compareError && (
+            <span className="text-xs text-red-300 bg-red-500/10 border border-red-500/25 px-2 py-1 rounded-md">
+              {compareError}
+            </span>
+          )}
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-500/30 text-red-300 hover:text-red-200 hover:bg-red-500/10 text-sm font-medium transition sm:ml-auto"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            </svg>
+            Ürünü Sil
+          </button>
         </div>
       </div>
 

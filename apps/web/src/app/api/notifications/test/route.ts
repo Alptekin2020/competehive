@@ -20,7 +20,7 @@ export async function POST() {
         channel: "EMAIL",
         title: "📉 Fiyat düştü: Test Ürün",
         message:
-          "Test Ürün fiyatı 1.299,00 ₺'den 1.199,00 ₺'ye düştü (-100,00 ₺, %7.7). Marketplace: Trendyol.",
+          "Test Ürün fiyatı 1.299,00 ₺'den 1.199,00 ₺'ye düştü (-100,00 ₺, %7.7). Pazaryeri: Trendyol.",
         metadata: {
           productName: "Test Ürün",
           currentPrice: 1199,

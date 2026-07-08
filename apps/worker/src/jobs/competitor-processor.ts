@@ -17,6 +17,7 @@ import {
   withinPriceBand,
 } from "../utils/competitor-quality";
 import { urlMatchKey } from "../utils/url-match";
+import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { buildSearchQueries } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
 
@@ -207,7 +208,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let priceRecoveredCount = 0;
     let priceUnrecoverableCount = 0;
 
-    const sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
+    // Kendi ilanımız Serper sonuçlarında görülürse fiyat buradan kurtarılabilir
+    // (aşağıda) — bu yüzden mutable.
+    let sourcePrice = product.currentPrice ? Number(product.currentPrice) : null;
     const seenUrls = new Set<string>();
     // Kendi ürün URL'siyle normalize karşılaştırma. product.productUrl her zaman
     // dolu; onboard yolu url="" geçse bile kendi ürünü kendi rakibi yapmayalım.
@@ -224,7 +227,37 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     const processResults = async (batch: SerperShoppingResult[]) => {
       for (const result of batch) {
-        if (ownUrlKey && urlMatchKey(result.link) === ownUrlKey) continue;
+        if (ownUrlKey && urlMatchKey(result.link) === ownUrlKey) {
+          // KENDİ İLANIMIZ — rakip olarak yazılmaz. Ürünün kendi fiyatı hâlâ
+          // yoksa buradan KURTARILIR: Trendyol, Railway IP'lerini 403'lediği
+          // için scraper fiyatı hiç alamayabiliyor (Philips Airfryer prod
+          // vakası: 14 rakip bulundu ama "Kendi fiyatınız alınamadı" kaldı).
+          // Serper zaten aynı ilanı fiyatıyla döndürüyor — ek maliyet yok.
+          // Mevcut fiyatın ÜZERİNE yazılmaz (scraper daha güvenilir kaynak);
+          // fiyat geçmişi satırını tarama sonundaki mevcut blok yazar.
+          if (!sourcePrice || sourcePrice <= 0) {
+            const ownListedPrice = parsePrice(result.price);
+            if (
+              ownListedPrice !== null &&
+              ownListedPrice > 0 &&
+              isPlausiblePriceChange(sourcePrice, ownListedPrice)
+            ) {
+              try {
+                await prisma.trackedProduct.update({
+                  where: { id: productId },
+                  data: { currentPrice: ownListedPrice, lastScrapedAt: now },
+                });
+                sourcePrice = ownListedPrice;
+                console.log(
+                  `💰 Kendi fiyat Serper'dan kurtarıldı: ${ownListedPrice.toFixed(2)} ₺ (${productId})`,
+                );
+              } catch (err) {
+                console.error(`Kendi fiyat kurtarma hatası (${productId}):`, err);
+              }
+            }
+          }
+          continue;
+        }
 
         const isKnown = knownUrls.has(result.link);
 

@@ -416,29 +416,29 @@ function generateNotificationTitle(ruleType: string, data: AlertData): string {
 
 function generateNotificationMessage(ruleType: string, data: AlertData): string {
   if (ruleType === "OUT_OF_STOCK") {
-    return `${data.productName} stoktan çıktı. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
+    return `${data.productName} stoktan çıktı. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (ruleType === "BACK_IN_STOCK") {
-    return `${data.productName} tekrar stokta. Güncel fiyat: ${money(data.currentPrice)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
+    return `${data.productName} tekrar stokta. Güncel fiyat: ${money(data.currentPrice)} ₺. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (ruleType === "COMPETITOR_CHEAPER") {
     const compName = data.cheapestCompetitorName?.trim() || "Bir rakip";
     const count = data.cheaperCompetitorCount ?? 0;
     const countText = count > 1 ? `${count} rakip senden ucuz. ` : "";
-    return `${data.productName}: ${countText}En ucuz rakip ${compName} ${money(data.competitorPrice ?? null)} ₺. Senin fiyatın: ${money(data.currentPrice)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
+    return `${data.productName}: ${countText}En ucuz rakip ${compName} ${money(data.competitorPrice ?? null)} ₺. Senin fiyatın: ${money(data.currentPrice)} ₺. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (ruleType === "LOW_MARGIN") {
     const profit = data.cost != null ? data.currentPrice - data.cost : null;
     const marginStr = data.marginPct != null ? pct(data.marginPct) : "—";
-    return `${data.productName} kâr marjı %${marginStr} seviyesine indi. Satış: ${money(data.currentPrice)} ₺, maliyet: ${money(data.cost ?? null)} ₺, birim kâr: ${money(profit)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
+    return `${data.productName} kâr marjı %${marginStr} seviyesine indi. Satış: ${money(data.currentPrice)} ₺, maliyet: ${money(data.cost ?? null)} ₺, birim kâr: ${money(profit)} ₺. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (data.previousPrice === null || data.priceChange === null) {
-    return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
+    return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
 
   const direction = data.priceChange < 0 ? "düştü" : "arttı";
   const sign = data.priceChange < 0 ? "-" : "+";
-  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} (${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)}). Marketplace: ${marketplaceLabel(data.marketplace)}.`;
+  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} (${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)}). Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
 }
 
 // ============================================
@@ -749,7 +749,7 @@ async function sendEmailAlert(
                 ${marginRowsHtml}
                 ${competitorRowsHtml}
                 <tr>
-                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Marketplace</td>
+                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Pazaryeri</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
                     ${marketplaceLabel(data.marketplace)}
                   </td>
