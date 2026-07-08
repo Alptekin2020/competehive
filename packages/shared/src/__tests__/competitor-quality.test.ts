@@ -9,6 +9,8 @@ import {
   sharesStrongProductCode,
   COMPETITOR_STALE_HOURS,
   hasConflictingSpecs,
+  hasConflictingCountDescriptors,
+  compareProductCodes,
 } from "../competitor-quality";
 
 describe("extractProductCodes", () => {
@@ -17,13 +19,27 @@ describe("extractProductCodes", () => {
       "LENOVO LOQ i5-13450HX 16GB 512GB SSD RTX 5050 FreeDOS 83SC000QTR",
     );
     expect(codes[0]).toBe("83SC000QTR"); // MPN, norm len 10 — en spesifik
-    expect(codes).toContain("i5-13450HX");
   });
 
   it("extracts a barcode", () => {
     expect(extractProductCodes("Evde Aesthetic Serum 2ml X 10 Ampul 8681677004991")).toContain(
       "8681677004991",
     );
+  });
+
+  it("extracts 5-char appliance model codes (Arzum OK004 prod vakası)", () => {
+    expect(
+      extractProductCodes("Arzum OK004 Okka Minio Türk Kahvesi Makinesi 4 Fincan Kapasiteli"),
+    ).toContain("OK004");
+    expect(extractProductCodes("Philips Airfryer XXL HD9650/90 Fritöz")).toContain("HD9650");
+  });
+
+  it("does NOT treat shared hardware/spec codes as product identity", () => {
+    const codes = extractProductCodes(
+      'LENOVO LOQE i5-13450HX 16GB 512GB SSD 15.6" FHD 144Hz RTX5050 8GB GDDR7 FreeDOS',
+    );
+    // i5-13450HX, RTX5050, 144Hz, GDDR7: iki FARKLI laptopta da geçer — kimlik değil.
+    expect(codes).toEqual([]);
   });
 
   it("ignores short spec-like tokens", () => {
@@ -267,5 +283,101 @@ describe("hasConflictingSpecs (varyant guard'ı)", () => {
   it("flags volume variants (50ml vs 100ml, L→ml normalization)", () => {
     expect(hasConflictingSpecs("Parfüm 50ml", "Parfüm 100 ml")).toBe(true);
     expect(hasConflictingSpecs("Süt 1L", "Süt 1000 ml")).toBe(false);
+  });
+});
+
+describe("hasConflictingCountDescriptors (birimsiz adet tanımlayıcıları)", () => {
+  const ARZUM_SOURCE =
+    "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli,";
+
+  it("does not flag one-sided count info (4 Fincan vs hiç yazmamış) — Kural 14", () => {
+    expect(
+      hasConflictingCountDescriptors(ARZUM_SOURCE, "Arzum OK004 Okka Minio Türk Kahvesi Makinesi"),
+    ).toBe(false);
+  });
+
+  it("flags real count conflicts (4 fincan vs 6 fincan)", () => {
+    expect(
+      hasConflictingCountDescriptors(ARZUM_SOURCE, "Arzum Kahve Makinesi 6 Fincan Kapasiteli"),
+    ).toBe(true);
+  });
+
+  it("is accent/case-insensitive and normalizes suffix variants (6 parça = 6 parçalı)", () => {
+    expect(hasConflictingCountDescriptors("Tencere Seti 6 Parça", "Tencere Seti 6 PARÇALI")).toBe(
+      false,
+    );
+    expect(
+      hasConflictingCountDescriptors("Yemek Takımı 6 Kişilik", "Yemek Takımı 12 kisilik"),
+    ).toBe(true);
+  });
+});
+
+describe("compareProductCodes (exact / renk varyantı / konfigürasyon varyantı)", () => {
+  const ARZUM_SOURCE =
+    "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli,";
+  const LENOVO_SOURCE =
+    'LENOVO LOQE i5-13450HX 16GB 512GB SSD 15.6" FHD 144Hz RTX 5050 8GB GDDR7 FreeDOS 83SC000QTR';
+
+  it("classifies identical short codes as exact (Arzum OK004 prod vakası)", () => {
+    expect(
+      compareProductCodes(ARZUM_SOURCE, "Arzum Ok004 Okka Minio Türk Kahve Makinesi Bakır"),
+    ).toBe("exact");
+  });
+
+  it("classifies 1-2 letter code suffixes as color variants (OK004 vs OK004-K)", () => {
+    expect(
+      compareProductCodes(ARZUM_SOURCE, "Arzum OK004-K Okka Minio Türk Kahvesi Makinesi Krom"),
+    ).toBe("color-variant");
+  });
+
+  it("returns none when the candidate has no code", () => {
+    expect(compareProductCodes(ARZUM_SOURCE, "ARZUM OKKA Minio Türk Kahvesi Makinesi")).toBe(
+      "none",
+    );
+  });
+
+  it("flags zero-padded adjacent sub-SKU groups as config variants ('83SC000QTR 001')", () => {
+    expect(
+      compareProductCodes(
+        LENOVO_SOURCE,
+        "Lenovo Loqe 20GB RAM 512GB SSD FreeDOS Gaming Laptop 83sc000qtr 001",
+      ),
+    ).toBe("config-variant");
+  });
+
+  it("flags dash-joined numeric suffixes as config variants (83SC000QTR-015, prod vakası)", () => {
+    expect(
+      compareProductCodes(
+        LENOVO_SOURCE,
+        "Lenovo LOQE i5-13450HX 16GB 512GB 83SC000QTR-015 Windows 11 Pro Gaming Laptop",
+      ),
+    ).toBe("config-variant");
+  });
+
+  it("does NOT mistake screen sizes after the code for sub-SKU suffixes (15.6)", () => {
+    expect(
+      compareProductCodes(
+        LENOVO_SOURCE,
+        'Lenovo LOQ Intel Core i5 13450HX 16GB 512GB SSD 83SC000QTR 15.6" FHD Freedos',
+      ),
+    ).toBe("exact");
+  });
+
+  it("classifies same bare long MPN as exact", () => {
+    expect(
+      compareProductCodes(
+        LENOVO_SOURCE,
+        "Lenovo LOQ 15IRX11 Intel Core i5 13450HX 16GB 512GB SSD RTX5050 FHD Freedos 83SC000QTR",
+      ),
+    ).toBe("exact");
+  });
+
+  it("returns none for different laptops sharing only hardware codes (CPU/GPU)", () => {
+    expect(
+      compareProductCodes(
+        "Lenovo LOQ i5-13450HX 16GB RTX 5050",
+        "Asus TUF i5-13450HX 16GB RTX 5050",
+      ),
+    ).toBe("none");
   });
 });

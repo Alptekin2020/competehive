@@ -187,6 +187,31 @@ export function isUsableCompetitor(
 // kısa spec kodları (i5-13450HX → 9 hane) bu eşiğin altında kalıp yanlış
 // eşleşme yapmaz. Böylece "katı ol ama akıllı ol" sağlanır.
 
+// FARKLI modellerin başlıklarında da geçen ORTAK donanım/spec kodları. Bunlar
+// ürün KİMLİĞİ değildir: iki farklı laptop da "i5-13450HX", "RTX5050", "144Hz",
+// "GDDR7" içerir. Kod tabanlı kimlik eşleştirmesinde kullanılamazlar; eleme
+// yalnızca deterministik kabul kapsamını daraltır, asla yanlış kabul üretmez.
+// Desenler NORMALİZE koda (tiresiz, BÜYÜK harf) uygulanır.
+const SHARED_HARDWARE_CODE_RES = [
+  /^I[3579]\d{3,5}[A-Z]{0,3}$/, // Intel Core: I513450HX, I71255U
+  /^(RTX|GTX|GT|MX|RX|ARC)\d{3,4}[A-Z]{0,3}$/, // GPU aileleri
+  /^R[3579]\d{3,4}[A-Z]{0,3}$/, // AMD Ryzen kısaltmaları (R55600H)
+  /^\d{3,5}(U|H|HS|HX|K|KF|KS|F|G|GE|T|X3D|XT|TI|SUPER)$/, // CPU/GPU eki: 5500U, 13450HX, 4060TI
+  /^(LP)?DDR\d[A-Z]?$/, // bellek standardı
+  /^GDDR\d[A-Z]?$/,
+  /^WIFI\d[A-Z]?$/,
+  /^USB\d+$/,
+  /^HDMI\d+$/,
+  /^(BT|NFC|IP)\d{1,2}[A-Z]?$/, // BT50, IP67
+  // Sayı+birim imzaları (144HZ, 5000MAH, 220V, 1080P): spec'tir, kimlik değildir.
+  /^\d+(HZ|FPS|RPM|MAH|MHZ|GHZ|NITS?|DPI|PPI|INC|INCH|CM|MM|GB|TB|MB|ML|LT|KG|GR|W|WATT|V|A|AH|BAR|PSI|TL|P|K)$/,
+  /^\d+X\d+(X\d+)?$/, // boyut kalıbı 20X15X10
+];
+
+function isSharedHardwareCode(norm: string): boolean {
+  return SHARED_HARDWARE_CODE_RES.some((re) => re.test(norm));
+}
+
 export function extractProductCodes(text: string): string[] {
   if (!text) return [];
   const found: Array<{ raw: string; norm: string }> = [];
@@ -194,11 +219,16 @@ export function extractProductCodes(text: string): string[] {
   for (const m of text.matchAll(/\b\d{8,14}\b/g)) {
     found.push({ raw: m[0], norm: m[0] });
   }
-  // MPN benzeri: harf+rakam karışık, normalize uzunluk >=6.
-  for (const m of text.matchAll(/\b[A-Za-z0-9][A-Za-z0-9-]{4,}[A-Za-z0-9]\b/g)) {
+  // MPN benzeri: harf+rakam karışık, normalize uzunluk >=5. Küçük ev aleti
+  // kodları 5 karakter olabilir (Arzum "OK004") — eski >=6 eşiği bu ürünlerde
+  // deterministik eşleşmeyi tamamen devre dışı bırakıp kararı AI'ın inisiyatifine
+  // bırakıyordu (prod: birebir aynı OK004 makineleri "kapasite belirtilmemiş"
+  // bahanesiyle 81 kez reddedildi). Salt donanım/spec kodları kimlik sayılmaz.
+  for (const m of text.matchAll(/\b[A-Za-z0-9][A-Za-z0-9-]{3,}[A-Za-z0-9]\b/g)) {
     const norm = m[0].replace(/-/g, "").toUpperCase();
-    if (norm.length < 6) continue;
+    if (norm.length < 5) continue;
     if (!/[A-Z]/.test(norm) || !/\d/.test(norm)) continue; // harf VE rakam içermeli
+    if (isSharedHardwareCode(norm)) continue;
     found.push({ raw: m[0], norm });
   }
   const seen = new Set<string>();
@@ -320,4 +350,160 @@ export function hasConflictingSpecs(a: string, b: string): boolean {
     if (!sameNumberSet(valuesA, valuesB)) return true;
   }
   return false;
+}
+
+// ============================================
+// Birimsiz ADET tanımlayıcıları ("4 Fincan", "6 Kişilik", "3 Katlı")
+// ============================================
+//
+// SPEC_TOKEN_RE yalnız birimli değerleri (GB/ml/g/W) görür; "4 fincan" gibi
+// birimsiz kapasite sözcükleri onun radarına girmez. Bu tanımlayıcılar da spec
+// eksenleriyle aynı kurala tabidir: İKİ başlıkta da geçen sözcük farklı sayılar
+// taşıyorsa varyanttır; tek taraflı bilgi ("4 Fincan" vs hiç yazmamış) fark
+// DEĞİLDİR (matcher prompt'u Kural 14 ile aynı politika).
+
+const COUNT_DESCRIPTOR_RE =
+  /(\d+)\s*(fincan|kisilik|katli|parcali|parca|dilim|goz|cekmece|raf|hazneli|hazne|tepsili|tepsi)\b/g;
+
+// Ek türevlerini tek eksene indir: "6 parça" ile "6 parçalı" aynı bilgidir.
+const COUNT_AXIS_ALIASES: Record<string, string> = {
+  parcali: "parca",
+  hazneli: "hazne",
+  tepsili: "tepsi",
+};
+
+function foldForCounts(s: string): string {
+  return s
+    .replace(/[İIı]/g, "i")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[öÖ]/g, "o")
+    .toLowerCase();
+}
+
+function countAxes(text: string): Map<string, Set<number>> {
+  const axes = new Map<string, Set<number>>();
+  if (!text) return axes;
+  for (const m of foldForCounts(text).matchAll(COUNT_DESCRIPTOR_RE)) {
+    const value = parseInt(m[1], 10);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    const axis = COUNT_AXIS_ALIASES[m[2]] ?? m[2];
+    const set = axes.get(axis) ?? new Set<number>();
+    set.add(value);
+    axes.set(axis, set);
+  }
+  return axes;
+}
+
+/**
+ * İki başlığın HER İKİSİNDE de geçen bir adet tanımlayıcısı (fincan, kişilik,
+ * katlı, parça...) farklı sayılar taşıyorsa true: "4 Fincan" ≠ "6 Fincan".
+ * Tek taraflı bilgi çelişki sayılmaz.
+ */
+export function hasConflictingCountDescriptors(a: string, b: string): boolean {
+  const axesA = countAxes(a);
+  if (axesA.size === 0) return false;
+  const axesB = countAxes(b);
+  for (const [axis, valuesA] of axesA) {
+    const valuesB = axesB.get(axis);
+    if (!valuesB) continue;
+    if (!sameNumberSet(valuesA, valuesB)) return true;
+  }
+  return false;
+}
+
+// ============================================
+// Kod ilişkisi sınıflandırması (exact / renk varyantı / konfigürasyon varyantı)
+// ============================================
+//
+// İki gerçek prod vakası bunu gerektirdi:
+// 1. Arzum OK004 (5 karakter): kod deterministik olarak hiç çıkarılmıyordu,
+//    karar AI'a kalıyordu ve AI birebir aynı makineleri "kapasite belirtilmemiş"
+//    diyerek reddediyordu → kullanıcı "0 rakip" gördü.
+// 2. Lenovo 83SC000QTR vs "83SC000QTR 015" / "83SC000QTR-001": alt-SKU eki
+//    (zero-padded 001/006/015) spec imzasına yansımayınca (örn. FreeDOS vs
+//    Windows 11 Pro) varyant, %95 "aynı ürün kodu" kabulünden geçiyordu.
+//
+// Politika: kod EKİ rakam içeriyorsa (015, 001) konfigürasyon varyantıdır →
+// asla otomatik kabul edilmez. Ek 1-2 HARF ise renk varyantıdır (OK004-K,
+// OK004-B) → fiyat takibi amacıyla AYNI ÜRÜNDÜR (matcher prompt Kural 15).
+
+export type ProductCodeRelation = "exact" | "color-variant" | "config-variant" | "none";
+
+// Kodun hemen ardından gelen ayrık, SIFIR ÖNCÜLÜ kısa rakam grubu alt-SKU
+// ekidir: "83SC000QTR 015", "83sc000qtr-001". Sıfır öncülü şartı "83SC000QTR
+// 15.6 inç" gibi ekran boyutlarının yanlışlıkla ek sayılmasını önler.
+function configSuffixesFor(rawText: string, rawCode: string): Set<string> {
+  const out = new Set<string>();
+  if (!rawText || !rawCode) return out;
+  const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`${escaped}[\\s\\-–—/]+(0\\d{1,3})(?![\\d.,])`, "gi");
+  for (const m of rawText.matchAll(re)) out.add(m[1]);
+  return out;
+}
+
+function sameStringSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
+function identityCodeMap(text: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const raw of extractProductCodes(text)) {
+    const norm = raw.replace(/-/g, "").toUpperCase();
+    if (!map.has(norm)) map.set(norm, raw);
+  }
+  return map;
+}
+
+/**
+ * İki başlığın paylaştığı ürün kodlarının ilişkisini sınıflandırır.
+ *
+ * - "config-variant": aynı temel kod ama rakamlı ek farkı (83SC000QTR vs
+ *   83SC000QTR-015 veya "…QTR 001") → FARKLI SKU; asla otomatik kabul edilmez.
+ *   Güvenlik önceliklidir: başka bir kod birebir eşleşse bile varyant sinyali
+ *   kazanır (yanlış %95, kaçan bir rakipten daha pahalıdır).
+ * - "exact": en az bir kod birebir aynı ve alt-SKU eki farkı yok.
+ * - "color-variant": kodlardan biri diğerinin 1-2 HARFLİK ekli hali (OK004 vs
+ *   OK004-K) → renk varyantı, fiyat takibi için aynı ürün.
+ * - "none": paylaşılan kod yok.
+ */
+export function compareProductCodes(aText: string, bText: string): ProductCodeRelation {
+  const aCodes = identityCodeMap(aText);
+  if (aCodes.size === 0) return "none";
+  const bCodes = identityCodeMap(bText);
+  if (bCodes.size === 0) return "none";
+
+  let exact = false;
+  let colorVariant = false;
+
+  // 1) Birebir aynı kod + bitişik alt-SKU eki karşılaştırması.
+  for (const [norm, rawA] of aCodes) {
+    const rawB = bCodes.get(norm);
+    if (!rawB) continue;
+    if (!sameStringSet(configSuffixesFor(aText, rawA), configSuffixesFor(bText, rawB))) {
+      return "config-variant";
+    }
+    exact = true;
+  }
+
+  // 2) Önek-uzantı analizi (tire-bitişik yazım): OK004→OK004K renk eki;
+  //    83SC000QTR→83SC000QTR015 rakamlı konfigürasyon eki.
+  for (const [na] of aCodes) {
+    for (const [nb] of bCodes) {
+      if (na === nb) continue;
+      const [shortN, longN] = na.length <= nb.length ? [na, nb] : [nb, na];
+      if (!longN.startsWith(shortN)) continue;
+      const ext = longN.slice(shortN.length);
+      if (/\d/.test(ext)) return "config-variant";
+      if (ext.length <= 2) colorVariant = true;
+    }
+  }
+
+  if (exact) return "exact";
+  if (colorVariant) return "color-variant";
+  return "none";
 }

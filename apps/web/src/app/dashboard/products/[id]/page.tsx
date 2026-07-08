@@ -1568,7 +1568,7 @@ export default function ProductDetailPage() {
                   return (
                     <div
                       key={competitor.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg bg-[#0A0A0B] border transition-colors ${
+                      className={`flex items-start gap-3 p-3 rounded-lg bg-[#0A0A0B] border transition-colors ${
                         isCheapest
                           ? "border-emerald-500/40"
                           : isCheaperThanMe
@@ -1578,44 +1578,55 @@ export default function ProductDetailPage() {
                               : "border-[#1F1F23] hover:border-[#2F2F33]"
                       }`}
                     >
-                      <span className="text-gray-500 text-xs w-5 text-center">{index + 1}</span>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {(() => {
-                          // Legacy kayıtlarda marketplace=CUSTOM kalmış olabilir;
-                          // rozet "Diğer" yerine URL'den gerçek pazaryerini türetir
-                          // (Trendyol/Hepsiburada rengiyle). Tanınmayan domain'de
-                          // domain'in kendisi "Diğer"den daha bilgilendiricidir.
-                          if (competitor.marketplace !== "CUSTOM") {
-                            return <MarketplaceBadge marketplace={competitor.marketplace} />;
-                          }
-                          const host = hostnameOf(competitor.competitorUrl);
-                          const info = host ? getRetailerInfoFromDomain(host) : null;
-                          return (
-                            <MarketplaceBadge
-                              marketplace="CUSTOM"
-                              overrideName={info?.retailerName || "Diğer"}
-                              overrideColor={info?.retailerColor}
-                            />
-                          );
-                        })()}
-                        <MatchScoreBadge score={competitor.matchScore} />
-                        {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
-                          "out-of-band",
-                        ) && (
-                          <span
-                            className="text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 px-1.5 py-0.5 rounded"
-                            title="Fiyatı sizin fiyatınızın 0.3x–3x bandının dışında — büyük olasılıkla farklı ürün; hesaplara dahil edilmez"
-                          >
-                            Bant dışı
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-gray-500 text-xs w-5 text-center mt-0.5">
+                        {index + 1}
+                      </span>
                       <div className="flex-1 min-w-0">
+                        {/* Rozetler başlığın ÜSTÜNDE ayrı satırda durur: eski
+                            düzende rozet grubu + fiyat bloğu (ikisi de
+                            flex-shrink-0) dar panelde satırın tamamını kaplayıp
+                            flex-1 başlığı sıfır genişliğe eziyor, rakip adı
+                            hiç görünmüyordu. */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {(() => {
+                            // Legacy kayıtlarda marketplace=CUSTOM kalmış olabilir;
+                            // rozet "Diğer" yerine URL'den gerçek pazaryerini türetir
+                            // (Trendyol/Hepsiburada rengiyle). Tanınmayan domain'de
+                            // domain'in kendisi "Diğer"den daha bilgilendiricidir.
+                            if (competitor.marketplace !== "CUSTOM") {
+                              return <MarketplaceBadge marketplace={competitor.marketplace} />;
+                            }
+                            const host = hostnameOf(competitor.competitorUrl);
+                            const info = host ? getRetailerInfoFromDomain(host) : null;
+                            return (
+                              <MarketplaceBadge
+                                marketplace="CUSTOM"
+                                overrideName={info?.retailerName || "Diğer"}
+                                overrideColor={info?.retailerColor}
+                              />
+                            );
+                          })()}
+                          <MatchScoreBadge score={competitor.matchScore} />
+                          {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
+                            "out-of-band",
+                          ) && (
+                            <span
+                              className="text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 px-1.5 py-0.5 rounded"
+                              title="Fiyatı sizin fiyatınızın 0.3x–3x bandının dışında — büyük olasılıkla farklı ürün; hesaplara dahil edilmez"
+                            >
+                              Bant dışı
+                            </span>
+                          )}
+                        </div>
                         <a
                           href={competitor.competitorUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-sm text-gray-300 hover:text-white truncate transition-colors block"
+                          className="text-sm text-gray-300 hover:text-white transition-colors block mt-1 line-clamp-2 break-words"
+                          title={
+                            competitor.competitorName?.trim() ||
+                            hostnameOf(competitor.competitorUrl)
+                          }
                         >
                           {competitor.competitorName?.trim() ||
                             hostnameOf(competitor.competitorUrl)}

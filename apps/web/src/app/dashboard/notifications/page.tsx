@@ -97,7 +97,10 @@ function channelLabel(channel: string): string {
 
 // Legacy kayıtlardaki ham İngilizce sağlayıcı hatalarını Türkçe, aksiyon
 // alınabilir metne çevirir (yeni kayıtlar worker tarafında zaten Türkçe yazar).
-export function humanizeDeliveryError(error: string | null): string | null {
+// NOT: export EDİLMEZ — Next.js, page dosyalarından yalnızca bilinen sembollerin
+// (default, metadata...) export edilmesine izin verir; fazladan export
+// `next build` sonrası tip kontrolünü (.next/types) kırıyordu.
+function humanizeDeliveryError(error: string | null): string | null {
   if (!error) return error;
   if (/domain is not verified/i.test(error)) {
     return "E-posta gönderici alan adı doğrulanmamış — e-postalar şu an iletilemiyor. Yönetici: Resend'de alan adını doğrulayın.";

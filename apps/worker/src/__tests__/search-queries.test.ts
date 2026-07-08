@@ -130,6 +130,18 @@ describe("buildSearchQueries", () => {
     });
     expect(queries).toHaveLength(1);
   });
+
+  it("targets short appliance model codes with a brand+code query (Arzum OK004)", () => {
+    // Prod vakası: 5 karakterlik OK004 kodu eski >=6 eşiğiyle hiç çıkarılmıyor,
+    // kod hedefli sorgu üretilmiyordu. Kod sorgusu birebir aynı ürünü bulmanın
+    // en güvenilir yoludur.
+    const queries = buildSearchQueries(
+      "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli,",
+      "",
+      {},
+    );
+    expect(queries.some((q) => q.includes("OK004"))).toBe(true);
+  });
 });
 
 describe("isGenericQuery — placeholder türevleri (prod vakası)", () => {

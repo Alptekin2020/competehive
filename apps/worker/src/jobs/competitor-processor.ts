@@ -7,6 +7,8 @@ import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import {
+  compareProductCodes,
+  hasConflictingCountDescriptors,
   hasConflictingSpecs,
   isPackagingListing,
   sharesStrongProductCode,
@@ -264,13 +266,16 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
         // Bilinen rakiplerde AI yeniden çalışmaz ama VARYANT GUARD'I deterministik
         // ve ücretsizdir: geçmişte "kod eşleşti → %95" ile kabul edilmiş farklı
-        // konfigürasyon varyantları (20GB/24GB RAM, 1TB SSD) burada 55'e indirilir
-        // ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
+        // konfigürasyon varyantları (20GB/24GB RAM, 1TB SSD, "83SC000QTR 015"
+        // gibi rakamlı alt-SKU ekleri, "4 fincan vs 6 fincan") burada 55'e
+        // indirilir ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
         if (
           isKnown &&
           !matchResult &&
-          sharesStrongProductCode(title, result.title) &&
-          hasConflictingSpecs(title, result.title)
+          ((sharesStrongProductCode(title, result.title) &&
+            (hasConflictingSpecs(title, result.title) ||
+              hasConflictingCountDescriptors(title, result.title))) ||
+            compareProductCodes(title, result.title) === "config-variant")
         ) {
           matchResult = {
             isMatch: true,

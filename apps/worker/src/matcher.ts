@@ -2,9 +2,12 @@ import OpenAI from "openai";
 import { logger } from "./utils/logger";
 import {
   MIN_MATCH_SCORE,
+  compareProductCodes,
+  hasConflictingCountDescriptors,
   hasConflictingSpecs,
   isPackagingListing,
   sharesStrongProductCode,
+  withinPriceBand,
 } from "./utils/competitor-quality";
 
 let openai: OpenAI | null = null;
@@ -18,6 +21,13 @@ function getOpenAIClient(): OpenAI | null {
   }
   return openai;
 }
+
+// AI'ın Kural 14'ü ihlal eden tipik red kalıpları: aday başlıkta hiç yazmayan
+// bir özelliği "farklı/eksik" sayması. reason Türkçe üretilir; hem aksanlı hem
+// ascii yazımlar kapsanır. Kural 14 backstop'u yalnızca deterministik spec/adet
+// kontrolü de temizse devreye girer — gerçek çelişkiler asla geri çevrilmez.
+const MISSING_INFO_REJECTION_RE =
+  /belirtilmemi|belirtilmedi|eksik bilgi|bilgi yok|bilgi verilmemi|yazmıyor|yazmiyor|not specified|unspecified|kapasite fark|hacim fark|boyut fark|miktar fark|renk fark/i;
 
 // ============================================
 // Types
@@ -120,16 +130,37 @@ export async function verifyProductMatch(
     };
   }
 
-  // Deterministik KABUL: iki başlık uzun bir MPN/barkod (>=10) paylaşıyorsa
-  // kesinlikle aynı üründür — AI'a sormaya gerek yok (maliyet + AI'nın aşırı
-  // katı reddini de aşar). Kısa spec kodları (CPU/RAM) bu eşiğin altında.
+  // Deterministik KOD ANALİZİ — AI'dan önce ve AI'dan bağımsız çalışır.
   //
-  // VARYANT GUARD'I: Aynı temel kodu paylaşan konfigürasyon varyantları
-  // (83SC000QTR 16GB/512GB vs "…QTR 001" 20GB/512GB vs "…QTR 006" 16GB/1TB)
-  // farklı SKU'lardır. Spec imzaları çelişiyorsa otomatik %95 verilmez;
-  // kayıt şüpheli bandda (<70) kalır ve karar hesaplarına girmez.
-  if (sharesStrongProductCode(sourceProduct.title, candidate.title)) {
-    if (hasConflictingSpecs(sourceProduct.title, candidate.title)) {
+  // 1) KONFİGÜRASYON VARYANTI: aynı temel kod ama rakamlı alt-SKU eki
+  //    (83SC000QTR vs "83SC000QTR 015" / "-001"). Spec imzası çelişmese bile
+  //    (FreeDOS vs Windows 11 Pro) FARKLI SKU'dur; %95 kabulünden ÖNCE
+  //    yakalanır ve kayıt şüpheli bandda (<70) kalır.
+  // 2) EXACT / RENK VARYANTI: spec ve adet imzaları çelişmiyorsa deterministik
+  //    kabul — uzun kod (>=10, MPN/barkod) %95; kısa model kodu (OK004,
+  //    HD9650) marka teyidi + fiyat bandı sağlamasıyla %90. Bu yol, AI'ın
+  //    "kapasite belirtilmemiş" tarzı kural-14-ihlali redlerini (prod: Arzum
+  //    OK004 — birebir aynı makineler 81 kez reddedildi) devre dışı bırakır.
+  const codeRelation = compareProductCodes(sourceProduct.title, candidate.title);
+  if (codeRelation === "config-variant") {
+    return {
+      isMatch: false,
+      score: 55,
+      reason: "Aynı model ailesi ama farklı konfigürasyon varyantı (alt-SKU eki)",
+      attributes: {
+        brandMatch: true,
+        modelMatch: true,
+        specMatch: false,
+        categoryMatch: true,
+        details: "Ortak temel kod, rakamlı alt-SKU eki farklı (örn. 015/001/006)",
+      },
+    };
+  }
+  if (codeRelation === "exact" || codeRelation === "color-variant") {
+    if (
+      hasConflictingSpecs(sourceProduct.title, candidate.title) ||
+      hasConflictingCountDescriptors(sourceProduct.title, candidate.title)
+    ) {
       return {
         isMatch: false,
         score: 55,
@@ -139,22 +170,52 @@ export async function verifyProductMatch(
           modelMatch: true,
           specMatch: false,
           categoryMatch: true,
-          details: "Ortak ürün kodu, çelişen spec imzası (RAM/depolama/hacim)",
+          details: "Ortak ürün kodu, çelişen spec imzası (RAM/depolama/hacim/adet)",
         },
       };
     }
-    return {
-      isMatch: true,
-      score: 95,
-      reason: "Aynı ürün kodu (MPN/barkod) eşleşmesi",
-      attributes: {
-        brandMatch: true,
-        modelMatch: true,
-        specMatch: true,
-        categoryMatch: true,
-        details: "Ortak benzersiz ürün kodu",
-      },
-    };
+    if (sharesStrongProductCode(sourceProduct.title, candidate.title)) {
+      return {
+        isMatch: true,
+        score: 95,
+        reason: "Aynı ürün kodu (MPN/barkod) eşleşmesi",
+        attributes: {
+          brandMatch: true,
+          modelMatch: true,
+          specMatch: true,
+          categoryMatch: true,
+          details: "Ortak benzersiz ürün kodu",
+        },
+      };
+    }
+    // Kısa model kodu (5-9 karakter) barkod kadar benzersiz değildir; marka
+    // teyidi + fiyat bandı sağlamasıyla kabul edilir, sağlanmazsa karar AI'a kalır.
+    const srcTokens = fallbackTokens(sourceProduct.title);
+    const brandShared =
+      srcTokens.length > 0 && new Set(fallbackTokens(candidate.title)).has(srcTokens[0]);
+    const priceOk =
+      typeof sourceProduct.price !== "number" ||
+      sourceProduct.price <= 0 ||
+      typeof candidate.price !== "number" ||
+      candidate.price <= 0 ||
+      withinPriceBand(sourceProduct.price, candidate.price);
+    if (brandShared && priceOk) {
+      return {
+        isMatch: true,
+        score: 90,
+        reason:
+          codeRelation === "color-variant"
+            ? "Aynı model kodu — renk varyantı (fiyat takibi için aynı ürün)"
+            : "Aynı model kodu eşleşmesi (marka + kod)",
+        attributes: {
+          brandMatch: true,
+          modelMatch: true,
+          specMatch: true,
+          categoryMatch: true,
+          details: "Ortak model kodu + marka teyidi; spec/adet çelişkisi yok",
+        },
+      };
+    }
   }
 
   const client = getOpenAIClient();
@@ -189,7 +250,7 @@ KURALLAR:
 11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, terlik, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa (örn: "terlik" vs "kutu/ambalaj"; "telefon" vs "kılıf"; "kahve" vs "kahve makinesi"), categoryMatch=false ve score < 40 olmak ZORUNDA. Aynı marka olması yeterli değildir.
 12. FİYAT BÜYÜKLÜK SAĞDUYU: Kaynak fiyatı ${sourceProduct.price ?? "verilmedi"} ₺ ve aday fiyatı çok daha düşükse (örn: ¹/₁₀'undan az) yüksek olasılıkla farklı ürün/aksesuar/ambalajdır — score < 40 ver.
 13. AYNI ÜRÜN — FARKLI SATICI/İLAN: Aynı ürün farklı pazaryerlerinde farklı kelime sırası, fazladan pazarlama sözcükleri ("orijinal", "hediyeli", "ücretsiz kargo", "outlet", "faturalı") veya küçük başlık farklarıyla listelenir. Marka + model + boyut/hacim/miktar AYNIYSA bu farklar ÖNEMSİZDİR ve ürün AYNI ÜRÜNDÜR (score >= ${MIN_MATCH_SCORE}). Rakip fiyatı kıyaslamanın amacı aynı ürünü farklı satıcıda bulmaktır; salt pazarlama veya söz dizimi farkı yüzünden eşleşmeyi reddetme. (Boyut/hacim/miktar farkı bu kuralın İSTİSNASIDIR — Kural 1 geçerli.)
-14. EKSİK BİLGİ FARK DEĞİLDİR: Aday başlığında bir özellik (kapasite, fincan sayısı, hacim, renk vb.) HİÇ YAZMIYORSA bunu fark sayma ve "potansiyel/olası farklılık" gerekçesiyle skoru DÜŞÜRME. Yalnızca iki başlıkta AÇIKÇA yazan ve ÇELİŞEN değerler farklılıktır. Örn: kaynak "4 Fincan Kapasiteli" der, aday kapasite yazmaz → fark YOK; marka+model aynıysa AYNI ÜRÜNDÜR.
+14. EKSİK BİLGİ FARK DEĞİLDİR: Aday başlığında bir özellik (kapasite, fincan sayısı, hacim, renk vb.) HİÇ YAZMIYORSA bunu fark sayma ve "potansiyel/olası farklılık" gerekçesiyle skoru DÜŞÜRME. Yalnızca iki başlıkta AÇIKÇA yazan ve ÇELİŞEN değerler farklılıktır. Örn: kaynak "4 Fincan Kapasiteli" der, aday kapasite yazmaz → fark YOK; marka+model aynıysa AYNI ÜRÜNDÜR. "Adayda belirtilmemiş", "bilgi yok", "kapasite/hacim/boyut belirtilmemiş" ifadeleri ASLA red gerekçesi OLAMAZ — bu durumda o özellik için specMatch=true kabul et. Bu kuralı ihlal eden cevap HATALIDIR ve sistem tarafından geçersiz sayılır.
 15. RENK VARYANTI = AYNI ÜRÜN: Renk adı ("Bakır" vs "Krom") ve model kodundaki renk eki (OK004 vs OK004-K, OK004-O, "-B") aynı modelin renk varyantıdır ve fiyat takibi amacıyla AYNI ÜRÜNDÜR (Kural 1'deki renk istisnası). Boyut/hacim/kapasite çelişkisi yoksa renk yüzünden reddetme.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
@@ -252,6 +313,38 @@ SKOR REHBERİ:
         finalIsMatch = false;
         finalScore = Math.min(finalScore, 39);
       }
+    }
+
+    // KURAL 14 BACKSTOP'U (deterministik): AI, adayda HİÇ YAZMAYAN bir özelliği
+    // ("kapasite belirtilmemiş", "4 fincan vs belirtilmemiş") fark sayıp
+    // reddedebiliyor — prompt'taki Kural 14'e rağmen (prod: Arzum OK004,
+    // birebir aynı makineler 81 kez bu gerekçeyle reddedildi). Marka+model+
+    // kategori AI'a göre de aynıysa VE başlıklarda deterministik olarak
+    // doğrulanabilir hiçbir spec/adet çelişkisi yoksa red geri çevrilir:
+    // politika prompt'a değil koda emanet edilir.
+    const aiReason = String(parsed.reason || "");
+    if (
+      !finalIsMatch &&
+      finalScore >= 40 &&
+      parsed.brandMatch === true &&
+      parsed.modelMatch === true &&
+      parsed.categoryMatch === true &&
+      MISSING_INFO_REJECTION_RE.test(aiReason) &&
+      !hasConflictingSpecs(sourceProduct.title, candidate.title) &&
+      !hasConflictingCountDescriptors(sourceProduct.title, candidate.title)
+    ) {
+      logger.info(
+        {
+          source: sourceProduct.title.slice(0, 80),
+          candidate: candidate.title.slice(0, 80),
+          score: finalScore,
+          aiReason: aiReason.slice(0, 120),
+        },
+        "Kural 14 backstop: 'eksik bilgi' reddi geri çevrildi",
+      );
+      finalIsMatch = true;
+      finalScore = MIN_MATCH_SCORE;
+      parsed.reason = "Marka+model aynı; eksik bilgi fark sayılmaz (Kural 14 düzeltmesi)";
     }
 
     // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)

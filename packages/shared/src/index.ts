@@ -16,12 +16,15 @@ export {
   extractProductCodes,
   sharesStrongProductCode,
   hasConflictingSpecs,
+  hasConflictingCountDescriptors,
+  compareProductCodes,
 } from "./competitor-quality";
 export type {
   CompetitorIssue,
   CompetitorAssessment,
   CompetitorAssessmentInput,
   CompetitorAssessmentOptions,
+  ProductCodeRelation,
 } from "./competitor-quality";
 export {
   THIN_MARGIN_PCT,
