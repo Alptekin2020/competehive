@@ -275,6 +275,10 @@ export default function ProductDetailPage() {
   const [savingCost, setSavingCost] = useState(false);
   const [costError, setCostError] = useState<string | null>(null);
   const [costSaved, setCostSaved] = useState(false);
+  // Elle fiyat girişi (scraper kendi fiyatı hiç alamadığında görünür).
+  const [priceInput, setPriceInput] = useState("");
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
 
   const fetchProduct = useCallback(async () => {
     setLoading(true);
@@ -353,6 +357,44 @@ export default function ProductDetailPage() {
       setSavingCost(false);
     }
   }, [product, costInput, savingCost, fetchProduct]);
+
+  // Elle kendi fiyat kaydı: Trendyol scraper'ının IP engeli yüzünden fiyatı
+  // hiç alınamayan ürünlerde (Philips Airfryer vakası) kullanıcı fiyatını
+  // kendisi girer; pozisyon/öneri/alarm hesapları hemen çalışmaya başlar.
+  const handleSavePrice = useCallback(async () => {
+    if (!product || savingPrice) return;
+    setPriceError(null);
+
+    const trimmed = priceInput.trim();
+    const normalized = trimmed.includes(",")
+      ? trimmed.replace(/\./g, "").replace(",", ".")
+      : trimmed;
+    const parsed = Number(normalized);
+    if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
+      setPriceError("Geçerli bir fiyat girin (0'dan büyük).");
+      return;
+    }
+
+    setSavingPrice(true);
+    try {
+      const res = await fetch(`/api/products/${product.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ownPrice: parsed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setPriceError(data?.error || "Fiyat kaydedilemedi.");
+        return;
+      }
+      setPriceInput("");
+      await fetchProduct();
+    } catch {
+      setPriceError("Fiyat kaydedilemedi.");
+    } finally {
+      setSavingPrice(false);
+    }
+  }, [product, priceInput, savingPrice, fetchProduct]);
 
   // Stats — currentPrice null'sa priceHistory'deki en güncel öz-fiyatı kullan.
   // Erken return'lerden önce çağrılmalı; product yoksa null değer üretir.
@@ -844,7 +886,7 @@ export default function ProductDetailPage() {
             </div>
           </div>
           <div className="flex-shrink-0">
-            {ownPrice && ownPrice > 0 && (
+            {ownPrice && ownPrice > 0 ? (
               <div className="text-left sm:text-right">
                 <p className="text-xs text-gray-500 mb-0.5 sm:mb-1">
                   Benim Fiyatım
@@ -855,6 +897,33 @@ export default function ProductDetailPage() {
                 <p className="text-xl sm:text-2xl font-bold text-amber-400">
                   {formatPrice(ownPrice, product.currency)}
                 </p>
+              </div>
+            ) : (
+              // Scraper fiyatı hiç alamadıysa (pazaryeri IP engeli) kullanıcı
+              // fiyatını elle girip pozisyon/öneri hesaplarını başlatabilir.
+              <div className="text-left sm:text-right">
+                <p className="text-xs text-gray-500 mb-1">Benim Fiyatım — otomatik alınamadı</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={priceInput}
+                    onChange={(e) => setPriceInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSavePrice();
+                    }}
+                    placeholder="Örn: 8.599,00"
+                    className="w-32 bg-[#0A0A0B] border border-[#2B2B30] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-amber-500/50"
+                  />
+                  <button
+                    onClick={handleSavePrice}
+                    disabled={savingPrice}
+                    className="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-black text-sm font-medium transition"
+                  >
+                    {savingPrice ? "..." : "Kaydet"}
+                  </button>
+                </div>
+                {priceError && <p className="text-xs text-red-400 mt-1">{priceError}</p>}
               </div>
             )}
           </div>

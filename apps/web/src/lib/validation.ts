@@ -6,13 +6,26 @@ export const addProductSchema = z.object({
 
 // Ürün maliyetini (COGS) güncelle. null = maliyeti temizle. Üst sınır, hatalı
 // kuruş/lira girişini (ör. 12.500 yerine 1250000) erkenden eler.
-export const updateProductSchema = z.object({
-  cost: z
-    .number()
-    .min(0, "Maliyet 0 veya daha büyük olmalı")
-    .max(99999999, "Maliyet çok yüksek")
-    .nullable(),
-});
+export const updateProductSchema = z
+  .object({
+    cost: z
+      .number()
+      .min(0, "Maliyet 0 veya daha büyük olmalı")
+      .max(99999999, "Maliyet çok yüksek")
+      .nullable()
+      .optional(),
+    // Elle girilen kendi satış fiyatı: scraper (Trendyol IP engeli vb.) fiyatı
+    // hiç alamadığında kullanıcı kendi fiyatını girerek pozisyon/öneri
+    // hesaplarını çalıştırabilir.
+    ownPrice: z
+      .number()
+      .positive("Fiyat 0'dan büyük olmalı")
+      .max(99999999, "Fiyat çok yüksek")
+      .optional(),
+  })
+  .refine((d) => d.cost !== undefined || d.ownPrice !== undefined, {
+    message: "Güncellenecek alan yok",
+  });
 
 export const compareSchema = z.object({
   productId: z.string().uuid("Geçerli bir ürün ID gerekli"),

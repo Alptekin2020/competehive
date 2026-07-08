@@ -144,8 +144,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   }
 }
 
-// PATCH - Ürünün satıcı tarafından girilen alanlarını güncelle (şimdilik maliyet).
-// Maliyet kâr/marj hesaplarını ve LOW_MARGIN uyarısını besler; null = temizle.
+// PATCH - Ürünün satıcı tarafından girilen alanlarını güncelle: maliyet ve/veya
+// elle girilen kendi satış fiyatı. Maliyet kâr/marj hesaplarını ve LOW_MARGIN
+// uyarısını besler (null = temizle). ownPrice, scraper'ın fiyatı hiç alamadığı
+// ürünlerde (Trendyol'un Railway IP engeli — Philips Airfryer vakası) pozisyon
+// ve öneri hesaplarını çalıştırmak için kullanıcının girdiği fiyattır.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser();
@@ -157,15 +160,44 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const parsed = updateProductSchema.safeParse(body);
     if (!parsed.success) return badRequest(parsed.error.errors[0].message);
 
-    // Sahiplik kontrolü: updateMany ile kullanıcının kendi ürününe sınırla.
-    const result = await prisma.trackedProduct.updateMany({
+    // Sahiplik kontrolü + elle fiyat girişinin geçmiş satırı için para birimi.
+    const product = await prisma.trackedProduct.findFirst({
       where: { id, userId: user.id },
-      data: { cost: parsed.data.cost },
+      select: { id: true, currency: true, status: true },
+    });
+    if (!product) return notFound("Ürün bulunamadı");
+
+    const data: { cost?: number | null; currentPrice?: number; lastScrapedAt?: Date } = {};
+    if (parsed.data.cost !== undefined) data.cost = parsed.data.cost;
+    if (parsed.data.ownPrice !== undefined) {
+      data.currentPrice = parsed.data.ownPrice;
+      data.lastScrapedAt = new Date();
+    }
+
+    // Elle fiyatta PriceHistory satırı da yazılır: tazelik rozetleri
+    // (last_success_at) ve grafik de dolsun. Sonraki başarılı scrape değeri
+    // normal akışta günceller — elle giriş kalıcı bir kilit değildir.
+    await prisma.$transaction(async (tx) => {
+      await tx.trackedProduct.update({ where: { id: product.id }, data });
+      if (parsed.data.ownPrice !== undefined) {
+        await tx.priceHistory.create({
+          data: {
+            trackedProductId: product.id,
+            price: parsed.data.ownPrice,
+            currency: product.currency,
+            inStock: product.status !== "OUT_OF_STOCK",
+            sellerName: "Elle girildi",
+            scrapedAt: new Date(),
+          },
+        });
+      }
     });
 
-    if (result.count === 0) return notFound("Ürün bulunamadı");
-
-    return apiSuccess({ success: true, cost: parsed.data.cost });
+    return apiSuccess({
+      success: true,
+      cost: parsed.data.cost ?? null,
+      ownPrice: parsed.data.ownPrice ?? null,
+    });
   } catch (error) {
     return serverError(error, "Product update failed");
   }
