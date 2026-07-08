@@ -5,6 +5,7 @@ import {
   compareProductCodes,
   hasConflictingCountDescriptors,
   hasConflictingSpecs,
+  isAccessoryListing,
   isPackagingListing,
   sharesStrongProductCode,
   withinPriceBand,
@@ -156,7 +157,12 @@ export async function verifyProductMatch(
       },
     };
   }
-  if (codeRelation === "exact" || codeRelation === "color-variant") {
+  // AKSESUAR GUARD'I: ana ürünün kodunu taşıyan ilan ürünün kendisi olmayabilir
+  // ("OK004 ... MAKİNESİ İÇİN ORİJİNAL CEZVE GRUBU" — prod'da %90 alıp ₺1.450
+  // ile "en düşük rakip" oldu). Aksesuar görünümünde deterministik kabul
+  // ATLANIR; karar AI'a kalır ve Kural 2/11 aksesuarı reddeder.
+  const accessoryLike = isAccessoryListing(candidate.title, sourceProduct.title);
+  if ((codeRelation === "exact" || codeRelation === "color-variant") && !accessoryLike) {
     if (
       hasConflictingSpecs(sourceProduct.title, candidate.title) ||
       hasConflictingCountDescriptors(sourceProduct.title, candidate.title)
@@ -238,7 +244,7 @@ ${candidate.marketplace ? `- Marketplace: ${candidate.marketplace}` : ""}
 
 KURALLAR:
 1. AYNI ÜRÜN = aynı marka + aynı model + aynı boyut/hacim/miktar/kapasite. Renk farkı önemli değildir (aynı üründür); ama BOYUT/HACİM/MİKTAR/KAPASİTE farkı FARKLI ÜRÜNDÜR — 10ml ≠ 20ml, 50cm ≠ 70cm, 128GB ≠ 256GB, tekli ≠ 2'li paket, 1L ≠ 2L.
-2. Aksesuar, kılıf, cam, kablosu vs. orijinal ürünle AYNI DEĞİLDİR
+2. Aksesuar, kılıf, cam, kablosu vs. orijinal ürünle AYNI DEĞİLDİR. Bir ürün "İÇİN" üretilen parçalar (cezve grubu, yedek hazne, filtre, kapak, şarj aleti) o ürünün KENDİSİ DEĞİLDİR — başlık ana ürünün model kodunu içerse bile categoryMatch=false ve score < 40 ver.
 3. Aynı markanın farklı modelleri AYNI DEĞİLDİR (ör: iPhone 15 ≠ iPhone 15 Pro)
 4. Set/paket ürünler tekli ürünle AYNI DEĞİLDİR
 5. Yenilenmiş/refurbished ürünler orijinaliyle farklı kabul edilebilir (skor düşük)
@@ -330,6 +336,7 @@ SKOR REHBERİ:
       parsed.modelMatch === true &&
       parsed.categoryMatch === true &&
       MISSING_INFO_REJECTION_RE.test(aiReason) &&
+      !isAccessoryListing(candidate.title, sourceProduct.title) &&
       !hasConflictingSpecs(sourceProduct.title, candidate.title) &&
       !hasConflictingCountDescriptors(sourceProduct.title, candidate.title)
     ) {

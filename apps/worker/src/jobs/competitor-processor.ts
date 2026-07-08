@@ -7,9 +7,11 @@ import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import {
+  MIN_MATCH_SCORE,
   compareProductCodes,
   hasConflictingCountDescriptors,
   hasConflictingSpecs,
+  isAccessoryListing,
   isPackagingListing,
   sharesStrongProductCode,
   withinPriceBand,
@@ -106,6 +108,58 @@ function isInPriceBand(price: number, sourcePrice: number | null): boolean {
  */
 export function runCompetitorDiscovery(input: OnboardJobData) {
   return processCompetitorJob({ data: input } as Job<OnboardJobData>);
+}
+
+/**
+ * Kayıtlı rakiplerde deterministik VERİ ONARIMI: geçmişte yüksek skorla kabul
+ * edilmiş ama bugünkü politikaya göre aksesuar (40) veya konfigürasyon
+ * varyantı (55) olan kayıtları karar-dışı banda indirir.
+ *
+ * Neden gerekli: bilinen-rakip indirgemesi yalnızca Serper sonuçlarında
+ * YENİDEN görünen kayıtlara dokunabiliyor; eski %95 varyantlar (LENOVO
+ * "83SC000QTR 015"/"001"/"006" vakası) bir daha görünmezse sonsuza dek karar
+ * hesaplarında kalıyordu. Bu onarım her taramanın sonunda çalışır, yalnızca
+ * skor DÜŞÜRÜR (asla yükseltmez) ve AI çağırmaz — maliyetsizdir.
+ */
+async function healStoredCompetitors(productId: string, sourceTitle: string): Promise<number> {
+  if (!sourceTitle || sourceTitle.trim().length < 3) return 0;
+  const stored = await prisma.competitor.findMany({
+    where: { trackedProductId: productId, matchScore: { gte: MIN_MATCH_SCORE } },
+    select: { id: true, competitorName: true, matchScore: true },
+  });
+  let healed = 0;
+  for (const c of stored) {
+    const name = c.competitorName ?? "";
+    if (!name) continue;
+    let newScore: number | null = null;
+    let reason = "";
+    if (isAccessoryListing(name, sourceTitle)) {
+      newScore = 40;
+      reason = "Aksesuar/yedek parça görünümü — ürünün kendisi değil";
+    } else if (
+      compareProductCodes(sourceTitle, name) === "config-variant" ||
+      (sharesStrongProductCode(sourceTitle, name) &&
+        (hasConflictingSpecs(sourceTitle, name) ||
+          hasConflictingCountDescriptors(sourceTitle, name)))
+    ) {
+      newScore = 55;
+      reason = "Aynı model ailesi ama farklı konfigürasyon varyantı (alt-SKU eki)";
+    }
+    if (newScore === null) continue;
+    try {
+      await prisma.competitor.update({
+        where: { id: c.id },
+        data: { matchScore: newScore, matchReason: reason },
+      });
+      healed++;
+      console.log(
+        `🩹 Skor onarıldı (${c.matchScore} → ${newScore}): ${name.slice(0, 60)} — ${reason}`,
+      );
+    } catch (err) {
+      console.error(`Skor onarım hatası (${c.id}):`, err);
+    }
+  }
+  return healed;
 }
 
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
@@ -264,11 +318,26 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // recoveryMatch: pre-match skoru; isKnown: önceden kabul edilmiş.
         let matchResult: MatchResult | null = recoveryMatch;
 
-        // Bilinen rakiplerde AI yeniden çalışmaz ama VARYANT GUARD'I deterministik
-        // ve ücretsizdir: geçmişte "kod eşleşti → %95" ile kabul edilmiş farklı
+        // Bilinen rakiplerde AI yeniden çalışmaz ama iki DETERMİNİSTİK indirgeme
+        // ücretsizdir: (a) aksesuar/yedek parça görünümü ("OK004 ... İÇİN CEZVE
+        // GRUBU") 40'a, (b) geçmişte "kod eşleşti → %95" ile kabul edilmiş
         // konfigürasyon varyantları (20GB/24GB RAM, 1TB SSD, "83SC000QTR 015"
-        // gibi rakamlı alt-SKU ekleri, "4 fincan vs 6 fincan") burada 55'e
-        // indirilir ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
+        // gibi rakamlı alt-SKU ekleri, "4 fincan vs 6 fincan") 55'e indirilir
+        // ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
+        if (isKnown && !matchResult && isAccessoryListing(result.title, title)) {
+          matchResult = {
+            isMatch: true,
+            score: 40,
+            reason: "Aksesuar/yedek parça görünümü — ürünün kendisi değil",
+            attributes: {
+              brandMatch: true,
+              modelMatch: false,
+              specMatch: false,
+              categoryMatch: false,
+              details: "Başlık 'için'/aksesuar kalıbı taşıyor; ana ürünle aynı kategori değil",
+            },
+          };
+        }
         if (
           isKnown &&
           !matchResult &&
@@ -468,6 +537,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             aiUnavailable: aiUnavailableCount,
           })
         : null;
+
+    // Tarama ne bulursa bulsun, kayıtlı rakiplerdeki eski yanlış-pozitifler
+    // (aksesuar / alt-SKU varyantı) deterministik olarak onarılır — completed
+    // durumundan ÖNCE, kullanıcı sayfayı açtığında düzeltilmiş skoru görsün.
+    const healedCount = await healStoredCompetitors(productId, product.productName || title);
+    if (healedCount > 0) console.log(`🩹 ${productId}: ${healedCount} rakip skoru onarıldı`);
 
     await updateTrackedProductRefresh(productId, {
       refreshStatus: "completed",

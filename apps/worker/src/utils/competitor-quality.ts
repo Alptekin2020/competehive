@@ -507,3 +507,74 @@ export function compareProductCodes(aText: string, bText: string): ProductCodeRe
   if (colorVariant) return "color-variant";
   return "none";
 }
+
+// ============================================
+// Aksesuar / yedek parça tespiti
+// ============================================
+//
+// "ARZUM OK004 OKKA MİNİO ... MAKİNESİ İÇİN ORİJİNAL CEZVE GRUBU" gibi ilanlar
+// makinenin KENDİSİ değil, ona ait parçadır — ama ana ürünün model kodunu ve
+// başlık kelimelerinin çoğunu içerdiği için kod tabanlı deterministik kabulden
+// geçebiliyordu (prod: Arzum OK004'e 4 cezve grubu %90 ile rakip yazıldı ve
+// ₺1.450'lik cezve "en düşük rakip" olarak fiyat önerisini çarpıttı).
+//
+// Sinyaller:
+// 1) Ayrık "için" sözcüğü: ilanın BAŞKA bir ürüne ait olduğunun güçlü işareti
+//    ("X için kılıf/cezve/filtre").
+// 2) Aksesuar/yedek parça sözcükleri.
+//
+// Paketleme guard'ı gibi TEK TARAFLI uygulanır: kaynak ürünün kendisi aksesuar
+// ise (kullanıcı cezve satıyorsa) sinyal geçersizdir. Bu bir otomatik RED
+// değildir — deterministik kabulü ATLAyıp kararı AI'a bırakma sinyalidir
+// (matcher Kural 2/11 aksesuarı reddeder).
+
+const ACCESSORY_TOKENS = new Set([
+  "cezve",
+  "cezvesi",
+  "kilif",
+  "kilifi",
+  "kapak",
+  "kapagi",
+  "filtre",
+  "filtresi",
+  "hazne",
+  "haznesi",
+  "yedek",
+  "aksesuar",
+  "aksesuari",
+  "aksesuarlari",
+  "adaptor",
+  "adaptoru",
+  "kablo",
+  "kablosu",
+  "sarj",
+  "stand",
+  "standi",
+  "tutacak",
+  "tutacagi",
+  "firca",
+  "fircasi",
+  "canta",
+  "cantasi",
+  "koruyucu",
+  "temperli",
+]);
+
+function accessorySignal(title: string): boolean {
+  const tokens = foldForCounts(title)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (tokens.includes("icin")) return true;
+  return tokens.some((t) => ACCESSORY_TOKENS.has(t));
+}
+
+/**
+ * Aday başlığı, kaynak ürünün aksesuarı/yedek parçası gibi görünüyor mu?
+ * true dönmesi "kesin aksesuar" demek değildir; deterministik kod kabulünün
+ * atlanıp kararın AI'a bırakılması gerektiği anlamına gelir.
+ */
+export function isAccessoryListing(candidateTitle: string, sourceTitle?: string): boolean {
+  if (!accessorySignal(candidateTitle)) return false;
+  if (sourceTitle && accessorySignal(sourceTitle)) return false;
+  return true;
+}

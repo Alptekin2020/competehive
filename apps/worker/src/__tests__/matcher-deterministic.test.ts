@@ -46,6 +46,19 @@ describe("verifyProductMatch — deterministik kod kabulü (Arzum OK004 prod vak
     expect(result.score).toBeLessThan(70);
   });
 
+  it("does NOT deterministically accept accessories carrying the model code (cezve grubu prod vakası)", async () => {
+    // Aksesuar ilanı ana ürünün kodunu ve başlık kelimelerini taşır; kod
+    // kabulü atlanmalı ve skor karar eşiğinin (70) altında kalmalıdır.
+    const result = await verifyProductMatch(
+      { title: ARZUM_SOURCE, price: 1899 },
+      {
+        title: "ARZUM OK004 OKKA MİNİO TÜRK KAHVESİ MAKİNESİ İÇİN ORİJİNAL CEZVE GRUBU BAKIR",
+        price: 1450,
+      },
+    );
+    expect(result.score).toBeLessThan(70);
+  });
+
   it("does NOT auto-accept a shared short code when the price is far out of band", async () => {
     // Fiyat bandı sağlaması: kod eşleşse bile 10x fiyat farkı deterministik
     // kabulü engeller; karar AI'a (testte fallback'e) kalır.

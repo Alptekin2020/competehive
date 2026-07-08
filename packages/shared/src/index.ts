@@ -18,6 +18,7 @@ export {
   hasConflictingSpecs,
   hasConflictingCountDescriptors,
   compareProductCodes,
+  isAccessoryListing,
 } from "./competitor-quality";
 export type {
   CompetitorIssue,

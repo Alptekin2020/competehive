@@ -11,6 +11,7 @@ import {
   hasConflictingSpecs,
   hasConflictingCountDescriptors,
   compareProductCodes,
+  isAccessoryListing,
 } from "../competitor-quality";
 
 describe("extractProductCodes", () => {
@@ -379,5 +380,38 @@ describe("compareProductCodes (exact / renk varyantı / konfigürasyon varyantı
         "Asus TUF i5-13450HX 16GB RTX 5050",
       ),
     ).toBe("none");
+  });
+});
+
+describe("isAccessoryListing (aksesuar/yedek parça guard'ı)", () => {
+  const ARZUM =
+    "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli,";
+
+  it("flags 'İÇİN' pattern accessories carrying the source model code (prod vakası)", () => {
+    expect(
+      isAccessoryListing(
+        "ARZUM OK004 OKKA MİNİO TÜRK KAHVESİ MAKİNESİ İÇİN ORİJİNAL CEZVE GRUBU BAKIR",
+        ARZUM,
+      ),
+    ).toBe(true);
+  });
+
+  it("flags accessory tokens without 'için' (yedek cezve)", () => {
+    expect(isAccessoryListing("Arzum Okka Minio Yedek Cezve Bakır", ARZUM)).toBe(true);
+  });
+
+  it("does not flag the machine itself (renk varyantı dahil)", () => {
+    expect(isAccessoryListing("Arzum OK004-K Okka Minio Türk Kahvesi Makinesi Krom", ARZUM)).toBe(
+      false,
+    );
+    expect(isAccessoryListing("Arzum Ok004 Okka Minio Türk Kahvesi Makinesi Okyanus", ARZUM)).toBe(
+      false,
+    );
+  });
+
+  it("is one-sided: source that is itself an accessory disables the signal", () => {
+    expect(isAccessoryListing("Arzum Okka için yedek cezve", "Arzum Okka Yedek Cezve Grubu")).toBe(
+      false,
+    );
   });
 });

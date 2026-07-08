@@ -7,6 +7,7 @@ import {
   compareProductCodes,
   hasConflictingCountDescriptors,
   hasConflictingSpecs,
+  isAccessoryListing,
   isPackagingListing,
   sharesStrongProductCode,
 } from "@competehive/shared";
@@ -95,7 +96,7 @@ ${candidate.marketplace ? `- Marketplace: ${candidate.marketplace}` : ""}
 
 KURALLAR:
 1. AYNI ÜRÜN = aynı marka + aynı model + aynı boyut/hacim/miktar/kapasite. Renk farkı önemli değildir (aynı üründür); ama BOYUT/HACİM/MİKTAR/KAPASİTE farkı FARKLI ÜRÜNDÜR — 10ml ≠ 20ml, 50cm ≠ 70cm, 128GB ≠ 256GB, tekli ≠ 2'li paket, 1L ≠ 2L.
-2. Aksesuar, kılıf, cam, kablosu vs. orijinal ürünle AYNI DEĞİLDİR
+2. Aksesuar, kılıf, cam, kablosu vs. orijinal ürünle AYNI DEĞİLDİR. Bir ürün "İÇİN" üretilen parçalar (cezve grubu, yedek hazne, filtre, kapak, şarj aleti) o ürünün KENDİSİ DEĞİLDİR — başlık ana ürünün model kodunu içerse bile categoryMatch=false ve score < 40 ver.
 3. Aynı markanın farklı modelleri AYNI DEĞİLDİR (ör: iPhone 15 ≠ iPhone 15 Pro)
 4. Set/paket ürünler tekli ürünle AYNI DEĞİLDİR
 5. Yenilenmiş/refurbished ürünler orijinaliyle farklı kabul edilebilir (skor düşük)
@@ -243,7 +244,11 @@ export async function verifyProductMatch(
       },
     };
   }
-  if (codeRelation === "exact" || codeRelation === "color-variant") {
+  // AKSESUAR GUARD'I — worker matcher ile aynı politika: ana ürünün kodunu
+  // taşıyan aksesuar/yedek parça ilanı ("... MAKİNESİ İÇİN CEZVE GRUBU")
+  // deterministik kabul almaz; karar AI'a kalır (Kural 2/11 reddeder).
+  const accessoryLike = isAccessoryListing(candidate.title, source.title);
+  if ((codeRelation === "exact" || codeRelation === "color-variant") && !accessoryLike) {
     if (
       hasConflictingSpecs(source.title, candidate.title) ||
       hasConflictingCountDescriptors(source.title, candidate.title)
@@ -367,6 +372,7 @@ export async function verifyProductMatch(
       obj.modelMatch === true &&
       obj.categoryMatch === true &&
       MISSING_INFO_REJECTION_RE.test(finalReason) &&
+      !isAccessoryListing(candidate.title, source.title) &&
       !hasConflictingSpecs(source.title, candidate.title) &&
       !hasConflictingCountDescriptors(source.title, candidate.title)
     ) {
