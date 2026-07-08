@@ -308,6 +308,42 @@ function extractFromTrendyolInitialState($: cheerio.CheerioAPI): {
   return { name, price, image, seller };
 }
 
+// Trendyol URL slug'ından okunabilir bir başlık üret.
+// Örn: ".../philips/airfryer-xxl-hd9650-90-avance-collection-fritoz-p-14262809"
+// → "Philips Airfryer Xxl Hd9650 90 Avance Collection Fritoz"
+//
+// Trendyol, Vercel gibi datacenter IP'lerinden gelen istekleri sık sık 403 ile
+// engelliyor; bu yüzden onboarding'de sayfa hiç açılamayabiliyor. Placeholder
+// "Trendyol ürünü" ile kaydedilen ad, rakip aramasının da jenerik sorgularla
+// çökmesine yol açıyordu (isim → arama sorgusu → eşleştirme zinciri). Slug
+// başlığı worker'ın gerçek başlığı yazmasına kadar çok daha sağlam bir başlangıç.
+function trendyolTitleFromUrl(url: string): string | null {
+  try {
+    const { pathname } = new URL(url);
+    const segments = pathname.split("/").filter(Boolean);
+    const slugSegment = segments.find((s) => s.includes("-p-"));
+    if (!slugSegment) return null;
+    const slug = slugSegment.split("-p-")[0];
+    if (!slug || slug.length < 3) return null;
+    // Marka ayrı bir path segmenti: /philips/airfryer-... → başa ekle.
+    const slugIndex = segments.indexOf(slugSegment);
+    const brand = slugIndex > 0 ? segments[slugIndex - 1] : "";
+    const words = `${brand} ${slug}`
+      .replace(/[-_]+/g, " ")
+      .split(" ")
+      .filter(Boolean)
+      .map((w) =>
+        /^\d+$/.test(w) || w.toLowerCase() === w.toUpperCase()
+          ? w
+          : w[0].toUpperCase() + w.slice(1),
+      );
+    const title = words.join(" ").trim();
+    return title.length >= 3 ? title : null;
+  } catch {
+    return null;
+  }
+}
+
 // TRENDYOL
 export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
   try {
@@ -346,11 +382,12 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
       initialState.name ||
       htmlName ||
       cleanTrendyolTitle(meta.name) ||
+      trendyolTitleFromUrl(url) ||
       "Trendyol ürünü";
     const cleanName = cleanTrendyolTitle(rawName);
 
     return {
-      name: cleanName || "Trendyol ürünü",
+      name: cleanName || trendyolTitleFromUrl(url) || "Trendyol ürünü",
       price: jsonLd.price || initialState.price || htmlPrice || metaPrice,
       currency: "TRY",
       image: jsonLd.image || initialState.image || htmlImage || metaImage || meta.image,
@@ -359,8 +396,10 @@ export async function scrapeTrendyol(url: string): Promise<ScrapedProduct> {
     };
   } catch (e) {
     console.error("Trendyol scrape error:", e);
+    // Sayfa açılamadı (403/bot koruması/ağ) → slug'dan türetilmiş başlıkla dön.
+    // "Trendyol ürünü" placeholder'ı yalnızca slug da çözülemezse kullanılır.
     return {
-      name: "Trendyol ürünü",
+      name: trendyolTitleFromUrl(url) || "Trendyol ürünü",
       price: null,
       currency: "TRY",
       image: null,

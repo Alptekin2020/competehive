@@ -81,6 +81,30 @@ function deliveryBadge(notification: {
   return null;
 }
 
+// Kanal adları kullanıcıya İngilizce sabit ("EMAIL") yerine Türkçe gösterilir.
+function channelLabel(channel: string): string {
+  switch (channel) {
+    case "EMAIL":
+      return "E-posta";
+    case "TELEGRAM":
+      return "Telegram";
+    case "WEBHOOK":
+      return "Webhook";
+    default:
+      return channel;
+  }
+}
+
+// Legacy kayıtlardaki ham İngilizce sağlayıcı hatalarını Türkçe, aksiyon
+// alınabilir metne çevirir (yeni kayıtlar worker tarafında zaten Türkçe yazar).
+export function humanizeDeliveryError(error: string | null): string | null {
+  if (!error) return error;
+  if (/domain is not verified/i.test(error)) {
+    return "E-posta gönderici alan adı doğrulanmamış — e-postalar şu an iletilemiyor. Yönetici: Resend'de alan adını doğrulayın.";
+  }
+  return error;
+}
+
 // Kanal rozetleri: yeni satırlarda metadata.deliveries'ten (kanal + teslimat
 // durumu), eski satırlarda tekil channel/status alanlarından üretilir.
 function channelChips(notification: Notification): ChannelDelivery[] {
@@ -527,17 +551,24 @@ export default function NotificationsPage() {
                               {channelChips(notification).map((d, chipIndex) => (
                                 <span
                                   key={`${d.channel}-${chipIndex}`}
-                                  title={d.error || undefined}
+                                  title={
+                                    d.error ||
+                                    (d.status === "SENT"
+                                      ? "Gönderildi"
+                                      : d.status === "SKIPPED"
+                                        ? "Bu kanal yapılandırılmadığı için atlandı"
+                                        : undefined)
+                                  }
                                   className={`text-xs px-1.5 py-0.5 rounded ${
                                     d.status === "FAILED"
                                       ? "text-red-300 bg-red-500/15"
                                       : d.status === "SKIPPED"
                                         ? "text-dark-500 bg-dark-800/60"
-                                        : "text-dark-600 bg-dark-800"
+                                        : "text-emerald-300/80 bg-emerald-500/10"
                                   }`}
                                 >
-                                  {d.channel}
-                                  {d.status === "FAILED" && " ✗"}
+                                  {channelLabel(d.channel)}
+                                  {d.status === "FAILED" ? " ✗" : d.status === "SENT" ? " ✓" : " —"}
                                 </span>
                               ))}
                               {delivery && (
@@ -554,7 +585,7 @@ export default function NotificationsPage() {
                                 mobilde rozet tooltip'ine erişilemez. */}
                             {notification.error && !isDeliberateSkip(notification.error) && (
                               <p className="text-[11px] text-dark-500 mt-1.5">
-                                {notification.error}
+                                {humanizeDeliveryError(notification.error)}
                                 {(delivery?.linkToSettings ||
                                   channelChips(notification).some(
                                     (d) => d.status === "SKIPPED" && !isDeliberateSkip(d.error),

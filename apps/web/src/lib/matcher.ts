@@ -4,6 +4,7 @@ import {
   PRICE_BAND_MIN_RATIO,
   PRICE_BAND_MAX_RATIO,
   withinPriceBand,
+  hasConflictingSpecs,
   isPackagingListing,
   sharesStrongProductCode,
 } from "@competehive/shared";
@@ -82,6 +83,8 @@ KURALLAR:
 11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, terlik, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa (örn: "terlik" vs "kutu/ambalaj"; "telefon" vs "kılıf"; "kahve" vs "kahve makinesi"), categoryMatch=false ve score < 40 olmak ZORUNDA. Aynı marka olması yeterli değildir.
 12. FİYAT BÜYÜKLÜK SAĞDUYU: Kaynak fiyatı ${source.price ?? "verilmedi"} ₺ ve aday fiyatı çok daha düşükse (örn: ¹/₁₀'undan az) yüksek olasılıkla farklı ürün/aksesuar/ambalajdır — score < 40 ver.
 13. AYNI ÜRÜN — FARKLI SATICI/İLAN: Aynı ürün farklı pazaryerlerinde farklı kelime sırası, fazladan pazarlama sözcükleri ("orijinal", "hediyeli", "ücretsiz kargo", "outlet", "faturalı") veya küçük başlık farklarıyla listelenir. Marka + model + boyut/hacim/miktar AYNIYSA bu farklar ÖNEMSİZDİR ve ürün AYNI ÜRÜNDÜR (score >= ${MIN_MATCH_SCORE}). Rakip fiyatı kıyaslamanın amacı aynı ürünü farklı satıcıda bulmaktır; salt pazarlama veya söz dizimi farkı yüzünden eşleşmeyi reddetme. (Boyut/hacim/miktar farkı bu kuralın İSTİSNASIDIR — Kural 1 geçerli.)
+14. EKSİK BİLGİ FARK DEĞİLDİR: Aday başlığında bir özellik (kapasite, fincan sayısı, hacim, renk vb.) HİÇ YAZMIYORSA bunu fark sayma ve "potansiyel/olası farklılık" gerekçesiyle skoru DÜŞÜRME. Yalnızca iki başlıkta AÇIKÇA yazan ve ÇELİŞEN değerler farklılıktır. Örn: kaynak "4 Fincan Kapasiteli" der, aday kapasite yazmaz → fark YOK; marka+model aynıysa AYNI ÜRÜNDÜR.
+15. RENK VARYANTI = AYNI ÜRÜN: Renk adı ("Bakır" vs "Krom") ve model kodundaki renk eki (OK004 vs OK004-K, OK004-O, "-B") aynı modelin renk varyantıdır ve fiyat takibi amacıyla AYNI ÜRÜNDÜR (Kural 1'deki renk istisnası). Boyut/hacim/kapasite çelişkisi yoksa renk yüzünden reddetme.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
@@ -141,16 +144,38 @@ export function deterministicFallbackMatch(
     };
   }
 
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const src = normalize(sourceTitle);
-  const cnd = normalize(candidateTitle);
-  const isMatch = src.length > 5 && cnd.includes(src.slice(0, Math.floor(src.length * 0.6)));
+  // Eski %60-önek-içerme kuralı gerçek pazaryeri başlıklarında pratikte hiç
+  // tutmuyordu (kelime sırası değişince tümü 0). Worker ile aynı token-örtüşme
+  // tahmini kullanılır; skor bilinçli olarak eşiğin ALTINDA (69) tutulur ki AI
+  // onayı olmadan karar hesaplarına girmesin.
+  const fold = (s: string) =>
+    s
+      .replace(/[İIı]/g, "i")
+      .replace(/[şŞ]/g, "s")
+      .replace(/[çÇ]/g, "c")
+      .replace(/[ğĞ]/g, "g")
+      .replace(/[üÜ]/g, "u")
+      .replace(/[öÖ]/g, "o")
+      .toLowerCase();
+  const tokens = (s: string) =>
+    fold(s)
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3);
+  const srcTokens = tokens(sourceTitle);
+  const cndSet = new Set(tokens(candidateTitle));
+  const overlap =
+    srcTokens.length === 0 ? 0 : srcTokens.filter((t) => cndSet.has(t)).length / srcTokens.length;
+  const brandShared = srcTokens.length > 0 && cndSet.has(srcTokens[0]);
+  const specsConflict = hasConflictingSpecs(sourceTitle, candidateTitle);
+  const likelySame = brandShared && overlap >= 0.5 && !specsConflict;
   return {
-    outcome: isMatch ? "match" : "reject",
-    isMatch,
-    score: isMatch ? 50 : 0,
-    reason: isMatch ? "Metin benzerliği (AI kullanılamadı)" : "Metin eşleşmedi (AI kullanılamadı)",
-    attributes: emptyAttributes("OpenAI API kullanılamadığı için fallback kullanıldı"),
+    outcome: likelySame ? "match" : "reject",
+    isMatch: likelySame,
+    score: likelySame ? MIN_MATCH_SCORE - 1 : 0,
+    reason: likelySame
+      ? "Başlık benzerliği yüksek — AI doğrulaması yapılamadı"
+      : "AI doğrulaması yapılamadı; başlık benzerliği yetersiz",
+    attributes: emptyAttributes("OpenAI API kullanılamadığı için deterministik tahmin kullanıldı"),
   };
 }
 
@@ -172,7 +197,26 @@ export async function verifyProductMatch(
 
   // Deterministik KABUL: iki başlık uzun bir MPN/barkod (>=10) paylaşıyorsa
   // kesinlikle aynı üründür (AI'a sormaya gerek yok). Kısa spec kodları eşiğin altında.
+  //
+  // VARYANT GUARD'I: aynı temel kodu paylaşan ama spec imzaları çelişen
+  // konfigürasyon varyantları (16GB vs 20GB RAM, 512GB vs 1TB) otomatik kabul
+  // edilmez — worker matcher ile aynı politika.
   if (sharesStrongProductCode(source.title, candidate.title)) {
+    if (hasConflictingSpecs(source.title, candidate.title)) {
+      return {
+        outcome: "reject",
+        isMatch: false,
+        score: 55,
+        reason: "Aynı model kodu ama farklı donanım/kapasite varyantı",
+        attributes: {
+          brandMatch: true,
+          modelMatch: true,
+          specMatch: false,
+          categoryMatch: true,
+          details: "Ortak ürün kodu, çelişen spec imzası (RAM/depolama/hacim)",
+        },
+      };
+    }
     return {
       outcome: "match",
       isMatch: true,

@@ -66,7 +66,11 @@ ONEMLI: searchKeywords icin 3-5 farkli arama varyasyonu uret. Amac: farkli marke
 
     const text = response.choices[0]?.message?.content || "";
     const cleaned = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    if (typeof parsed.shortTitle === "string") {
+      parsed.shortTitle = cleanShortTitle(parsed.shortTitle);
+    }
+    return parsed;
   } catch (error) {
     console.error("AI analizi başarısız oldu, varsayılan değerler kullanılıyor:", error);
     return {
@@ -74,7 +78,13 @@ ONEMLI: searchKeywords icin 3-5 farkli arama varyasyonu uret. Amac: farkli marke
       model: productName.substring(0, 50),
       category: "Genel",
       searchKeywords: [productName.split(" ").slice(0, 4).join(" ")],
-      shortTitle: productName.substring(0, 80),
+      shortTitle: cleanShortTitle(productName.substring(0, 80)),
     };
   }
+}
+
+// 80 karakterde kesilen başlıklar "…4 Fincan Kapasiteli," gibi sarkan
+// noktalama ile kaydediliyordu; ürün adı her ekranda bu virgülle görünüyordu.
+function cleanShortTitle(title: string): string {
+  return title.trim().replace(/[\s,;:·|/-]+$/u, "");
 }

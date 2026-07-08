@@ -15,6 +15,7 @@ export {
   isUsableCompetitor,
   extractProductCodes,
   sharesStrongProductCode,
+  hasConflictingSpecs,
 } from "./competitor-quality";
 export type {
   CompetitorIssue,

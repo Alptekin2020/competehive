@@ -17,12 +17,14 @@ import {
   MIN_MATCH_SCORE,
   THIN_MARGIN_PCT,
   getMarketplaceInfo,
+  getRetailerInfoFromDomain,
   assessCompetitor,
   computeMargin,
   priceForMargin,
   type CompetitorAssessment,
   type MarginBand,
 } from "@competehive/shared";
+import { formatPctTR } from "@/lib/format";
 import RefreshButton from "@/components/RefreshButton";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import InfoTip from "@/components/ui/InfoTip";
@@ -184,10 +186,13 @@ function prepareChartData(history: PriceHistoryEntry[], ownSellerHints: string[]
 }
 
 function formatPrice(price: number, currency = "TRY") {
+  // Kuruş her yerde gösterilir: liste "₺2.158,17" gösterirken detay "₺2.158"
+  // göstermesi aynı verinin iki farklı hâli gibi görünüyordu (tutarsızlık).
   return new Intl.NumberFormat("tr-TR", {
     style: "currency",
     currency,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(price);
 }
 
@@ -645,15 +650,22 @@ export default function ProductDetailPage() {
     .map((c) => safePrice(c.currentPrice))
     .filter((p): p is number => p !== null);
   const allPrices = [...(ownPrice && ownPrice > 0 ? [ownPrice] : []), ...competitorPrices];
-  const lowestPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
-  const highestPrice = allPrices.length > 0 ? Math.max(...allPrices) : null;
+  // Piyasa istatistikleri (En Düşük/En Yüksek/Ortalama) rakip verisi olmadan
+  // anlamsızdır: 0 rakipte kullanıcının kendi fiyatını "piyasa" gibi göstermek
+  // yanıltıcıydı — rakip yoksa "—" gösterilir.
+  const marketPrices = competitorPrices.length > 0 ? allPrices : [];
+  const lowestPrice = marketPrices.length > 0 ? Math.min(...marketPrices) : null;
+  const highestPrice = marketPrices.length > 0 ? Math.max(...marketPrices) : null;
   const avgPrice =
-    allPrices.length > 0 ? allPrices.reduce((a, b) => a + b, 0) / allPrices.length : null;
+    marketPrices.length > 0 ? marketPrices.reduce((a, b) => a + b, 0) / marketPrices.length : null;
   const hasOwnPrice = ownPrice !== null;
+  const scanSettled = product.refreshStatus === "completed" || product.refreshStatus === "failed";
   const positionBadge: { text: string; tone: "amber" | "rose" } | null =
     validCompetitors.length === 0
       ? competitors.length === 0
-        ? { text: "Rakip verisi bekleniyor", tone: "amber" }
+        ? scanSettled
+          ? { text: "Rakip bulunamadı", tone: "rose" }
+          : { text: "Rakip verisi bekleniyor", tone: "amber" }
         : { text: "Geçerli rakip yok", tone: "rose" }
       : !hasOwnPrice
         ? { text: "Kendi fiyatınız alınamadı", tone: "amber" }
@@ -678,7 +690,9 @@ export default function ProductDetailPage() {
       : null;
   const rankLabel =
     validCompetitors.length === 0
-      ? "Rakip verisi bekleniyor"
+      ? scanSettled
+        ? "Rakip yok"
+        : "Rakip verisi bekleniyor"
       : ownRankAmongAll !== null && validCompetitors.length >= 2
         ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
         : `${validCompetitors.length} rakibe göre`;
@@ -696,15 +710,19 @@ export default function ProductDetailPage() {
   const freshnessHours = freshnessBaseDate
     ? (now.getTime() - new Date(freshnessBaseDate).getTime()) / (1000 * 60 * 60)
     : null;
-  const isFresh = freshnessHours !== null ? freshnessHours <= 24 : false;
+  const isFresh = ownPrice !== null && freshnessHours !== null ? freshnessHours <= 24 : false;
+  // Fiyatı HİÇ alınamamış ürüne "Veri güncel" demek çelişkiydi (yenileme yakın
+  // zamanda koşmuş ama veri getirememiş olabilir) — önce verinin varlığına bak.
   const freshnessLabel =
-    freshnessHours === null
-      ? "Yenileme zamanı bilinmiyor"
-      : freshnessHours <= 24
-        ? "Veri güncel (24s içinde)"
-        : freshnessHours <= 72
-          ? "Kısmen güncel (72s içinde)"
-          : "Veri eski olabilir";
+    ownPrice === null
+      ? "Ürün verisi alınamadı"
+      : freshnessHours === null
+        ? "Yenileme zamanı bilinmiyor"
+        : freshnessHours <= 24
+          ? "Veri güncel (24s içinde)"
+          : freshnessHours <= 72
+            ? "Kısmen güncel (72s içinde)"
+            : "Veri eski olabilir";
 
   const undercutSuggestion =
     cheapestCompetitorPrice && cheapestCompetitorPrice > 1 ? cheapestCompetitorPrice - 1 : null;
@@ -748,7 +766,9 @@ export default function ProductDetailPage() {
   const staleRatio = competitors.length > 0 ? staleCompetitors.length / competitors.length : 0;
   const qualityLabel =
     competitors.length === 0
-      ? "Rakip verisi bekleniyor"
+      ? scanSettled
+        ? "Rakip yok"
+        : "Rakip verisi bekleniyor"
       : validCompetitors.length === 0
         ? "Düşük güven"
         : qualityRatio >= 0.8 && isFresh && staleRatio <= 0.5
@@ -931,9 +951,17 @@ export default function ProductDetailPage() {
       {validCompetitors.length === 0 && (
         <div className="mb-4 sm:mb-6 bg-[#111113] border border-[#1F1F23] rounded-lg p-4">
           {competitors.length === 0 ? (
-            <p className="text-sm text-zinc-400">
-              Rakip verisi bekleniyor — ilk tarama tamamlanmadı
-            </p>
+            // Tek durum kaynağı refreshStatus: tarama sürüyorsa "bekleniyor",
+            // bittiyse "bulunamadı" — ikisi aynı anda gösterilmez (eski
+            // davranış: tarama bitmişken de "ilk tarama tamamlanmadı" yazıyordu).
+            product.refreshStatus === "completed" || product.refreshStatus === "failed" ? (
+              <p className="text-sm text-zinc-400">
+                Bu üründe henüz rakip yok — aşağıdan elle ekleyebilir veya taramayı yeniden
+                başlatabilirsiniz.
+              </p>
+            ) : (
+              <p className="text-sm text-zinc-400">Rakip verisi bekleniyor — ilk tarama sürüyor</p>
+            )
           ) : (
             <p className="text-sm text-rose-400">Geçerli rakip yok — eşleşmeler düşük güvenli</p>
           )}
@@ -976,7 +1004,7 @@ export default function ProductDetailPage() {
               <p className="text-gray-500 text-xs mb-1">En düşük rakibe fark (%)</p>
               <p className="text-white font-semibold">
                 {percentageDiffToCheapest !== null
-                  ? `${percentageDiffToCheapest > 0 ? "+" : ""}${percentageDiffToCheapest.toFixed(1)}%`
+                  ? formatPctTR(percentageDiffToCheapest, { sign: true })
                   : "—"}
               </p>
             </div>
@@ -1139,7 +1167,7 @@ export default function ProductDetailPage() {
               <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
                 <p className="text-gray-500 text-xs mb-1">Kâr marjı</p>
                 <p className={`font-semibold ${MARGIN_BAND_UI[currentMargin.band].text}`}>
-                  %{currentMargin.marginPct.toFixed(1)}
+                  {formatPctTR(currentMargin.marginPct)}
                 </p>
               </div>
               <div className="bg-[#0D0D10] rounded-xl border border-[#1F1F23] p-3">
@@ -1193,7 +1221,7 @@ export default function ProductDetailPage() {
                 <p className="text-xl font-bold text-white">
                   {formatPrice(marginProtectedPrice, product.currency)}
                   <span className="text-sm font-medium text-emerald-300 ml-2">
-                    %{marginProtectedMargin.marginPct.toFixed(1)} marj
+                    {formatPctTR(marginProtectedMargin.marginPct)} marj
                   </span>
                 </p>
                 <p className="mt-1 text-[11px] text-gray-400">
@@ -1228,7 +1256,7 @@ export default function ProductDetailPage() {
                   >
                     {undercutMargin.profit < 0
                       ? `⚠️ Maliyetinizin altında — birim zarar ${formatPrice(Math.abs(undercutMargin.profit), product.currency)}.`
-                      : `Bu fiyatta marjınız %${undercutMargin.marginPct.toFixed(1)}${
+                      : `Bu fiyatta marjınız ${formatPctTR(undercutMargin.marginPct)}${
                           undercutBreachesFloor ? ` — %${THIN_MARGIN_PCT} tabanının altında.` : "."
                         }`}
                   </p>
@@ -1552,10 +1580,24 @@ export default function ProductDetailPage() {
                     >
                       <span className="text-gray-500 text-xs w-5 text-center">{index + 1}</span>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <MarketplaceBadge
-                          marketplace={competitor.marketplace}
-                          overrideName={competitor.marketplace === "CUSTOM" ? "Diğer" : undefined}
-                        />
+                        {(() => {
+                          // Legacy kayıtlarda marketplace=CUSTOM kalmış olabilir;
+                          // rozet "Diğer" yerine URL'den gerçek pazaryerini türetir
+                          // (Trendyol/Hepsiburada rengiyle). Tanınmayan domain'de
+                          // domain'in kendisi "Diğer"den daha bilgilendiricidir.
+                          if (competitor.marketplace !== "CUSTOM") {
+                            return <MarketplaceBadge marketplace={competitor.marketplace} />;
+                          }
+                          const host = hostnameOf(competitor.competitorUrl);
+                          const info = host ? getRetailerInfoFromDomain(host) : null;
+                          return (
+                            <MarketplaceBadge
+                              marketplace="CUSTOM"
+                              overrideName={info?.retailerName || "Diğer"}
+                              overrideColor={info?.retailerColor}
+                            />
+                          );
+                        })()}
                         <MatchScoreBadge score={competitor.matchScore} />
                         {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
                           "out-of-band",
@@ -1606,8 +1648,7 @@ export default function ProductDetailPage() {
                                       : "text-gray-400"
                                 }`}
                               >
-                                {diff > 0 ? "+" : ""}
-                                {diff.toFixed(1)}%
+                                {formatPctTR(diff, { sign: true })}
                               </p>
                             )}
                             {competitor.lastScrapedAt && (

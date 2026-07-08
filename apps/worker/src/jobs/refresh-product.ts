@@ -430,6 +430,49 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       }
     }
 
+    // ============================================
+    // Bayat rakip tazeleme (Serper sonuçlarında görünmeyenler)
+    // ============================================
+    // Eski davranış: yalnızca güncel Serper sonuçlarında link'i geçen rakipler
+    // tazeleniyordu; diğerleri haftalarca "Eski" kalıyor ve kullanıcı
+    // "Fiyatları Yenile'ye bastım ama 9/13 rakip hâlâ eski" diyordu. Serper'da
+    // görünmeyen bayat rakipler için hafif HTTP fiyat kurtarması denenir
+    // (Puppeteer YOK; job süresi sınırlı kalsın diye en fazla 10 rakip).
+    const STALE_MS = 72 * 60 * 60 * 1000;
+    const refreshedUrls = new Set(results.map((r) => r.link));
+    const staleCompetitors = product.competitors
+      .filter((c) => !refreshedUrls.has(c.competitorUrl))
+      .filter((c) => !c.lastScrapedAt || now.getTime() - c.lastScrapedAt.getTime() > STALE_MS)
+      .slice(0, 10);
+    let staleRefreshedCount = 0;
+    for (const stale of staleCompetitors) {
+      try {
+        const recovered = await recoverPriceLightweight(stale.competitorUrl);
+        if (!recovered.price || recovered.price <= 0) continue;
+        await prisma.competitor.update({
+          where: { id: stale.id },
+          data: { currentPrice: recovered.price, lastScrapedAt: now },
+        });
+        await prisma.competitorPrice.create({
+          data: {
+            competitorId: stale.id,
+            price: recovered.price,
+            currency: "TRY",
+            inStock: true,
+            scrapedAt: now,
+          },
+        });
+        staleRefreshedCount++;
+      } catch {
+        // Erişilemeyen rakip bayat kalır; bir sonraki refresh yeniden dener.
+      }
+    }
+    if (staleCompetitors.length > 0) {
+      console.log(
+        `🧊 Bayat rakip tazeleme: ${staleRefreshedCount}/${staleCompetitors.length} güncellendi`,
+      );
+    }
+
     if (!refreshedOwnPrice && product.currentPrice && Number(product.currentPrice) > 0) {
       const ownRetailer = extractRetailer(product.productUrl);
       try {
@@ -508,10 +551,21 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       console.error(`⚠️ Alert kuyruğa alma hatası (refresh): ${productId}`, alertError);
     }
 
+    // Ürünün kendi fiyatı HÂLÂ yoksa "Tamamlandı + hiç veri yok" çelişkisini
+    // kullanıcıya sessizce bırakma: veri alınamadığını ve ne yapabileceğini söyle.
+    const finalState = await prisma.trackedProduct.findUnique({
+      where: { id: productId },
+      select: { currentPrice: true },
+    });
+    const noOwnPriceError =
+      finalState && finalState.currentPrice == null
+        ? "Ürün sayfasından fiyat alınamadı (marketplace erişimi engellemiş olabilir). Bir süre sonra tekrar deneyin veya ürün linkini kontrol edin."
+        : null;
+
     await updateTrackedProductRefresh(productId, {
       refreshStatus: "completed",
       refreshCompletedAt: new Date(),
-      refreshError: null,
+      refreshError: noOwnPriceError,
     });
 
     console.log(

@@ -234,3 +234,90 @@ export function sharesStrongProductCode(a: string, b: string): boolean {
   for (const code of setB) if (setA.has(code)) return true;
   return false;
 }
+
+// ============================================
+// Spec çakışması tespiti (varyant guard'ı)
+// ============================================
+//
+// Aynı temel MPN'i paylaşan KONFİGÜRASYON varyantları (Lenovo 83SC000QTR:
+// 16GB/512GB vs 83SC000QTR-001: 20GB/512GB vs 83SC000QTR-006: 16GB/1TB) farklı
+// SKU'lardır; "kod eşleşti → kesin aynı ürün" kabulü bunları %95 ile rakip
+// yapıp piyasa istatistiklerini bozuyordu. Sayı+birim imzaları iki başlıkta da
+// bulunan birim ekseninde ÇELİŞİYORSA deterministik kabul yapılmaz.
+//
+// Yalnızca güvenli eksenler karşılaştırılır (GB/TB, ml/L, g/kg, W): bir başlıkta
+// yazıp diğerinde hiç geçmeyen özellik "eksik bilgi"dir, çelişki DEĞİLDİR.
+
+const SPEC_TOKEN_RE = /(\d+(?:[.,]\d+)?)\s*(tb|gb|ml|lt|l|kg|gr|g|w|watt)\b/gi;
+
+/** Birim eksenleri: TB→GB, L/LT→ml, kg→g, watt→W tek eksende toplanır. */
+function specAxes(text: string): Map<string, Set<number>> {
+  const axes = new Map<string, Set<number>>();
+  if (!text) return axes;
+  for (const m of text.matchAll(SPEC_TOKEN_RE)) {
+    const value = parseFloat(m[1].replace(",", "."));
+    if (!Number.isFinite(value) || value <= 0) continue;
+    const unit = m[2].toLowerCase();
+    let axis: string;
+    let normalized: number;
+    switch (unit) {
+      case "tb":
+        axis = "gb";
+        normalized = value * 1024;
+        break;
+      case "gb":
+        axis = "gb";
+        normalized = value;
+        break;
+      case "l":
+      case "lt":
+        axis = "ml";
+        normalized = value * 1000;
+        break;
+      case "ml":
+        axis = "ml";
+        normalized = value;
+        break;
+      case "kg":
+        axis = "g";
+        normalized = value * 1000;
+        break;
+      case "g":
+      case "gr":
+        axis = "g";
+        normalized = value;
+        break;
+      default:
+        axis = "w";
+        normalized = value;
+        break;
+    }
+    const set = axes.get(axis) ?? new Set<number>();
+    set.add(normalized);
+    axes.set(axis, set);
+  }
+  return axes;
+}
+
+function sameNumberSet(a: Set<number>, b: Set<number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
+/**
+ * İki başlığın HER İKİSİNDE de geçen bir spec ekseni (GB, ml, g, W) farklı
+ * değer kümeleri taşıyorsa true: bunlar aynı modelin FARKLI varyantlarıdır
+ * (16GB≠20GB RAM, 512GB≠1TB SSD, 50ml≠100ml). Eksik bilgi çelişki sayılmaz.
+ */
+export function hasConflictingSpecs(a: string, b: string): boolean {
+  const axesA = specAxes(a);
+  if (axesA.size === 0) return false;
+  const axesB = specAxes(b);
+  for (const [axis, valuesA] of axesA) {
+    const valuesB = axesB.get(axis);
+    if (!valuesB) continue; // eksende tek taraflı bilgi → fark değil
+    if (!sameNumberSet(valuesA, valuesB)) return true;
+  }
+  return false;
+}

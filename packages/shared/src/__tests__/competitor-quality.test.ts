@@ -8,6 +8,7 @@ import {
   extractProductCodes,
   sharesStrongProductCode,
   COMPETITOR_STALE_HOURS,
+  hasConflictingSpecs,
 } from "../competitor-quality";
 
 describe("extractProductCodes", () => {
@@ -220,5 +221,51 @@ describe("assessCompetitor", () => {
       { ownPrice: 2500, now: NOW },
     );
     expect(result.issues).toEqual(expect.arrayContaining(["low-score", "out-of-band", "stale"]));
+  });
+});
+
+describe("hasConflictingSpecs (varyant guard'ı)", () => {
+  const LENOVO_16_512 =
+    'LENOVO LOQE i5-13450HX 16GB 512GB SSD 15.6" FHD 144Hz RTX 5050 8GB GDDR7 FreeDOS 83SC000QTR';
+
+  it("flags RAM variant of the same MPN (16GB vs 20GB)", () => {
+    const candidate =
+      "Lenovo Loqe Intel Core I5-13450HX 20GB 512GB SSD 8 GB RTX5050 144Hz Gaming Laptop 83SC000QTR 001";
+    expect(hasConflictingSpecs(LENOVO_16_512, candidate)).toBe(true);
+  });
+
+  it("flags storage variant across units (512GB vs 1TB)", () => {
+    const candidate =
+      "LENOVO LOQE i5-13450HX 16GB 1TB SSD 8 GB RTX5050 144Hz Gaming Laptop 83SC000QTR 006";
+    expect(hasConflictingSpecs(LENOVO_16_512, candidate)).toBe(true);
+  });
+
+  it("does not flag the identical configuration with different wording", () => {
+    const candidate =
+      "Lenovo LOQ 15IRX11 Intel Core i5 13450HX 16GB 512GB SSD 8GB RTX5050 15.6 FHD 144Hz IPS Freedos 83SC000QTR";
+    expect(hasConflictingSpecs(LENOVO_16_512, candidate)).toBe(false);
+  });
+
+  it("does not flag color-only variants (no numeric specs)", () => {
+    expect(
+      hasConflictingSpecs(
+        "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Bakır",
+        "Arzum OK004-K Okka Minio Türk Kahvesi Makinesi Krom",
+      ),
+    ).toBe(false);
+  });
+
+  it("treats one-sided (missing) spec info as no conflict", () => {
+    expect(
+      hasConflictingSpecs(
+        "Philips Airfryer XXL HD9650/90 7,2 lt Fritöz",
+        "Philips Airfryer XXL HD9650/90 Fritöz",
+      ),
+    ).toBe(false);
+  });
+
+  it("flags volume variants (50ml vs 100ml, L→ml normalization)", () => {
+    expect(hasConflictingSpecs("Parfüm 50ml", "Parfüm 100 ml")).toBe(true);
+    expect(hasConflictingSpecs("Süt 1L", "Süt 1000 ml")).toBe(false);
   });
 });

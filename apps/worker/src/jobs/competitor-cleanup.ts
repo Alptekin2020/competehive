@@ -163,3 +163,68 @@ export async function cleanupJunkCompetitors(): Promise<{
   logger.info({ scanned, purged, byReason }, "Junk-competitor cleanup completed");
   return { scanned, purged, byReason };
 }
+
+// ============================================
+// Legacy marketplace backfill (CUSTOM → gerçek pazaryeri)
+// ============================================
+//
+// Retailer çıkarımı sonradan geldiği için eski rakip kayıtları marketplace=CUSTOM
+// ile duruyor; UI rozetlerinde "Diğer", Analitik'te "27 rakibin 22'si Diğer"
+// olarak görünüyordu. URL'den pazaryerini türetip düzeltir. Idempotent.
+
+const URL_MARKETPLACE_MAP: Array<{ domain: string; marketplace: string }> = [
+  { domain: "trendyol.com", marketplace: "TRENDYOL" },
+  { domain: "hepsiburada.com", marketplace: "HEPSIBURADA" },
+  { domain: "amazon.com.tr", marketplace: "AMAZON_TR" },
+  { domain: "n11.com", marketplace: "N11" },
+  { domain: "pazarama.com", marketplace: "PAZARAMA" },
+  { domain: "mediamarkt.com.tr", marketplace: "MEDIAMARKT" },
+  { domain: "teknosa.com", marketplace: "TEKNOSA" },
+  { domain: "vatanbilgisayar.com", marketplace: "VATAN" },
+  { domain: "decathlon.com.tr", marketplace: "DECATHLON" },
+  { domain: "pttavm.com", marketplace: "PTTAVM" },
+  { domain: "ciceksepeti.com", marketplace: "CICEKSEPETI" },
+  { domain: "akakce.com", marketplace: "AKAKCE" },
+  { domain: "cimri.com", marketplace: "CIMRI" },
+  { domain: "epey.com", marketplace: "EPEY" },
+  { domain: "boyner.com.tr", marketplace: "BOYNER" },
+  { domain: "watsons.com.tr", marketplace: "WATSONS" },
+  { domain: "kitapyurdu.com", marketplace: "KITAPYURDU" },
+  { domain: "sephora.com.tr", marketplace: "SEPHORA" },
+  { domain: "koctas.com.tr", marketplace: "KOCTAS" },
+  { domain: "itopya.com", marketplace: "ITOPYA" },
+  { domain: "gratis.com", marketplace: "GRATIS" },
+];
+
+export function marketplaceFromUrl(url: string): string | null {
+  const lower = (url || "").toLowerCase();
+  for (const entry of URL_MARKETPLACE_MAP) {
+    if (lower.includes(entry.domain)) return entry.marketplace;
+  }
+  return null;
+}
+
+export async function backfillCompetitorMarketplaces(): Promise<{ updated: number }> {
+  const rows = await prisma.competitor.findMany({
+    where: { marketplace: "CUSTOM" },
+    select: { id: true, competitorUrl: true },
+  });
+  let updated = 0;
+  for (const row of rows) {
+    const marketplace = marketplaceFromUrl(row.competitorUrl);
+    if (!marketplace) continue;
+    try {
+      await prisma.competitor.update({
+        where: { id: row.id },
+        // Prisma enum tipine string ataması: değerler enum sabitleriyle birebir.
+        data: { marketplace: marketplace as never },
+      });
+      updated++;
+    } catch (err) {
+      logger.error({ err, competitorId: row.id }, "Marketplace backfill failed for row");
+    }
+  }
+  if (updated > 0)
+    logger.info({ updated, scanned: rows.length }, "Competitor marketplace backfill completed");
+  return { updated };
+}

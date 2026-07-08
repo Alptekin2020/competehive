@@ -39,11 +39,84 @@ export function extractSearchKeywords(metadata: unknown): string[] {
 const GENERIC_NAME_RE =
   /^(trendyol|hepsiburada|amazon(\s*tr)?|n11|pazarama|teknosa|vatan|media\s*markt|mediamarkt|decathlon|ptt\s*avm|çiçeksepeti|ciceksepeti|akakçe|akakce|cimri|epey|boyner|gratis|watsons|kitapyurdu|sephora|koçtaş|koctas|itopya|diğer|diger)\s*(ürünü|urunu|product)?$/i;
 
+// Token bazlı jeneriklik: AI, placeholder addan "Trendyol ürün", "ürünü
+// Trendyol", "Trendyol ürünleri" gibi VARYANTLAR türetebiliyor (prod'da
+// yaşandı: bu sorgular Serper'a gitti, 120 alakasız aday geldi, hepsi
+// reddedildi ve kullanıcı "rakibiniz yok" gördü). Tam-dizgi regex'i bu
+// varyantları kaçırır; tokenlara ayırıp HEPSİ marketplace adı veya jenerik
+// dolgu sözcüğü ise sorguyu jenerik say.
+const MARKETPLACE_TOKENS = new Set([
+  "trendyol",
+  "hepsiburada",
+  "amazon",
+  "tr",
+  "n11",
+  "pazarama",
+  "teknosa",
+  "vatan",
+  "mediamarkt",
+  "media",
+  "markt",
+  "decathlon",
+  "ptt",
+  "avm",
+  "pttavm",
+  "ciceksepeti",
+  "akakce",
+  "cimri",
+  "epey",
+  "boyner",
+  "gratis",
+  "watsons",
+  "kitapyurdu",
+  "sephora",
+  "koctas",
+  "itopya",
+  "diger",
+]);
+
+const GENERIC_FILLER_TOKENS = new Set([
+  "urun",
+  "urunu",
+  "urunler",
+  "urunleri",
+  "product",
+  "products",
+  "marka",
+  "markasi",
+  "model",
+  "modeller",
+  "modelleri",
+  "fiyat",
+  "fiyati",
+  "fiyatlar",
+  "fiyatlari",
+]);
+
+function foldToken(t: string): string {
+  return t
+    .replace(/[İIı]/g, "i")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[öÖ]/g, "o")
+    .toLowerCase();
+}
+
 export function isGenericQuery(q: string): boolean {
   const trimmed = q.trim();
   // 3 karakter geçerli marka adı olabilir (PS5, JBL, LG) — yalnızca 1-2 karakter ele.
   if (trimmed.length < 3) return true;
-  return GENERIC_NAME_RE.test(trimmed);
+  if (GENERIC_NAME_RE.test(trimmed)) return true;
+  const tokens = trimmed
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .map(foldToken);
+  if (tokens.length === 0) return true;
+  // Tüm tokenlar marketplace adı + jenerik dolgu ise ("trendyol ürünleri",
+  // "ürünü trendyol") ürünü tanımlayan hiçbir şey yok demektir.
+  return tokens.every((t) => MARKETPLACE_TOKENS.has(t) || GENERIC_FILLER_TOKENS.has(t));
 }
 
 function meaningfulTokens(s: string): string[] {

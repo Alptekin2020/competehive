@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { logger } from "./utils/logger";
 import {
   MIN_MATCH_SCORE,
+  hasConflictingSpecs,
   isPackagingListing,
   sharesStrongProductCode,
 } from "./utils/competitor-quality";
@@ -26,6 +27,8 @@ export interface MatchResult {
   isMatch: boolean;
   score: number; // 0-100
   reason: string; // Turkish explanation
+  /** AI doğrulaması yapılamadı (anahtar yok / API hatası) — karar güvenilmez. */
+  aiUnavailable?: boolean;
   attributes: {
     brandMatch: boolean;
     modelMatch: boolean;
@@ -46,21 +49,47 @@ export interface ProductInfo {
 // Fallback string matcher (when OpenAI unavailable)
 // ============================================
 
+function fallbackTokens(s: string): string[] {
+  return s
+    .replace(/[İIı]/g, "i")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[öÖ]/g, "o")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3);
+}
+
+// AI kullanılamadığında token örtüşmesine dayalı deterministik tahmin.
+// Eski davranış (başlığın %60'lık ön ekinin adayda AYNEN geçmesi) gerçek
+// pazaryeri başlıklarında pratikte hiç tutmuyordu: kelime sırası değişince tüm
+// adaylar 0 puanla reddediliyor ve kullanıcı yanıltıcı bir "rakip yok"
+// görüyordu. Yeni tahmin: marka + token örtüşmesi + spec çelişkisi kontrolü.
+// Skor bilinçli olarak MIN_MATCH_SCORE'un ALTINDA tutulur (69): rakip listede
+// görünür ama AI onayı olmadan karar hesaplarına girmez.
 function fallbackMatch(sourceTitle: string, candidateTitle: string): MatchResult {
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const src = normalize(sourceTitle);
-  const cnd = normalize(candidateTitle);
-  const isMatch = src.length > 5 && cnd.includes(src.slice(0, Math.floor(src.length * 0.6)));
+  const srcTokens = fallbackTokens(sourceTitle);
+  const cndSet = new Set(fallbackTokens(candidateTitle));
+  const overlap =
+    srcTokens.length === 0 ? 0 : srcTokens.filter((t) => cndSet.has(t)).length / srcTokens.length;
+  const brandShared = srcTokens.length > 0 && cndSet.has(srcTokens[0]);
+  const specsConflict = hasConflictingSpecs(sourceTitle, candidateTitle);
+  const likelySame = brandShared && overlap >= 0.5 && !specsConflict;
   return {
-    isMatch,
-    score: isMatch ? 50 : 0,
-    reason: isMatch ? "Metin benzerliği (AI kullanılamadı)" : "Metin eşleşmedi (AI kullanılamadı)",
+    isMatch: likelySame,
+    score: likelySame ? MIN_MATCH_SCORE - 1 : 0,
+    reason: likelySame
+      ? "Başlık benzerliği yüksek — AI doğrulaması yapılamadı"
+      : "AI doğrulaması yapılamadı; başlık benzerliği yetersiz",
+    aiUnavailable: true,
     attributes: {
-      brandMatch: false,
+      brandMatch: brandShared,
       modelMatch: false,
-      specMatch: false,
+      specMatch: !specsConflict,
       categoryMatch: false,
-      details: "OpenAI API kullanılamadığı için fallback kullanıldı",
+      details: "OpenAI API kullanılamadığı için deterministik tahmin kullanıldı",
     },
   };
 }
@@ -94,7 +123,26 @@ export async function verifyProductMatch(
   // Deterministik KABUL: iki başlık uzun bir MPN/barkod (>=10) paylaşıyorsa
   // kesinlikle aynı üründür — AI'a sormaya gerek yok (maliyet + AI'nın aşırı
   // katı reddini de aşar). Kısa spec kodları (CPU/RAM) bu eşiğin altında.
+  //
+  // VARYANT GUARD'I: Aynı temel kodu paylaşan konfigürasyon varyantları
+  // (83SC000QTR 16GB/512GB vs "…QTR 001" 20GB/512GB vs "…QTR 006" 16GB/1TB)
+  // farklı SKU'lardır. Spec imzaları çelişiyorsa otomatik %95 verilmez;
+  // kayıt şüpheli bandda (<70) kalır ve karar hesaplarına girmez.
   if (sharesStrongProductCode(sourceProduct.title, candidate.title)) {
+    if (hasConflictingSpecs(sourceProduct.title, candidate.title)) {
+      return {
+        isMatch: false,
+        score: 55,
+        reason: "Aynı model kodu ama farklı donanım/kapasite varyantı",
+        attributes: {
+          brandMatch: true,
+          modelMatch: true,
+          specMatch: false,
+          categoryMatch: true,
+          details: "Ortak ürün kodu, çelişen spec imzası (RAM/depolama/hacim)",
+        },
+      };
+    }
     return {
       isMatch: true,
       score: 95,
@@ -141,6 +189,8 @@ KURALLAR:
 11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, terlik, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa (örn: "terlik" vs "kutu/ambalaj"; "telefon" vs "kılıf"; "kahve" vs "kahve makinesi"), categoryMatch=false ve score < 40 olmak ZORUNDA. Aynı marka olması yeterli değildir.
 12. FİYAT BÜYÜKLÜK SAĞDUYU: Kaynak fiyatı ${sourceProduct.price ?? "verilmedi"} ₺ ve aday fiyatı çok daha düşükse (örn: ¹/₁₀'undan az) yüksek olasılıkla farklı ürün/aksesuar/ambalajdır — score < 40 ver.
 13. AYNI ÜRÜN — FARKLI SATICI/İLAN: Aynı ürün farklı pazaryerlerinde farklı kelime sırası, fazladan pazarlama sözcükleri ("orijinal", "hediyeli", "ücretsiz kargo", "outlet", "faturalı") veya küçük başlık farklarıyla listelenir. Marka + model + boyut/hacim/miktar AYNIYSA bu farklar ÖNEMSİZDİR ve ürün AYNI ÜRÜNDÜR (score >= ${MIN_MATCH_SCORE}). Rakip fiyatı kıyaslamanın amacı aynı ürünü farklı satıcıda bulmaktır; salt pazarlama veya söz dizimi farkı yüzünden eşleşmeyi reddetme. (Boyut/hacim/miktar farkı bu kuralın İSTİSNASIDIR — Kural 1 geçerli.)
+14. EKSİK BİLGİ FARK DEĞİLDİR: Aday başlığında bir özellik (kapasite, fincan sayısı, hacim, renk vb.) HİÇ YAZMIYORSA bunu fark sayma ve "potansiyel/olası farklılık" gerekçesiyle skoru DÜŞÜRME. Yalnızca iki başlıkta AÇIKÇA yazan ve ÇELİŞEN değerler farklılıktır. Örn: kaynak "4 Fincan Kapasiteli" der, aday kapasite yazmaz → fark YOK; marka+model aynıysa AYNI ÜRÜNDÜR.
+15. RENK VARYANTI = AYNI ÜRÜN: Renk adı ("Bakır" vs "Krom") ve model kodundaki renk eki (OK004 vs OK004-K, OK004-O, "-B") aynı modelin renk varyantıdır ve fiyat takibi amacıyla AYNI ÜRÜNDÜR (Kural 1'deki renk istisnası). Boyut/hacim/kapasite çelişkisi yoksa renk yüzünden reddetme.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
@@ -269,6 +319,7 @@ function createFallbackResult(isMatch: boolean, reason: string): MatchResult {
     isMatch,
     score: isMatch ? 50 : 0,
     reason,
+    aiUnavailable: true,
     attributes: {
       brandMatch: false,
       modelMatch: false,

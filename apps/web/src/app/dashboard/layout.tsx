@@ -200,12 +200,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-dark-400">Mevcut Plan</span>
                 <span className="text-xs font-semibold text-hive-500 bg-hive-500/10 px-2 py-0.5 rounded-full">
-                  {sidebarPlan?.plan || "FREE"}
+                  {sidebarPlan?.plan === "ENTERPRISE"
+                    ? "Kurumsal"
+                    : sidebarPlan?.plan === "PRO"
+                      ? "Pro"
+                      : sidebarPlan?.plan === "STARTER"
+                        ? "Başlangıç"
+                        : "Ücretsiz"}
                 </span>
               </div>
               <p className="text-xs text-dark-500 mb-3">
                 {sidebarPlan
-                  ? `${sidebarPlan.features.maxProducts >= 99999 ? "\u221E" : sidebarPlan.features.maxProducts} üründen ${sidebarPlan.usage.products} kullanılıyor`
+                  ? sidebarPlan.features.maxProducts >= 99999
+                    ? `${sidebarPlan.usage.products} ürün · Sınırsız plan`
+                    : `${sidebarPlan.features.maxProducts} üründen ${sidebarPlan.usage.products} kullanılıyor`
                   : "Yükleniyor..."}
               </p>
               {/* Progress bar */}

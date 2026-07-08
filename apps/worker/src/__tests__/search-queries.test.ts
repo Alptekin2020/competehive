@@ -131,3 +131,21 @@ describe("buildSearchQueries", () => {
     expect(queries).toHaveLength(1);
   });
 });
+
+describe("isGenericQuery — placeholder türevleri (prod vakası)", () => {
+  // Prod'da AI, "Trendyol ürünü" placeholder'ından bu üç sorguyu türetti;
+  // eski tam-dizgi regex'i hiçbirini yakalamadı ve Serper 120 alakasız aday
+  // getirdi → kullanıcı "rakibiniz yok" gördü.
+  it("catches AI-derived placeholder variants", () => {
+    expect(isGenericQuery("Trendyol ürün")).toBe(true);
+    expect(isGenericQuery("ürünü Trendyol")).toBe(true);
+    expect(isGenericQuery("Trendyol ürünleri")).toBe(true);
+    expect(isGenericQuery("hepsiburada ürünleri")).toBe(true);
+    expect(isGenericQuery("Trendyol fiyatları")).toBe(true);
+  });
+
+  it("keeps real product names that merely contain a marketplace word", () => {
+    expect(isGenericQuery("Trendyol Collection Kadın Elbise")).toBe(false);
+    expect(isGenericQuery("Arzum OK004 Okka Minio")).toBe(false);
+  });
+});

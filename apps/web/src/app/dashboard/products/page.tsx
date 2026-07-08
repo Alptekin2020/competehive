@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
+import { formatTRY, formatPctTR } from "@/lib/format";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { isUsableCompetitor, computeMargin } from "@competehive/shared";
@@ -182,6 +183,14 @@ function ProductsPageInner() {
     e.preventDefault();
     setFormError("");
     setFormErrorCode(null);
+
+    // Boş/salt-boşluk URL ile "Takibe Al"a basıldığında görünür hiçbir hata
+    // çıkmıyordu (yalnızca odak çerçevesi) — kullanıcı ne olduğunu anlamıyordu.
+    if (!url.trim()) {
+      setFormError("Lütfen bir ürün linki yapıştırın.");
+      return;
+    }
+
     setFormLoading(true);
 
     try {
@@ -251,6 +260,9 @@ function ProductsPageInner() {
           .filter((price): price is number => Number.isFinite(price));
         const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
         const stale = isStale(p.last_success_at ?? null);
+        // Hiç başarılı scrape olmamış (yeni eklenmiş/veri alınamamış) ürün
+        // "eski veri" değildir — 5 saniyelik ürüne "Veri Eski" rozeti absürttü.
+        const neverScraped = !p.last_success_at;
         const priceChange = p.trend?.priceChange ?? null;
         // Maliyet girilmişse marj — katalog genelinde kâr sağlığı tek bakışta.
         const margin = computeMargin(myPrice, p.cost ?? null);
@@ -261,6 +273,7 @@ function ProductsPageInner() {
           competitorCount,
           minCompetitorPrice,
           stale,
+          neverScraped,
           priceChange,
           margin,
         };
@@ -669,7 +682,15 @@ function ProductsPageInner() {
             </div>
           )}
           {filteredProducts.map(
-            ({ product, myPrice, competitorCount, minCompetitorPrice, stale, margin }) => {
+            ({
+              product,
+              myPrice,
+              competitorCount,
+              minCompetitorPrice,
+              stale,
+              neverScraped,
+              margin,
+            }) => {
               // Tarama servisi hata aldıysa bunu "Rakip yok" gibi göstermek
               // yanıltıcıdır — kullanıcı gerçek sebebi (ör. arama servisi
               // erişilemedi) görmeli ki yanlış teşhise gitmesin. Yeni eklenmiş
@@ -681,7 +702,11 @@ function ProductsPageInner() {
                 !searchFailed &&
                 (product.refresh_status === "pending" ||
                   product.refresh_status === "processing" ||
-                  (product.last_scraped_at !== null &&
+                  // 15 dk'lık sezgisel yalnızca durum BİLİNMİYORKEN devrededir;
+                  // tarama "completed" olduysa sonuç bellidir (0 rakip) ve chip
+                  // dakikalarca dönmeye devam etmemelidir.
+                  (product.refresh_status !== "completed" &&
+                    product.last_scraped_at !== null &&
                     Date.now() - new Date(product.last_scraped_at).getTime() < 15 * 60 * 1000));
               const pricePositionHint = searchFailed
                 ? "Tarama hatası"
@@ -722,20 +747,23 @@ function ProductsPageInner() {
                         {product.product_name || "İsimsiz Ürün"}
                       </h3>
                       <div className="text-right shrink-0 sm:hidden">
-                        <div className="text-white font-semibold text-sm">
-                          {myPrice ? `₺${myPrice.toLocaleString("tr-TR")}` : "—"}
-                        </div>
+                        <div className="text-white font-semibold text-sm">{formatTRY(myPrice)}</div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
                       <MarketplaceBadge marketplace={product.marketplace} />
                       <span className="text-gray-500">{competitorCount} rakip</span>
-                      {stale && (
-                        <span className="px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300">
-                          Veri Eski
-                        </span>
-                      )}
+                      {stale &&
+                        (neverScraped ? (
+                          <span className="px-2 py-0.5 rounded-full border border-[#323239] bg-[#1A1A1E] text-gray-400">
+                            Veri bekleniyor
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300">
+                            Veri Eski
+                          </span>
+                        ))}
                       {product.last_success_at && (
                         <span className="text-gray-600 hidden sm:inline">
                           · {timeAgo(product.last_success_at)}
@@ -774,15 +802,14 @@ function ProductsPageInner() {
                           className="text-gray-500"
                           title="Karara uygun (güvenilir eşleşme, fiyat bandında, taze) rakipler içindeki en düşük fiyat"
                         >
-                          En düşük rakip: ₺{minCompetitorPrice.toLocaleString("tr-TR")}
+                          En düşük rakip: {formatTRY(minCompetitorPrice)}
                           {myPrice !== null && myPrice > minCompetitorPrice && (
                             <span className="text-red-300">
                               {" "}
-                              (%
-                              {(
-                                ((myPrice - minCompetitorPrice) / minCompetitorPrice) *
-                                100
-                              ).toFixed(1)}{" "}
+                              (
+                              {formatPctTR(
+                                ((myPrice - minCompetitorPrice) / minCompetitorPrice) * 100,
+                              )}{" "}
                               pahalısınız)
                             </span>
                           )}
@@ -820,9 +847,7 @@ function ProductsPageInner() {
 
                   <div className="text-right shrink-0 hidden sm:block">
                     <div className="text-white font-semibold">
-                      {myPrice
-                        ? `₺${myPrice.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`
-                        : "—"}
+                      {myPrice ? formatTRY(myPrice) : "—"}
                     </div>
                     <div className="mt-1">
                       {product.trend ? (
@@ -917,82 +942,88 @@ function ProductsPageInner() {
                   </td>
                 </tr>
               )}
-              {filteredProducts.map(({ product, myPrice, competitorCount, stale }) => (
-                <tr
-                  key={product.id}
-                  className="border-t border-[#1F1F23] hover:bg-[#151519] transition"
-                >
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/dashboard/products/${product.id}`}
-                      className="text-white hover:text-amber-400 transition line-clamp-1"
-                    >
-                      {product.product_name || "İsimsiz Ürün"}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <MarketplaceBadge marketplace={product.marketplace} />
-                  </td>
-                  <td className="px-4 py-3 text-white">
-                    {myPrice ? `₺${myPrice.toLocaleString("tr-TR")}` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-gray-300">{competitorCount}</td>
-                  <td className="px-4 py-3 text-gray-400">
-                    {product.last_success_at ? timeAgo(product.last_success_at) : "—"}
-                    {stale && <span className="ml-2 text-amber-300 text-xs">(Veri Eski)</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {product.trend && (
-                        <PriceTrend
-                          priceChange={product.trend.priceChange}
-                          priceChangePct={product.trend.priceChangePct}
-                          size="sm"
-                        />
-                      )}
-                      {product.status === "ERROR" ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10">
-                          Hata
-                        </span>
-                      ) : product.status === "OUT_OF_STOCK" ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
-                          Stok Yok
-                        </span>
-                      ) : product.status === "PAUSED" ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full border border-[#323239] text-gray-400 bg-[#1A1A1E]">
-                          Duraklatıldı
-                        </span>
-                      ) : !product.trend ? (
-                        <span className="text-xs text-gray-500">
-                          {product.status === "ACTIVE" ? "Aktif" : "Bekliyor"}
-                        </span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => setDeleteConfirmProductId(product.id)}
-                      className="p-2 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
-                      title="Ürünü sil"
-                      aria-label="Ürünü sil"
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+              {filteredProducts.map(
+                ({ product, myPrice, competitorCount, stale, neverScraped }) => (
+                  <tr
+                    key={product.id}
+                    className="border-t border-[#1F1F23] hover:bg-[#151519] transition"
+                  >
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/dashboard/products/${product.id}`}
+                        className="text-white hover:text-amber-400 transition line-clamp-1"
                       >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                        {product.product_name || "İsimsiz Ürün"}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <MarketplaceBadge marketplace={product.marketplace} />
+                    </td>
+                    <td className="px-4 py-3 text-white">{formatTRY(myPrice)}</td>
+                    <td className="px-4 py-3 text-gray-300">{competitorCount}</td>
+                    <td className="px-4 py-3 text-gray-400">
+                      {product.last_success_at ? timeAgo(product.last_success_at) : "—"}
+                      {stale && (
+                        <span
+                          className={`ml-2 text-xs ${neverScraped ? "text-gray-500" : "text-amber-300"}`}
+                        >
+                          {neverScraped ? "(Veri bekleniyor)" : "(Veri Eski)"}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {product.trend && (
+                          <PriceTrend
+                            priceChange={product.trend.priceChange}
+                            priceChangePct={product.trend.priceChangePct}
+                            size="sm"
+                          />
+                        )}
+                        {product.status === "ERROR" ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10">
+                            Hata
+                          </span>
+                        ) : product.status === "OUT_OF_STOCK" ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
+                            Stok Yok
+                          </span>
+                        ) : product.status === "PAUSED" ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full border border-[#323239] text-gray-400 bg-[#1A1A1E]">
+                            Duraklatıldı
+                          </span>
+                        ) : !product.trend ? (
+                          <span className="text-xs text-gray-500">
+                            {product.status === "ACTIVE" ? "Aktif" : "Bekliyor"}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmProductId(product.id)}
+                        className="p-2 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
+                        title="Ürünü sil"
+                        aria-label="Ürünü sil"
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         </div>

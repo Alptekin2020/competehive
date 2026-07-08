@@ -128,14 +128,72 @@ function escapeHtml(s: string): string {
 
 // Null-safe formatters: alerts triggered by stock or competitor changes carry
 // no price delta, so previousPrice/priceChange/priceChangePct can be null.
+//
+// Türk kullanıcıya giden HER fiyat tr-TR biçiminde yazılır: binlik ayracı
+// nokta, ondalık virgül ("5299.00" değil "5.299,00"). Uygulama içi UI ile
+// bildirim/Telegram/e-posta metinleri arasındaki format tutarsızlığının kökü
+// buradaki toFixed kullanımıydı.
+const TRY_FORMAT = new Intl.NumberFormat("tr-TR", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const PCT_FORMAT = new Intl.NumberFormat("tr-TR", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
 function money(n: number | null): string {
-  return n == null ? "—" : n.toFixed(2);
+  return n == null ? "—" : TRY_FORMAT.format(n);
 }
 function absMoney(n: number | null): string {
-  return n == null ? "—" : Math.abs(n).toFixed(2);
+  return n == null ? "—" : TRY_FORMAT.format(Math.abs(n));
 }
 function absPct(n: number | null): string {
-  return n == null ? "—" : Math.abs(n).toFixed(1);
+  return n == null ? "—" : PCT_FORMAT.format(Math.abs(n));
+}
+function pct(n: number): string {
+  return PCT_FORMAT.format(n);
+}
+
+// Bildirimden uygulamadaki ürün detayına dönüş linki: kullanıcı aksiyonu
+// (fiyat güncelle, rakipleri incele) pazaryeri sayfasında değil CompeteHive'da
+// alır. NEXT_PUBLIC_APP_URL prod'da www.competehive.com'dur.
+function appProductUrl(productId: string | undefined): string | null {
+  if (!productId) return null;
+  const base = (process.env.NEXT_PUBLIC_APP_URL || "https://www.competehive.com").replace(
+    /\/$/,
+    "",
+  );
+  return `${base}/dashboard/products/${productId}`;
+}
+
+// Prisma enum sabitleri ("TRENDYOL", "AMAZON_TR") kullanıcıya CAPS-İngilizce
+// sızmasın; UI'daki marka adlarıyla aynı yazım kullanılır.
+const MARKETPLACE_LABELS: Record<string, string> = {
+  TRENDYOL: "Trendyol",
+  HEPSIBURADA: "Hepsiburada",
+  AMAZON_TR: "Amazon TR",
+  N11: "N11",
+  PAZARAMA: "Pazarama",
+  MEDIAMARKT: "MediaMarkt",
+  TEKNOSA: "Teknosa",
+  VATAN: "Vatan",
+  DECATHLON: "Decathlon",
+  PTTAVM: "PTT AVM",
+  CICEKSEPETI: "Çiçeksepeti",
+  AKAKCE: "Akakçe",
+  CIMRI: "Cimri",
+  EPEY: "Epey",
+  BOYNER: "Boyner",
+  WATSONS: "Watsons",
+  KITAPYURDU: "Kitapyurdu",
+  SEPHORA: "Sephora",
+  KOCTAS: "Koçtaş",
+  ITOPYA: "İtopya",
+  GRATIS: "Gratis",
+  CUSTOM: "Diğer",
+};
+function marketplaceLabel(mp: string): string {
+  return MARKETPLACE_LABELS[mp] ?? mp;
 }
 function isDrop(n: number | null): boolean {
   return n != null && n < 0;
@@ -167,8 +225,15 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
   const changeAbs = absMoney(data.priceChange);
   const changePct = absPct(data.priceChangePct);
   const name = `<b>${escapeHtml(data.productName)}</b>`;
-  const marketplace = `🏪 ${escapeHtml(data.marketplace)}`;
-  const linkLine = `🔗 <a href="${escapeHtml(data.productUrl)}">Ürüne git</a>`;
+  const marketplace = `🏪 ${escapeHtml(marketplaceLabel(data.marketplace))}`;
+  const appUrl = appProductUrl(data.productId);
+  // İki link: pazaryerindeki ürün + CompeteHive'daki detay (aksiyon alınan yer).
+  const linkLine = [
+    `🔗 <a href="${escapeHtml(data.productUrl)}">Ürüne git</a>`,
+    appUrl ? `📊 <a href="${escapeHtml(appUrl)}">CompeteHive'da aç</a>` : null,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
 
   switch (ruleType) {
     case "PRICE_DROP":
@@ -176,7 +241,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `📉 <b>Fiyat düştü</b>`,
         ``,
         name,
-        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
         `Değişim: <b>−${changeAbs} ₺</b> (%${changePct})`,
         marketplace,
         ``,
@@ -188,7 +253,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `📈 <b>Fiyat arttı</b>`,
         ``,
         name,
-        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
         `Değişim: <b>+${changeAbs} ₺</b> (%${changePct})`,
         marketplace,
         ``,
@@ -201,8 +266,8 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         ``,
         name,
         data.previousPrice !== null
-          ? `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`
-          : `Şu anki fiyat: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+          ? `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`
+          : `Şu anki fiyat: <b>${money(data.currentPrice)} ₺</b>`,
         marketplace,
         ``,
         linkLine,
@@ -216,7 +281,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `${emoji} <b>%${changePct} ${dir}</b>`,
         ``,
         name,
-        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
         `Değişim: <b>${sign}${changeAbs} ₺</b>`,
         marketplace,
         ``,
@@ -236,7 +301,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         ``,
         name,
         `${lead} <b>${compName} · ${money(compPrice)} ₺</b>`,
-        `Senin fiyatın: <b>${data.currentPrice.toFixed(2)} ₺</b>${diffPct !== null ? ` (%${diffPct.toFixed(1)} daha pahalı)` : ""}`,
+        `Senin fiyatın: <b>${money(data.currentPrice)} ₺</b>${diffPct !== null ? ` (%${pct(diffPct)} daha pahalı)` : ""}`,
         marketplace,
         ``,
         linkLine,
@@ -251,7 +316,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `✅ <b>Stoğa girdi</b>`,
         ``,
         name,
-        `Fiyat: <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `Fiyat: <b>${money(data.currentPrice)} ₺</b>`,
         marketplace,
         ``,
         linkLine,
@@ -262,12 +327,12 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
       const emoji = loss ? "🔻" : "💸";
       const heading = loss ? "Zarar ediyorsun" : "Kâr marjı düştü";
       const profit = data.cost != null ? data.currentPrice - data.cost : null;
-      const marginStr = data.marginPct != null ? data.marginPct.toFixed(1) : "—";
+      const marginStr = data.marginPct != null ? pct(data.marginPct) : "—";
       return [
         `${emoji} <b>${heading}</b>`,
         ``,
         name,
-        `Satış: <b>${data.currentPrice.toFixed(2)} ₺</b> • Maliyet: ${money(data.cost ?? null)} ₺`,
+        `Satış: <b>${money(data.currentPrice)} ₺</b> • Maliyet: ${money(data.cost ?? null)} ₺`,
         `Birim kâr: <b>${money(profit)} ₺</b> • Marj: <b>%${marginStr}</b>`,
         marketplace,
         ``,
@@ -283,7 +348,7 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         `${emoji} <b>Fiyat ${dir}</b>`,
         ``,
         name,
-        `${money(data.previousPrice)} → <b>${data.currentPrice.toFixed(2)} ₺</b>`,
+        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
         `Değişim: <b>${sign}${changeAbs} ₺</b> (%${changePct})`,
         marketplace,
         ``,
@@ -298,6 +363,8 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
 // ============================================
 
 interface AlertData {
+  /** CompeteHive ürün detayına derin link için (Telegram/e-posta). */
+  productId?: string;
   productName: string;
   currentPrice: number;
   previousPrice: number | null;
@@ -349,29 +416,29 @@ function generateNotificationTitle(ruleType: string, data: AlertData): string {
 
 function generateNotificationMessage(ruleType: string, data: AlertData): string {
   if (ruleType === "OUT_OF_STOCK") {
-    return `${data.productName} stoktan çıktı. Marketplace: ${data.marketplace}.`;
+    return `${data.productName} stoktan çıktı. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (ruleType === "BACK_IN_STOCK") {
-    return `${data.productName} tekrar stokta. Güncel fiyat: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+    return `${data.productName} tekrar stokta. Güncel fiyat: ${money(data.currentPrice)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (ruleType === "COMPETITOR_CHEAPER") {
     const compName = data.cheapestCompetitorName?.trim() || "Bir rakip";
     const count = data.cheaperCompetitorCount ?? 0;
     const countText = count > 1 ? `${count} rakip senden ucuz. ` : "";
-    return `${data.productName}: ${countText}En ucuz rakip ${compName} ${money(data.competitorPrice ?? null)} ₺. Senin fiyatın: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+    return `${data.productName}: ${countText}En ucuz rakip ${compName} ${money(data.competitorPrice ?? null)} ₺. Senin fiyatın: ${money(data.currentPrice)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (ruleType === "LOW_MARGIN") {
     const profit = data.cost != null ? data.currentPrice - data.cost : null;
-    const marginStr = data.marginPct != null ? data.marginPct.toFixed(1) : "—";
-    return `${data.productName} kâr marjı %${marginStr} seviyesine indi. Satış: ${money(data.currentPrice)} ₺, maliyet: ${money(data.cost ?? null)} ₺, birim kâr: ${money(profit)} ₺. Marketplace: ${data.marketplace}.`;
+    const marginStr = data.marginPct != null ? pct(data.marginPct) : "—";
+    return `${data.productName} kâr marjı %${marginStr} seviyesine indi. Satış: ${money(data.currentPrice)} ₺, maliyet: ${money(data.cost ?? null)} ₺, birim kâr: ${money(profit)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
   }
   if (data.previousPrice === null || data.priceChange === null) {
-    return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Marketplace: ${data.marketplace}.`;
+    return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Marketplace: ${marketplaceLabel(data.marketplace)}.`;
   }
 
   const direction = data.priceChange < 0 ? "düştü" : "arttı";
   const sign = data.priceChange < 0 ? "-" : "+";
-  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} (${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)}). Marketplace: ${data.marketplace}.`;
+  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} (${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)}). Marketplace: ${marketplaceLabel(data.marketplace)}.`;
 }
 
 // ============================================
@@ -564,7 +631,7 @@ async function sendEmailAlert(
       <tr>
         <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Birim kâr / Marj</td>
         <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${marginColor}; font-size: 14px; font-weight: 600;">
-          ${money(marginProfit)} ₺ (%${(data.marginPct as number).toFixed(1)})
+          ${money(marginProfit)} ₺ (%${pct(data.marginPct as number)})
         </td>
       </tr>`
     : "";
@@ -592,6 +659,32 @@ async function sendEmailAlert(
     (process.env.NODE_ENV === "production" ? null : "CompeteHive <onboarding@resend.dev>");
   if (!fromAddress) {
     return { status: "FAILED", error: "RESEND_FROM_EMAIL yapılandırılmamış" };
+  }
+
+  // Ücretsiz e-posta domain'leri (gmail/hotmail/…) Resend'de ASLA doğrulanamaz;
+  // böyle bir gönderici tanımlıysa her e-posta "domain is not verified" ile
+  // düşer ve kullanıcı İngilizce altyapı hatası görür. Erken ve TÜRKÇE başarısız
+  // ol ki bildirim geçmişindeki hata aksiyon alınabilir olsun.
+  const fromDomain = fromAddress.match(/@([^>\s]+)/)?.[1]?.toLowerCase() ?? "";
+  const FREE_MAIL_DOMAINS = new Set([
+    "gmail.com",
+    "googlemail.com",
+    "hotmail.com",
+    "outlook.com",
+    "yahoo.com",
+    "icloud.com",
+    "yandex.com",
+    "mail.ru",
+  ]);
+  if (FREE_MAIL_DOMAINS.has(fromDomain)) {
+    logger.error(
+      { fromAddress },
+      "RESEND_FROM_EMAIL uses a free-mail domain that can never be verified in Resend",
+    );
+    return {
+      status: "FAILED",
+      error: `E-posta gönderici adresi (${fromDomain}) doğrulanamaz. Yönetici: RESEND_FROM_EMAIL'i doğrulanmış alan adıyla (örn. bildirim@competehive.com) güncelleyin.`,
+    };
   }
 
   try {
@@ -640,7 +733,7 @@ async function sendEmailAlert(
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #FFFFFF; font-size: 13px; font-weight: 600;">Yeni Fiyat</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; font-size: 20px; font-weight: 700; color: ${priceColor};">
-                    ${data.currentPrice.toFixed(2)} ₺
+                    ${money(data.currentPrice)} ₺
                   </td>
                 </tr>
                 ${
@@ -658,17 +751,24 @@ async function sendEmailAlert(
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Marketplace</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
-                    ${data.marketplace}
+                    ${marketplaceLabel(data.marketplace)}
                   </td>
                 </tr>
               </table>
             </div>
 
-            <!-- CTA Button -->
+            <!-- CTA Buttons -->
             <div style="text-align: center; margin-bottom: 24px;">
               <a href="${data.productUrl}" style="display: inline-block; background: #F59E0B; color: #000000; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
                 Ürüne Git →
               </a>
+              ${
+                appProductUrl(data.productId)
+                  ? `<a href="${appProductUrl(data.productId)}" style="display: inline-block; margin-left: 8px; border: 1px solid #F59E0B; color: #F59E0B; padding: 11px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                CompeteHive'da Aç
+              </a>`
+                  : ""
+              }
             </div>
           </div>
 
@@ -688,9 +788,15 @@ async function sendEmailAlert(
     // olarak kaydedilir ve kullanıcı hiç ulaşmayan bir kanala güvenir.
     if (sendError) {
       logger.error({ userId: user.id, error: sendError }, "Resend email failed");
+      const rawError = sendError.message || sendError.name || String(sendError);
+      // Sağlayıcının İngilizce altyapı hatası kullanıcı arayüzüne olduğu gibi
+      // sızmasın; bilinen hataları Türkçe + aksiyon alınabilir metne çevir.
+      const turkishError = /domain is not verified/i.test(rawError)
+        ? "E-posta gönderici alan adı doğrulanmamış. Yönetici: Resend panelinde alan adını doğrulayıp RESEND_FROM_EMAIL'i güncelleyin."
+        : rawError;
       return {
         status: "FAILED",
-        error: sendError.message || sendError.name || String(sendError),
+        error: turkishError,
       };
     }
 

@@ -640,6 +640,7 @@ export const alertWorker = new Worker(
 
       {
         await sendAlerts(rule, {
+          productId,
           productName: product.productName,
           currentPrice,
           previousPrice,

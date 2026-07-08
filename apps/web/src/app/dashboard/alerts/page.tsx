@@ -325,7 +325,10 @@ export default function AlertsPage() {
               <span
                 className={`text-xs font-medium ${atRuleCap ? "text-red-400" : "text-dark-400"}`}
               >
-                Kural hakkı: {activeRuleCount}/{planFeatures.features.maxAlertRules}
+                Kural hakkı: {activeRuleCount}/
+                {planFeatures.features.maxAlertRules >= 99999
+                  ? "Sınırsız"
+                  : planFeatures.features.maxAlertRules}
               </span>
               {atRuleCap && (
                 <Link

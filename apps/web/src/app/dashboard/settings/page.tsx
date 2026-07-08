@@ -28,6 +28,10 @@ interface PlanData {
 export default function SettingsPage() {
   const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
   const [tgLoading, setTgLoading] = useState(false);
+  // Test butonu sayfanın altında, global başarı bandı en üstte kalıyordu —
+  // kullanıcı geri bildirimi göremeyip butona tekrar basıyor ve Telegram'a
+  // çift mesaj gidiyordu. Durum butonun YANINDA gösterilir.
+  const [tgTestState, setTgTestState] = useState<"idle" | "sending" | "sent">("idle");
   const [tgDeepLink, setTgDeepLink] = useState<string | null>(null);
 
   const [webhookUrl, setWebhookUrl] = useState("");
@@ -133,9 +137,11 @@ export default function SettingsPage() {
   };
 
   const handleTestTg = async () => {
+    if (tgTestState === "sending") return;
     setError("");
     setSuccess("");
     setTgLoading(true);
+    setTgTestState("sending");
     try {
       const res = await fetch("/api/telegram/test", { method: "POST" });
       const json = await res.json();
@@ -143,9 +149,14 @@ export default function SettingsPage() {
         throw new Error(json.error || "Test mesajı gönderilemedi");
       }
       setSuccess("Test mesajı gönderildi. Telegram'ı kontrol et.");
-      setTimeout(() => setSuccess(""), 4000);
+      setTgTestState("sent");
+      setTimeout(() => {
+        setSuccess("");
+        setTgTestState("idle");
+      }, 5000);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Bilinmeyen hata");
+      setTgTestState("idle");
     } finally {
       setTgLoading(false);
     }
@@ -288,11 +299,20 @@ export default function SettingsPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={handleTestTg}
-                      disabled={tgLoading}
+                      disabled={tgLoading || tgTestState === "sending"}
                       className="px-4 py-2 text-xs font-medium bg-hive-500 hover:bg-hive-600 disabled:opacity-50 text-dark-1000 rounded-lg transition"
                     >
-                      Test mesajı gönder
+                      {tgTestState === "sending"
+                        ? "Gönderiliyor…"
+                        : tgTestState === "sent"
+                          ? "Gönderildi ✓"
+                          : "Test mesajı gönder"}
                     </button>
+                    {tgTestState === "sent" && (
+                      <span className="self-center text-xs text-emerald-400">
+                        Telegram&apos;ı kontrol edin
+                      </span>
+                    )}
                     <button
                       onClick={handleDisconnectTg}
                       disabled={tgLoading}
@@ -420,12 +440,21 @@ export default function SettingsPage() {
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-dark-500">Plan</span>
-                <span className="text-white font-medium">{planData.plan}</span>
+                <span className="text-white font-medium">
+                  {planData.plan === "ENTERPRISE"
+                    ? "Kurumsal"
+                    : planData.plan === "PRO"
+                      ? "Pro"
+                      : planData.plan === "STARTER"
+                        ? "Başlangıç"
+                        : "Ücretsiz"}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-dark-500">Ürün limiti</span>
                 <span className="text-white">
-                  {planData.usage.products} / {planData.maxProducts}
+                  {planData.usage.products} /{" "}
+                  {planData.maxProducts >= 99999 ? "Sınırsız" : planData.maxProducts}
                 </span>
               </div>
               <div className="flex items-center justify-between">

@@ -7,7 +7,7 @@ import { setGlobalDispatcher, ProxyAgent } from "undici";
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
 import { processCompetitorScrapeJob } from "./jobs/competitor-scrape";
-import { cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
+import { backfillCompetitorMarketplaces, cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
 import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
@@ -211,6 +211,14 @@ async function start() {
     await cleanupJunkCompetitors();
   } catch (err) {
     logger.error({ err }, "Junk-competitor cleanup failed — continuing");
+  }
+
+  // Legacy CUSTOM marketplace kayıtlarını URL'den türetilen gerçek pazaryeriyle
+  // düzelt (rozetlerdeki "Diğer" ve Analitik'teki "Diğer: 22 rakip" bulgusu).
+  try {
+    await backfillCompetitorMarketplaces();
+  } catch (err) {
+    logger.error({ err }, "Competitor marketplace backfill failed — continuing");
   }
 
   await registerTelegramBot();

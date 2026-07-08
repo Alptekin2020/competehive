@@ -188,7 +188,13 @@ async function getBrowser() {
       "--disable-gpu",
       "--disable-extensions",
       "--disable-background-networking",
-      "--single-process",
+      // NOT: --single-process kaldırıldı. Chromium'un desteklemediği bu kip
+      // prod'da launch'ı tamamen kırıyordu: loglarda her denemede "Failed to
+      // launch the browser process" + "Cannot use V8 Proxy resolver in single
+      // process mode" görülüyor ve Trendyol API+HTML 403 yediğinde son çare
+      // olan Puppeteer hiç devreye giremiyordu. --no-zygote, süreç sayısını
+      // launch'ı kırmadan azaltır (bellek hassasiyeti için güvenli alternatif).
+      "--no-zygote",
       // Route Chromium through the proxy too (credentials, if any, are applied
       // per-page via page.authenticate — Chromium rejects them in this flag).
       ...(proxy ? [`--proxy-server=${proxy.server}`] : []),

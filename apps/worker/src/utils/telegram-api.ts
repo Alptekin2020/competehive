@@ -81,6 +81,9 @@ export async function sendMessage(
     chat_id: chatId,
     text,
     parse_mode: options?.parse_mode || "HTML",
-    disable_web_page_preview: options?.disable_web_page_preview ?? false,
+    // Varsayılan: link önizlemesi KAPALI. Önizleme, pazaryerinin pazarlama
+    // metnini ("Şimdi indirimli fiyatla sipariş verin!") ve dev görselleri
+    // bildirim akışına taşıyordu; mesajın kendisi zaten tüm bilgiyi içeriyor.
+    disable_web_page_preview: options?.disable_web_page_preview ?? true,
   });
 }

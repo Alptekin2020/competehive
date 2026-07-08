@@ -6,9 +6,17 @@ import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
-import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
+import {
+  hasConflictingSpecs,
+  isPackagingListing,
+  sharesStrongProductCode,
+  withinPriceBand,
+} from "../utils/competitor-quality";
 import { urlMatchKey } from "../utils/url-match";
 import { buildSearchQueries } from "../utils/search-queries";
+import { buildZeroReason } from "../utils/zero-reason";
+
+export { buildZeroReason };
 import { alertQueue } from "./processor";
 
 interface OnboardJobData {
@@ -90,31 +98,6 @@ function isInPriceBand(price: number, sourcePrice: number | null): boolean {
 }
 
 /**
- * 0 rakip durumunda kullanıcıya gösterilecek insana okunur, baskın-sebep odaklı
- * tek cümle. Sıfır olan kalemler ("0 ambalaj/koli") ASLA yazılmaz.
- */
-export function buildZeroReason(
-  candidates: number,
-  c: { packaging: number; priceFiltered: number; aiRejected: number; priceUnrecoverable: number },
-): string {
-  // Baskın sebep neyse ana mesajı ona göre kur.
-  const max = Math.max(c.aiRejected, c.priceFiltered, c.packaging, c.priceUnrecoverable);
-  if (max === 0) {
-    return `${candidates} aday incelendi ama birebir aynı ürün bulunamadı.`;
-  }
-  if (c.aiRejected === max) {
-    return `${candidates} benzer ürün incelendi; hiçbiri birebir aynı ürün değil (farklı model, varyant veya marka). Bu ürünün piyasada birebir rakibi görünmüyor.`;
-  }
-  if (c.priceFiltered === max) {
-    return `${candidates} benzer ürün bulundu ama fiyatları kıyas için fazla farklı (büyük olasılıkla farklı paket/boyut). Birebir aynı ürün eşleşmedi.`;
-  }
-  if (c.packaging === max) {
-    return `${candidates} sonucun çoğu ambalaj/aksesuar ürünüydü; birebir aynı ürün bulunamadı.`;
-  }
-  return `${candidates} aday bulundu ama fiyat bilgisi alınamadığı için eşleştirilemedi.`;
-}
-
-/**
  * Periyodik döngü ve doğrudan çağrılar için sarmalayıcı: tek bir ürün için
  * Serper tabanlı rakip keşfi + fiyat tazeleme çalıştırır. processCompetitorJob
  * yalnızca job.data kullandığı için sentetik bir job ile güvenle çağrılabilir.
@@ -163,6 +146,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let savedCount = 0;
     let priceFilteredCount = 0;
     let aiRejectedCount = 0;
+    let aiUnavailableCount = 0;
     let packagingFilteredCount = 0;
     let priceRecoveredCount = 0;
     let priceUnrecoverableCount = 0;
@@ -227,6 +211,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
             if (!preMatch.isMatch) {
               aiRejectedCount++;
+              if (preMatch.aiUnavailable) aiUnavailableCount++;
               console.log(
                 `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
               );
@@ -276,6 +261,31 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // AI matcher — recovery yaptıysak veya bilinen rakipse yeniden çalıştırma.
         // recoveryMatch: pre-match skoru; isKnown: önceden kabul edilmiş.
         let matchResult: MatchResult | null = recoveryMatch;
+
+        // Bilinen rakiplerde AI yeniden çalışmaz ama VARYANT GUARD'I deterministik
+        // ve ücretsizdir: geçmişte "kod eşleşti → %95" ile kabul edilmiş farklı
+        // konfigürasyon varyantları (20GB/24GB RAM, 1TB SSD) burada 55'e indirilir
+        // ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
+        if (
+          isKnown &&
+          !matchResult &&
+          sharesStrongProductCode(title, result.title) &&
+          hasConflictingSpecs(title, result.title)
+        ) {
+          matchResult = {
+            isMatch: true,
+            score: 55,
+            reason: "Aynı model kodu ama farklı donanım/kapasite varyantı",
+            attributes: {
+              brandMatch: true,
+              modelMatch: true,
+              specMatch: false,
+              categoryMatch: true,
+              details: "Ortak ürün kodu, çelişen spec imzası (RAM/depolama/hacim)",
+            },
+          };
+        }
+
         if (!priceRecovered && !isKnown) {
           try {
             matchResult = await verifyProductMatch(
@@ -288,6 +298,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
           if (!matchResult.isMatch) {
             aiRejectedCount++;
+            if (matchResult.aiUnavailable) aiUnavailableCount++;
             console.log(
               `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
             );
@@ -449,6 +460,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             priceFiltered: priceFilteredCount,
             aiRejected: aiRejectedCount,
             priceUnrecoverable: priceUnrecoverableCount,
+            aiUnavailable: aiUnavailableCount,
           })
         : null;
 
