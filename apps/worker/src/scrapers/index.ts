@@ -333,7 +333,7 @@ export function parseTrendyolOtherMerchants(
 // Parse HTML for Trendyol product data
 // ============================================
 
-function parseTrendyolHtml(html: string): ScrapedProduct | null {
+export function parseTrendyolHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
   // Use a mutable holder to avoid TS narrowing issues inside callbacks
@@ -346,14 +346,32 @@ function parseTrendyolHtml(html: string): ScrapedProduct | null {
     if (!jsonLd) return;
     try {
       const ld = JSON.parse(jsonLd);
-      if (ld["@type"] === "Product") {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+      // Trendyol "envoy" vitrin yenilemesiyle bazı ürün sayfaları artık düz
+      // Product yerine varyant grubunu temsil eden ProductGroup şeması
+      // yayınlıyor (prod vakası: Philips HD9650/90, 2026-07 — eski
+      // __PRODUCT_DETAIL_APP_INITIAL_STATE__ global'i de kaldırılmıştı).
+      // Grup seviyesindeki offers sayfada seçili varyantın fiyatını taşır;
+      // grup fiyatı yoksa/0 ise ilk hasVariant girdisine düşüyoruz.
+      if (ld["@type"] === "Product" || ld["@type"] === "ProductGroup") {
+        const groupOffer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const firstVariant = Array.isArray(ld.hasVariant) ? ld.hasVariant[0] : ld.hasVariant;
+        const variantOffer = Array.isArray(firstVariant?.offers)
+          ? firstVariant.offers[0]
+          : firstVariant?.offers;
+        const groupPrice = parsePrice(String(groupOffer?.price ?? ""));
+        const offer = groupPrice > 0 ? groupOffer : (variantOffer ?? groupOffer);
+        const imageContentUrl = Array.isArray(ld.image?.contentUrl)
+          ? ld.image.contentUrl[0]
+          : ld.image?.contentUrl;
         holder.data = {
           name: ld.name || "",
           price: parsePrice(String(offer?.price ?? "")),
           currency: offer?.priceCurrency || "TRY",
           inStock: offer?.availability?.includes("InStock") ?? true,
-          imageUrl: ld.image?.[0] || ld.image || undefined,
+          imageUrl:
+            imageContentUrl ||
+            (Array.isArray(ld.image) ? ld.image[0] : undefined) ||
+            (typeof ld.image === "string" ? ld.image : undefined),
           rating: ld.aggregateRating?.ratingValue
             ? parseFloat(ld.aggregateRating.ratingValue)
             : undefined,
@@ -718,6 +736,7 @@ export async function scrapeTrendyol(
     // log hacmini şişirdiği için kaldırıldı; markerlar tanı için yeterli.
     if (!product || !product.name || !product.price) {
       const hasJsonLd = html.includes("application/ld+json");
+      const hasProductGroupLd = html.includes('"@type":"ProductGroup"');
       const hasNextData = html.includes("__NEXT_DATA__");
       const hasInitialState = html.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
       const hasOgPrice =
@@ -726,7 +745,7 @@ export async function scrapeTrendyol(
       const hasInlineWindow = html.includes("window.__") || html.includes("window['__");
 
       logger.warn(
-        `Trendyol PARSE-FAIL markers: jsonLd=${hasJsonLd} nextData=${hasNextData} initialState=${hasInitialState} ogPrice=${hasOgPrice} itemprop=${hasItemprop} inlineWindow=${hasInlineWindow}`,
+        `Trendyol PARSE-FAIL markers: jsonLd=${hasJsonLd} productGroupLd=${hasProductGroupLd} nextData=${hasNextData} initialState=${hasInitialState} ogPrice=${hasOgPrice} itemprop=${hasItemprop} inlineWindow=${hasInlineWindow}`,
       );
     }
 
