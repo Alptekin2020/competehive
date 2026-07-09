@@ -2,7 +2,7 @@ import { Queue, Worker, Job } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import { extractRetailer } from "../serper";
 import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
-import { sendAlerts } from "../services/notifications";
+import { sendAlerts, sendScrapeFailureAlert } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
@@ -451,6 +451,21 @@ export const scrapeWorker = new Worker(
           code: scraperError.code,
           stage: "scrape-consecutive-failures",
         });
+
+        // Kullanıcı bildirimi: eşiğin AŞILDIĞI ilk anda tam bir kez (===).
+        // Sonraki başarısız denemeler (6, 7, 8...) yeniden bildirmez; başarılı
+        // tarama sayacı sıfırladığı için her YENİ kesinti yeni bildirim üretir.
+        // Bildirim hatası scrape job'ını asla düşürmemeli.
+        if (failureCount === SCRAPE_FAILURE_THRESHOLD) {
+          try {
+            await sendScrapeFailureAlert(productId, failureCount);
+          } catch (notifyError) {
+            logger.error(
+              { productId, err: notifyError },
+              "Scrape-failure notification could not be sent",
+            );
+          }
+        }
       }
 
       logger.warn(

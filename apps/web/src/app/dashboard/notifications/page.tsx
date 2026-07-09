@@ -42,6 +42,10 @@ const RULE_TYPE_META: Record<
   OUT_OF_STOCK: { icon: "🚫", label: "Stoktan Çıktı", category: "stock", critical: true },
   BACK_IN_STOCK: { icon: "✅", label: "Stoğa Girdi", category: "stock" },
   LOW_MARGIN: { icon: "💸", label: "Düşük Marj", category: "price", critical: true },
+  // Kurala bağlı olmayan sistem bildirimi: ürün ardışık tarama hatalarıyla
+  // ERROR durumuna düştüğünde worker tarafından gönderilir (rule_type,
+  // metadata.ruleType'tan gelir — AlertRule kaydı yoktur).
+  SCRAPE_FAILURE: { icon: "⛔", label: "Tarama Hatası", category: "other", critical: true },
 };
 
 // Teslimat sonucu (worker'ın yazdığı SENT/FAILED/SKIPPED) kullanıcıya

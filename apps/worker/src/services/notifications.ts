@@ -555,7 +555,9 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
 
 async function writeNotificationToDB(params: {
   userId: string;
-  alertRuleId: string;
+  // null = kurala bağlı olmayan sistem bildirimi (örn. SCRAPE_FAILURE) —
+  // şemada alertRuleId zaten opsiyonel, satır bildirim akışında normal görünür.
+  alertRuleId: string | null;
   channel: string;
   title: string;
   message: string;
@@ -868,4 +870,273 @@ async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<Deliv
     logger.error({ userId: user.id, error }, "Webhook alert failed");
     return { status: "FAILED", error: errorMessage(error) };
   }
+}
+
+// ============================================
+// Scrape-Failure Alert — kurala bağlı olmayan sistem bildirimi
+// ============================================
+//
+// Ürün SCRAPE_FAILURE_THRESHOLD ardışık başarısız taramadan sonra ERROR
+// durumuna geçtiği anda kullanıcıya haber verir. Fiyat uyarılarından farkı:
+// AlertRule gerektirmez (kullanıcının kural kurmasına gerek yok — taranamayan
+// ürün her kullanıcı için önemlidir) ve eşiğin AŞILDIĞI ilk anda tam bir kez
+// gönderilir. Sayaç başarılı taramada sıfırlandığından her yeni kesinti yeni
+// bir bildirim üretir; süregiden kesinti spam üretmez (bkz. processor.ts).
+
+export interface ScrapeFailureInput {
+  productId: string;
+  productName: string;
+  marketplace: string;
+  productUrl: string;
+  failureCount: number;
+}
+
+export interface ScrapeFailureContent {
+  title: string;
+  message: string;
+  telegramText: string;
+}
+
+// İçerik üretimi ayrı ve export — deterministik metin testlenebilir olsun.
+export function buildScrapeFailureContent(input: ScrapeFailureInput): ScrapeFailureContent {
+  const mpLabel = marketplaceLabel(input.marketplace);
+  const title = `⛔ Ürün taranamıyor: ${input.productName}`;
+  const message =
+    `${input.productName} ürünü ${input.failureCount} ardışık denemede taranamadı ve HATA durumuna alındı. ` +
+    `Pazaryeri: ${mpLabel}. Sistem 24 saatte bir otomatik denemeye devam edecek; ilk başarılı taramada ürün kendini düzeltir. ` +
+    `Sorun devam ederse ürün linkinin hâlâ geçerli olduğunu kontrol edin.`;
+
+  const appUrl = appProductUrl(input.productId);
+  const linkLine = [
+    `🔗 <a href="${escapeHtml(input.productUrl)}">Ürüne git</a>`,
+    appUrl ? `📊 <a href="${escapeHtml(appUrl)}">CompeteHive'da aç</a>` : null,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+  const telegramText = [
+    `⛔ <b>Ürün taranamıyor</b>`,
+    ``,
+    `<b>${escapeHtml(input.productName)}</b>`,
+    `${input.failureCount} ardışık deneme başarısız — ürün HATA durumuna alındı.`,
+    `Sistem 24 saatte bir yeniden deneyecek; ilk başarılı taramada kendini düzeltir.`,
+    `🏪 ${escapeHtml(mpLabel)}`,
+    ``,
+    linkLine,
+  ].join("\n");
+
+  return { title, message, telegramText };
+}
+
+async function sendScrapeFailureTelegram(
+  user: AlertUser,
+  content: ScrapeFailureContent,
+): Promise<DeliveryOutcome> {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return { status: "SKIPPED", error: "TELEGRAM_BOT_TOKEN tanımlı değil" };
+  if (!user.telegramChatId || user.telegramStatus !== "connected") {
+    return { status: "SKIPPED", error: "Telegram bağlı değil" };
+  }
+  try {
+    await tgSendMessage(botToken, user.telegramChatId, content.telegramText);
+    return { status: "SENT" };
+  } catch (error) {
+    // Kalıcı-hata (blocked) işaretlemesi fiyat-uyarısı yolunda yapılır; burada
+    // sonucu kaydetmek yeterli — bir sonraki fiyat uyarısı durumu düzeltir.
+    logger.warn({ userId: user.id, error }, "Scrape-failure Telegram send failed");
+    return { status: "FAILED", error: errorMessage(error) };
+  }
+}
+
+async function sendScrapeFailureEmail(
+  user: AlertUser,
+  content: ScrapeFailureContent,
+  input: ScrapeFailureInput,
+): Promise<DeliveryOutcome> {
+  if (user?.emailAlertsEnabled === false) {
+    return { status: "SKIPPED", error: "E-posta uyarıları kapalı" };
+  }
+  const resend = getResend();
+  if (!resend) return { status: "SKIPPED", error: "RESEND_API_KEY tanımlı değil" };
+  if (!user?.email) return { status: "SKIPPED", error: "E-posta adresi yok" };
+
+  const fromAddress =
+    process.env.RESEND_FROM_EMAIL ||
+    (process.env.NODE_ENV === "production" ? null : "CompeteHive <onboarding@resend.dev>");
+  if (!fromAddress) {
+    return { status: "FAILED", error: "RESEND_FROM_EMAIL yapılandırılmamış" };
+  }
+
+  const appUrl = appProductUrl(input.productId);
+  try {
+    const { error: sendError } = await resend.emails.send({
+      from: fromAddress,
+      to: user.email,
+      subject: content.title,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0A0A0B; color: #FFFFFF;">
+          <div style="background: #111113; padding: 24px; border-bottom: 1px solid #1F1F23;">
+            <table style="width: 100%;">
+              <tr>
+                <td>
+                  <span style="font-size: 20px; font-weight: 700; color: #F59E0B;">🐝 CompeteHive</span>
+                </td>
+                <td style="text-align: right;">
+                  <span style="font-size: 12px; color: #6B7280;">Sistem Uyarısı</span>
+                </td>
+              </tr>
+            </table>
+          </div>
+          <div style="padding: 32px 24px;">
+            <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #FFFFFF;">⛔ Ürün taranamıyor</h2>
+            <p style="margin: 0 0 24px 0; color: #9CA3AF; font-size: 14px;">
+              ${escapeHtml(input.productName)}
+            </p>
+            <div style="background: #111113; border: 1px solid #EF4444; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+              <p style="margin: 0 0 12px 0; color: #FFFFFF; font-size: 14px;">
+                Ürün <strong style="color: #EF4444;">${input.failureCount} ardışık denemede</strong> taranamadı ve HATA durumuna alındı.
+              </p>
+              <p style="margin: 0; color: #9CA3AF; font-size: 13px;">
+                Sistem 24 saatte bir otomatik denemeye devam edecek; ilk başarılı taramada ürün kendini düzeltir.
+                Sorun devam ederse ürün linkinin hâlâ geçerli olduğunu kontrol edin.
+              </p>
+              <table style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+                <tr>
+                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Pazaryeri</td>
+                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
+                    ${escapeHtml(marketplaceLabel(input.marketplace))}
+                  </td>
+                </tr>
+              </table>
+            </div>
+            <div style="text-align: center; margin-bottom: 24px;">
+              <a href="${input.productUrl}" style="display: inline-block; background: #F59E0B; color: #000000; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                Ürüne Git →
+              </a>
+              ${
+                appUrl
+                  ? `<a href="${appUrl}" style="display: inline-block; margin-left: 8px; border: 1px solid #F59E0B; color: #F59E0B; padding: 11px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                CompeteHive'da Aç
+              </a>`
+                  : ""
+              }
+            </div>
+          </div>
+          <div style="padding: 16px 24px; border-top: 1px solid #1F1F23; text-align: center;">
+            <p style="margin: 0; color: #6B7280; font-size: 11px;">
+              Bu uyarı CompeteHive tarafından gönderilmiştir.
+            </p>
+          </div>
+        </div>
+      `,
+    });
+
+    if (sendError) {
+      logger.error({ userId: user.id, error: sendError }, "Scrape-failure email failed");
+      return {
+        status: "FAILED",
+        error: sendError.message || sendError.name || String(sendError),
+      };
+    }
+    logger.info({ userId: user.id, email: user.email }, "Scrape-failure email sent via Resend");
+    return { status: "SENT" };
+  } catch (error) {
+    logger.error({ userId: user.id, error }, "Scrape-failure email failed");
+    return { status: "FAILED", error: errorMessage(error) };
+  }
+}
+
+export async function sendScrapeFailureAlert(
+  productId: string,
+  failureCount: number,
+): Promise<void> {
+  const product = await prisma.trackedProduct.findUnique({
+    where: { id: productId },
+    include: { user: true },
+  });
+  if (!product || !product.user) {
+    logger.warn({ productId }, "Scrape-failure alert skipped — product/user not found");
+    return;
+  }
+  const user = product.user as unknown as AlertUser;
+
+  const input: ScrapeFailureInput = {
+    productId,
+    productName: product.productName,
+    marketplace: product.marketplace,
+    productUrl: product.productUrl,
+    failureCount,
+  };
+  const content = buildScrapeFailureContent(input);
+
+  // Plan kapısı fiyat uyarılarıyla aynı: FREE yalnızca EMAIL, ücretli planlar
+  // Telegram'ı da alır. In-app satır her durumda yazılır.
+  const requestedChannels = ["EMAIL", "TELEGRAM"];
+  const allowedChannels = resolveAllowedChannels(user);
+  const channels = requestedChannels.filter((ch) => allowedChannels.includes(ch));
+
+  const attemptChannel = async (channel: string): Promise<DeliveryOutcome> => {
+    try {
+      switch (channel) {
+        case "EMAIL":
+          return await sendScrapeFailureEmail(user, content, input);
+        case "TELEGRAM":
+          return await sendScrapeFailureTelegram(user, content);
+        default:
+          return { status: "SKIPPED", error: `Bilinmeyen kanal: ${channel}` };
+      }
+    } catch (error) {
+      logger.error({ channel, userId: user.id, error }, "Failed to send scrape-failure alert");
+      return { status: "FAILED", error: errorMessage(error) };
+    }
+  };
+
+  const deliveries: ChannelDelivery[] = [];
+  for (const channel of channels) {
+    // Fiyat uyarılarındaki tek-retry telafisi burada da geçerli: job seviyesinde
+    // retry yok, geçici sağlayıcı hatası bildirimi tamamen düşürmesin.
+    let outcome = await attemptChannel(channel);
+    if (outcome.status === "FAILED") {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const retryOutcome = await attemptChannel(channel);
+      if (retryOutcome.status !== "FAILED") {
+        outcome = retryOutcome;
+      } else {
+        outcome = retryOutcome.error ? retryOutcome : outcome;
+      }
+    }
+    deliveries.push({ channel, status: outcome.status, error: outcome.error ?? null });
+  }
+
+  const overall = summarizeDeliveries(
+    deliveries.length > 0 ? deliveries : [{ channel: "EMAIL", status: "SKIPPED", error: null }],
+  );
+  await writeNotificationToDB({
+    userId: product.userId,
+    alertRuleId: null,
+    channel: channels[0] ?? "EMAIL",
+    title: content.title,
+    message: content.message,
+    status: overall.status,
+    error: overall.error,
+    metadata: {
+      ruleType: "SCRAPE_FAILURE",
+      productId,
+      productName: product.productName,
+      marketplace: product.marketplace,
+      productUrl: product.productUrl,
+      failureCount,
+      deliveries,
+    },
+  });
+
+  logger.info(
+    {
+      userId: product.userId,
+      productId,
+      failureCount,
+      status: overall.status,
+      channels: deliveries.map((d) => `${d.channel}:${d.status}`).join(","),
+    },
+    "Scrape-failure alert processed",
+  );
 }

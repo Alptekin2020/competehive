@@ -48,22 +48,30 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    // Map to flat format for frontend compatibility
-    const mapped = notifications.map((n: (typeof notifications)[number]) => ({
-      id: n.id,
-      channel: n.channel,
-      title: n.title,
-      message: n.message,
-      metadata: n.metadata,
-      status: n.status,
-      error: n.error,
-      is_read: n.isRead,
-      sent_at: n.sentAt,
-      rule_type: n.alertRule?.ruleType ?? null,
-      product_id: n.alertRule?.trackedProduct?.id ?? null,
-      product_name: n.alertRule?.trackedProduct?.productName ?? null,
-      marketplace: n.alertRule?.trackedProduct?.marketplace ?? null,
-    }));
+    // Map to flat format for frontend compatibility.
+    // Kurala bağlı olmayan sistem bildirimlerinde (örn. SCRAPE_FAILURE)
+    // alertRule join'i boş kalır; tür ve ürün bilgisi metadata'dan okunur ki
+    // UI rozet/ikon/filtre davranışı kural tabanlı satırlarla aynı olsun.
+    const mapped = notifications.map((n: (typeof notifications)[number]) => {
+      const meta = (n.metadata ?? {}) as Record<string, unknown>;
+      const metaStr = (key: string): string | null =>
+        typeof meta[key] === "string" ? (meta[key] as string) : null;
+      return {
+        id: n.id,
+        channel: n.channel,
+        title: n.title,
+        message: n.message,
+        metadata: n.metadata,
+        status: n.status,
+        error: n.error,
+        is_read: n.isRead,
+        sent_at: n.sentAt,
+        rule_type: n.alertRule?.ruleType ?? metaStr("ruleType"),
+        product_id: n.alertRule?.trackedProduct?.id ?? metaStr("productId"),
+        product_name: n.alertRule?.trackedProduct?.productName ?? metaStr("productName"),
+        marketplace: n.alertRule?.trackedProduct?.marketplace ?? metaStr("marketplace"),
+      };
+    });
 
     return apiSuccess({
       notifications: mapped,
