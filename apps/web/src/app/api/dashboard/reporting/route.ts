@@ -1,4 +1,4 @@
-import { isUsableCompetitor } from "@competehive/shared";
+import { assessCompetitorList } from "@competehive/shared";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, serverError } from "@/lib/api-response";
@@ -78,18 +78,19 @@ export async function GET(req: Request) {
     const marketplaces = Array.from(new Set(products.map((p) => p.marketplace))).sort();
     const now = Date.now();
 
-    // Kalite politikasından (skor, fiyat bandı, bayatlık) geçen rakip fiyatları —
-    // "rakip baskısı" sinyalleri ham rakip verisiyle hesaplanırsa alakasız/eski
-    // kayıtlar (ör. ambalaj ürünleri) sürekli sahte baskı üretir.
+    // Kalite politikasından (skor, fiyat bandı, bayatlık, akran-medyan
+    // aykırılığı) geçen rakip fiyatları — "rakip baskısı" sinyalleri ham rakip
+    // verisiyle hesaplanırsa alakasız/eski/sahte kayıtlar sürekli sahte baskı üretir.
     const usableCompetitorPrices = (product: (typeof products)[number]): number[] => {
       const myPrice = toNumber(product.currentPrice);
-      return product.competitors
-        .map((competitor) => ({
-          price: toNumber(competitor.currentPrice),
-          matchScore: competitor.matchScore,
-          lastScrapedAt: competitor.lastScrapedAt,
-        }))
-        .filter((competitor) => isUsableCompetitor(competitor, { ownPrice: myPrice }))
+      const inputs = product.competitors.map((competitor) => ({
+        price: toNumber(competitor.currentPrice),
+        matchScore: competitor.matchScore,
+        lastScrapedAt: competitor.lastScrapedAt,
+      }));
+      const assessments = assessCompetitorList(inputs, { ownPrice: myPrice });
+      return inputs
+        .filter((_, i) => assessments[i].usable)
         .map((competitor) => competitor.price)
         .filter((value): value is number => value !== null);
     };

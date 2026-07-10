@@ -1,14 +1,17 @@
 // ============================================
-// Competitor data-quality policy — WORKER MIRROR
+// Competitor data-quality policy (single source of truth)
 // ============================================
 //
-// BU DOSYA packages/shared/src/competitor-quality.ts DOSYASININ BİREBİR
-// AYNASIDIR. Worker'ın Docker build context'i apps/worker/ ile sınırlı olduğu
-// için @competehive/shared buradan import edilemiyor (normalize-product-image
-// ile aynı kalıp). Politika değişikliklerinde iki dosyayı birlikte güncelle.
+// Bir rakip kaydının "karar verilebilir" (piyasa pozisyonu, önerilen fiyat,
+// COMPETITOR_CHEAPER alarmı) sayılması için geçmesi gereken merkezi kurallar.
+// Web UI, web API'leri ve worker aynı politikayı kullanır.
+//
+// NOT: apps/worker bu paketi Docker build context'i nedeniyle import edemiyor;
+// apps/worker/src/utils/competitor-quality.ts bu dosyanın birebir aynası olmak
+// zorunda. Burada değişiklik yaparsan worker kopyasını da güncelle.
 
 // Minimum AI match confidence (0-100) for treating a candidate as the same
-// product. packages/shared/src/competitor-quality.ts ile senkron.
+// product. Worker matcher ve web competitor filtreleme ile senkron.
 export const MIN_MATCH_SCORE = 70;
 
 // Fiyat bandı: kaynak fiyatın 0.3x–3x'i dışındaki adaylar aynı ürün değildir.
@@ -32,6 +35,11 @@ export function withinPriceBand(sourcePrice: number, candidatePrice: number): bo
 // ============================================
 // Ambalaj / koli / lojistik malzemesi tespiti
 // ============================================
+//
+// Serper, ürün aramalarında "Bojopack 20x15x10 Koli", "kolikutugelsin" gibi
+// ambalaj satıcısı sonuçları döndürebiliyor. AI matcher prompt'unda bu kural
+// var ama deterministik bir emniyet kemeri gerekiyor: AI çökerse, yanılırsa
+// veya hiç çalışmazsa (legacy kayıtlar) bile koli, terlikle eşleşmemeli.
 
 // Kelime İÇİNDE geçmesi yeterli işaretler (kolikutugelsin, kolicim, ambalajci...).
 const PACKAGING_SUBSTRINGS = [
@@ -101,7 +109,7 @@ export function isPackagingListing(candidateTitle: string, sourceTitle?: string)
 // Rakip kullanılabilirlik değerlendirmesi
 // ============================================
 
-export type CompetitorIssue = "no-price" | "low-score" | "out-of-band" | "stale";
+export type CompetitorIssue = "no-price" | "low-score" | "out-of-band" | "stale" | "peer-outlier";
 
 export interface CompetitorAssessmentInput {
   /** Parse edilmiş güncel fiyat; null/0 geçersiz sayılır. */
@@ -174,6 +182,110 @@ export function isUsableCompetitor(
   options: CompetitorAssessmentOptions = {},
 ): boolean {
   return assessCompetitor(input, options).usable;
+}
+
+// ============================================
+// Akran-medyan fiyat aykırılığı (peer outlier)
+// ============================================
+//
+// Prod vakası (Philips HD9650/90): 16 rakibin 14'ü ₺7.2K–16.4K bandındayken
+// tek bir ilan ₺3.000 gösteriyordu — neredeyse kesin sahte/yem ilan. Kendi
+// fiyata göre kurulan 0.3x–3x bandını (3000/9475 = 0.317) kılpayı geçtiği
+// için "geçerli" sayıldı ve "önerilen fiyat ₺2.999" gibi ZARARLI bir tavsiye
+// üretti. Kendi fiyat yanlış çapa: kullanıcının fiyatı piyasanın kenarında
+// olabilir. Doğru çapa AKRAN GRUBUNUN MEDYANIDIR — sağlam (robust) istatistik,
+// tek aykırı değerden etkilenmez.
+//
+// Kural bilinçli olarak İKİ koşul ister (yalnız oran değil):
+//   1) Fiyat, akran medyanından aşırı kopuk (düşükte <0.45x, yüksekte >2.75x)
+//   2) En yakın akrandan da İZOLE (düşükte ≥1.8x, yüksekte ≥1.5x boşluk)
+// İzolasyon şartı gerçek fiyat savaşlarını korur: iki satıcı birlikte ucuzsa
+// (küme) bu gerçek olabilir; tek başına dipte duran ilan ise şüphelidir.
+// En az PEER_OUTLIER_MIN_PEERS akran yoksa kural HİÇ çalışmaz (küçük örneklemde
+// medyan güvenilmez). Tek geçişlidir — aykırılar çıkarılıp yeniden hesaplanmaz
+// (kademeli daralma/yakınsama sorularından kaçınmak için bilinçli tercih).
+
+export const PEER_OUTLIER_MIN_PEERS = 4;
+export const PEER_OUTLIER_LOW_RATIO = 0.45;
+export const PEER_OUTLIER_LOW_GAP = 1.8;
+export const PEER_OUTLIER_HIGH_RATIO = 2.75;
+export const PEER_OUTLIER_HIGH_GAP = 1.5;
+
+export type PeerOutlierKind = "too-low" | "too-high";
+
+function medianOf(sorted: number[]): number {
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Fiyatın, akran fiyatlarına (kendisi HARİÇ) göre aykırı olup olmadığını
+ * söyler. Aykırı değilse null döner.
+ */
+export function detectPeerPriceOutlier(
+  price: number,
+  peerPrices: number[],
+): PeerOutlierKind | null {
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const peers = peerPrices
+    .filter((p) => Number.isFinite(p) && p > 0)
+    .slice()
+    .sort((a, b) => a - b);
+  if (peers.length < PEER_OUTLIER_MIN_PEERS) return null;
+
+  const median = medianOf(peers);
+  if (!Number.isFinite(median) || median <= 0) return null;
+
+  const nearest = peers.reduce(
+    (best, p) => (Math.abs(p - price) < Math.abs(best - price) ? p : best),
+    peers[0],
+  );
+
+  if (price < median * PEER_OUTLIER_LOW_RATIO && nearest / price >= PEER_OUTLIER_LOW_GAP) {
+    return "too-low";
+  }
+  if (price > median * PEER_OUTLIER_HIGH_RATIO && price / nearest >= PEER_OUTLIER_HIGH_GAP) {
+    return "too-high";
+  }
+  return null;
+}
+
+/**
+ * Rakip listesini İKİ geçişte değerlendirir ve girişle aynı sırada
+ * CompetitorAssessment dizisi döner:
+ *   Geçiş 1 — tekil kontroller (fiyat, skor, band, bayatlık).
+ *   Geçiş 2 — geçiş 1'i geçenler arasında akran-medyan aykırılığı; aykırı
+ *             bulunanlara "peer-outlier" issue eklenir ve usable=false olur.
+ * Pozisyon, öneri, alarm gibi TÜM karar noktaları tekil assessCompetitor
+ * yerine bunu kullanmalıdır — akran bağlamı ancak listeyle kurulabilir.
+ */
+export function assessCompetitorList(
+  inputs: CompetitorAssessmentInput[],
+  options: CompetitorAssessmentOptions = {},
+): CompetitorAssessment[] {
+  const base = inputs.map((input) => assessCompetitor(input, options));
+
+  const provisionalPrices: number[] = [];
+  for (let i = 0; i < inputs.length; i++) {
+    const price = inputs[i].price;
+    if (base[i].usable && typeof price === "number" && Number.isFinite(price) && price > 0) {
+      provisionalPrices.push(price);
+    }
+  }
+  // Kendisi + en az MIN_PEERS akran gerekir; yoksa aykırılık aranmaz.
+  if (provisionalPrices.length < PEER_OUTLIER_MIN_PEERS + 1) return base;
+
+  return base.map((assessment, i) => {
+    if (!assessment.usable) return assessment;
+    const price = inputs[i].price as number;
+    // Akranlar = kendisi hariç geçerli fiyatlar. Aynı fiyatlı BAŞKA satıcılar
+    // akran olarak kalmalı — bu yüzden değerden yalnızca BİR kopya çıkarılır.
+    const selfIdx = provisionalPrices.indexOf(price);
+    const peers = provisionalPrices.filter((_, j) => j !== selfIdx);
+    const outlier = detectPeerPriceOutlier(price, peers);
+    if (!outlier) return assessment;
+    return { usable: false, issues: [...assessment.issues, "peer-outlier" as const] };
+  });
 }
 
 // ============================================

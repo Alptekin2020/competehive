@@ -6,7 +6,7 @@ import { sendAlerts, sendScrapeFailureAlert } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { isUsableCompetitor } from "../utils/competitor-quality";
+import { assessCompetitorList } from "../utils/competitor-quality";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
 import { getAlertConditionState, setAlertConditionState } from "../utils/alert-state";
 import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
@@ -580,8 +580,9 @@ export const alertWorker = new Worker(
     const rules = resolveApplicableRules(candidateRules, productId);
 
     // COMPETITOR_CHEAPER kuralları için en ucuz GEÇERLİ rakip fiyatını yükle.
-    // Kalite politikası (skor, fiyat bandı, bayatlık) uygulanır — yoksa ₺11'lik
-    // bir koli kaydı ₺2.500'lük ürüne sürekli sahte "rakip daha ucuz" alarmı üretir.
+    // Kalite politikası (skor, fiyat bandı, bayatlık, akran-medyan aykırılığı)
+    // uygulanır — yoksa ₺11'lik bir koli kaydı ya da ₺3.000'lik sahte ilan
+    // ₺9.500'lük ürüne sürekli sahte "rakip daha ucuz" alarmı üretir.
     let minCompetitorPrice: number | null = null;
     let cheapestCompetitorName: string | null = null;
     let cheaperCompetitorCount = 0;
@@ -591,14 +592,14 @@ export const alertWorker = new Worker(
         select: { competitorName: true, currentPrice: true, matchScore: true, lastScrapedAt: true },
       });
       const ownPrice = Number(currentPrice);
-      const usable = competitors
-        .map((c) => ({
-          name: c.competitorName,
-          price: Number(c.currentPrice),
-          matchScore: c.matchScore,
-          lastScrapedAt: c.lastScrapedAt,
-        }))
-        .filter((c) => isUsableCompetitor(c, { ownPrice }));
+      const mapped = competitors.map((c) => ({
+        name: c.competitorName,
+        price: Number(c.currentPrice),
+        matchScore: c.matchScore,
+        lastScrapedAt: c.lastScrapedAt,
+      }));
+      const assessments = assessCompetitorList(mapped, { ownPrice });
+      const usable = mapped.filter((_, i) => assessments[i].usable);
       if (usable.length > 0) {
         // En ucuz geçerli rakip + bizden ucuz olanların sayısı — bildirimi
         // "kim, ne kadar ucuz" diyecek kadar aksiyon alınabilir yapar.

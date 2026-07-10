@@ -18,7 +18,7 @@ import {
   THIN_MARGIN_PCT,
   getMarketplaceInfo,
   getRetailerInfoFromDomain,
-  assessCompetitor,
+  assessCompetitorList,
   computeMargin,
   priceForMargin,
   type CompetitorAssessment,
@@ -671,20 +671,21 @@ export default function ProductDetailPage() {
   // taze mi? Politikadan geçemeyen rakipler listede görünmeye devam eder ama piyasa
   // pozisyonu, sıralama ve fiyat önerisi hesaplarına GİRMEZ — ₺11'lik bir koli kaydı
   // ₺2.500'lük ürünün "en düşük rakibi" olamaz.
+  // assessCompetitorList ayrıca akran-medyan aykırılığını uygular: 14 rakip
+  // ₺7.2K+ bandındayken tek başına ₺3.000 gösteren ilan (peer-outlier) karar
+  // hesaplarından düşer — "önerilen fiyat ₺2.999" faciası bir daha yaşanmaz.
+  const assessmentList = assessCompetitorList(
+    competitors.map((c) => ({
+      price: safePrice(c.currentPrice),
+      matchScore: c.matchScore ?? null,
+      lastScrapedAt: c.lastScrapedAt,
+    })),
+    { ownPrice, now },
+  );
   const competitorAssessments = new Map<string, CompetitorAssessment>();
-  for (const c of competitors) {
-    competitorAssessments.set(
-      c.id,
-      assessCompetitor(
-        {
-          price: safePrice(c.currentPrice),
-          matchScore: c.matchScore ?? null,
-          lastScrapedAt: c.lastScrapedAt,
-        },
-        { ownPrice, now },
-      ),
-    );
-  }
+  competitors.forEach((c, i) => {
+    competitorAssessments.set(c.id, assessmentList[i]);
+  });
   const validCompetitors = competitors.filter(
     (c) => competitorAssessments.get(c.id)?.usable === true,
   );
@@ -739,10 +740,15 @@ export default function ProductDetailPage() {
         ? `${validCompetitors.length} rakip içinde ${ownRankAmongAll}. en ucuz`
         : `${validCompetitors.length} rakibe göre`;
 
-  // Şüpheli = düşük AI skoru VEYA fiyat bandı dışı (skorsuz legacy koliler dahil).
+  // Şüpheli = düşük AI skoru VEYA fiyat bandı dışı VEYA akran-medyan aykırısı
+  // (skorsuz legacy koliler dahil).
   const suspiciousCompetitors = competitors.filter((c) => {
     const issues = competitorAssessments.get(c.id)?.issues ?? [];
-    return issues.includes("low-score") || issues.includes("out-of-band");
+    return (
+      issues.includes("low-score") ||
+      issues.includes("out-of-band") ||
+      issues.includes("peer-outlier")
+    );
   });
   const staleCompetitors = competitors.filter((c) =>
     (competitorAssessments.get(c.id)?.issues ?? []).includes("stale"),
@@ -824,7 +830,11 @@ export default function ProductDetailPage() {
       if (competitorFilter === "priced") return safePrice(competitor.currentPrice) !== null;
       if (competitorFilter === "suspicious") {
         const issues = competitorAssessments.get(competitor.id)?.issues ?? [];
-        return issues.includes("low-score") || issues.includes("out-of-band");
+        return (
+          issues.includes("low-score") ||
+          issues.includes("out-of-band") ||
+          issues.includes("peer-outlier")
+        );
       }
       return true;
     })
@@ -1049,7 +1059,7 @@ export default function ProductDetailPage() {
               Piyasa Pozisyonu
               <InfoTip
                 align="left"
-                text="Fark ve sıralama yalnızca 'karara uygun' rakiplerle hesaplanır: geçerli fiyatı olan, eşleşme güveni yeterli, fiyatı sizin fiyatınızın 0.3x–3x bandında ve son 72 saat içinde doğrulanmış rakipler."
+                text="Fark ve sıralama yalnızca 'karara uygun' rakiplerle hesaplanır: geçerli fiyatı olan, eşleşme güveni yeterli, fiyatı sizin fiyatınızın 0.3x–3x bandında, son 72 saat içinde doğrulanmış ve piyasa medyanından aşırı kopuk olmayan rakipler."
               />
             </h2>
             {positionBadge && (
@@ -1123,7 +1133,7 @@ export default function ProductDetailPage() {
                 Karara uygun rakip
                 <InfoTip
                   align="right"
-                  text="Dört kalite kontrolünden geçen rakipler: geçerli fiyat, yeterli eşleşme güveni, fiyat bandında (0.3x–3x) ve son 72 saatte doğrulanmış. Piyasa pozisyonu ve fiyat önerisi yalnızca bunlarla hesaplanır."
+                  text="Beş kalite kontrolünden geçen rakipler: geçerli fiyat, yeterli eşleşme güveni, fiyat bandında (0.3x–3x), son 72 saatte doğrulanmış ve piyasa medyanından kopuk değil (sahte/yem ilan koruması). Piyasa pozisyonu ve fiyat önerisi yalnızca bunlarla hesaplanır."
                 />
               </span>
               <span className="text-white">{validCompetitors.length}</span>
@@ -1133,7 +1143,7 @@ export default function ProductDetailPage() {
                 Şüpheli eşleşme
                 <InfoTip
                   align="right"
-                  text="Eşleşme güveni düşük veya fiyatı sizinkiyle kıyaslanamayacak kadar farklı kayıtlar. Listede görünür ama hesaplamalara girmez. 'Şüpheli olanlar' filtresiyle inceleyebilirsiniz."
+                  text="Eşleşme güveni düşük, fiyatı sizinkiyle kıyaslanamayacak kadar farklı veya piyasa medyanından aşırı kopuk (olası sahte/yem ilan) kayıtlar. Listede görünür ama hesaplamalara girmez. 'Şüpheli olanlar' filtresiyle inceleyebilirsiniz."
                 />
               </span>
               <span className="text-white">{suspiciousCompetitors.length}</span>
@@ -1688,6 +1698,16 @@ export default function ProductDetailPage() {
                               title="Fiyatı sizin fiyatınızın 0.3x–3x bandının dışında — büyük olasılıkla farklı ürün; hesaplara dahil edilmez"
                             >
                               Bant dışı
+                            </span>
+                          )}
+                          {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
+                            "peer-outlier",
+                          ) && (
+                            <span
+                              className="text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 px-1.5 py-0.5 rounded"
+                              title="Fiyatı diğer rakiplerin medyanından aşırı kopuk — büyük olasılıkla sahte/yem ilan veya farklı ürün; pozisyon, öneri ve alarm hesaplarına dahil edilmez"
+                            >
+                              Piyasa dışı
                             </span>
                           )}
                         </div>

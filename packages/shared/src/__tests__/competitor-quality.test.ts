@@ -415,3 +415,143 @@ describe("isAccessoryListing (aksesuar/yedek parça guard'ı)", () => {
     );
   });
 });
+
+// ============================================
+// Akran-medyan fiyat aykırılığı (peer outlier) — Philips prod vakası
+// ============================================
+//
+// Gerçek veri (2026-07, Philips HD9650/90, kendi fiyat ₺9.475): 16 rakibin
+// 14'ü ₺7.2K–16.4K bandında, biri ₺3.000 (sahte/yem ilan), biri ₺29.002
+// (bundle/aşırı). ₺3.000, 0.3x bandını (0.317) kılpayı geçip "önerilen fiyat
+// ₺2.999" ürettirdi. Akran-medyan kuralı ikisini de karar dışına alır ama
+// ₺7.249'luk GERÇEK agresif rakibi korur.
+
+import {
+  detectPeerPriceOutlier,
+  assessCompetitorList,
+  PEER_OUTLIER_MIN_PEERS,
+} from "../competitor-quality";
+
+const PHILIPS_PRICES = [
+  3000, 7249, 9082.26, 9082.26, 9082.26, 9499, 9688.56, 9999, 10580, 10989, 11490, 11999.9, 14353,
+  15197.11, 16392.03, 29002.03,
+];
+
+function peersOf(price: number, all: number[]): number[] {
+  const idx = all.indexOf(price);
+  return all.filter((_, i) => i !== idx);
+}
+
+describe("detectPeerPriceOutlier (akran-medyan aykırılığı)", () => {
+  it("flags the ₺3.000 fake listing as too-low (Philips prod vakası)", () => {
+    expect(detectPeerPriceOutlier(3000, peersOf(3000, PHILIPS_PRICES))).toBe("too-low");
+  });
+
+  it("flags the ₺29.002 listing as too-high", () => {
+    expect(detectPeerPriceOutlier(29002.03, peersOf(29002.03, PHILIPS_PRICES))).toBe("too-high");
+  });
+
+  it("does NOT flag the genuinely aggressive ₺7.249 competitor", () => {
+    expect(detectPeerPriceOutlier(7249, peersOf(7249, PHILIPS_PRICES))).toBeNull();
+  });
+
+  it("does NOT flag mid-market prices", () => {
+    expect(detectPeerPriceOutlier(9499, peersOf(9499, PHILIPS_PRICES))).toBeNull();
+    expect(detectPeerPriceOutlier(16392.03, peersOf(16392.03, PHILIPS_PRICES))).toBeNull();
+  });
+
+  it("cluster protection: two sellers together at a low price are NOT flagged", () => {
+    // İki satıcı birlikte ucuzsa gerçek olabilir (tasfiye/kampanya) — izolasyon
+    // şartı (en yakın akrandan ≥1.8x kopukluk) sağlanmaz, bayrak yok.
+    const prices = [3000, 3100, 9500, 9800, 10000, 10500];
+    expect(detectPeerPriceOutlier(3000, peersOf(3000, prices))).toBeNull();
+    expect(detectPeerPriceOutlier(3100, peersOf(3100, prices))).toBeNull();
+  });
+
+  it("small samples are never flagged (median unreliable)", () => {
+    const few = [3000, 9500, 10000, 10500]; // kendisi hariç 3 akran < MIN_PEERS
+    expect(peersOf(3000, few).length).toBeLessThan(PEER_OUTLIER_MIN_PEERS);
+    expect(detectPeerPriceOutlier(3000, peersOf(3000, few))).toBeNull();
+  });
+
+  it("ignores invalid peer prices and returns null for invalid price", () => {
+    expect(detectPeerPriceOutlier(0, PHILIPS_PRICES)).toBeNull();
+    expect(detectPeerPriceOutlier(NaN, PHILIPS_PRICES)).toBeNull();
+    expect(detectPeerPriceOutlier(3000, [0, -5, NaN, 9500])).toBeNull();
+  });
+});
+
+describe("assessCompetitorList (iki geçişli liste değerlendirmesi)", () => {
+  const now = new Date("2026-07-10T12:00:00Z");
+  const fresh = new Date("2026-07-10T10:00:00Z");
+  const input = (price: number) => ({ price, matchScore: 85, lastScrapedAt: fresh });
+
+  it("marks the Philips outliers unusable with the peer-outlier issue", () => {
+    const inputs = PHILIPS_PRICES.map(input);
+    const assessments = assessCompetitorList(inputs, { ownPrice: 9475, now });
+
+    const at = (price: number) => assessments[PHILIPS_PRICES.indexOf(price)];
+    expect(at(3000).usable).toBe(false);
+    expect(at(3000).issues).toContain("peer-outlier");
+    // ₺29.002 daha 1. geçişte 3x bandının (9475×3=28425) dışında kalır —
+    // out-of-band ile elenir, akran kuralına hiç ulaşmaz. Sonuç aynı: karar dışı.
+    expect(at(29002.03).usable).toBe(false);
+    expect(at(29002.03).issues).toContain("out-of-band");
+    expect(at(7249).usable).toBe(true);
+    expect(at(9499).usable).toBe(true);
+
+    const usableCount = assessments.filter((a) => a.usable).length;
+    expect(usableCount).toBe(14);
+  });
+
+  it("peer set excludes rows that already failed basic checks", () => {
+    // Bayat/bantdışı kayıtlar akran havuzuna girmez — çöp veri medyanı bükemez.
+    const stale = new Date("2026-07-01T00:00:00Z");
+    const inputs = [
+      { price: 3000, matchScore: 85, lastScrapedAt: fresh },
+      { price: 3050, matchScore: 85, lastScrapedAt: stale }, // bayat → akran DEĞİL
+      ...[9500, 9800, 10000, 10500, 11000].map(input),
+    ];
+    const assessments = assessCompetitorList(inputs, { ownPrice: 9475, now });
+    // Bayat 3050 akran olsaydı 3000 kümelenme korumasına takılıp bayraklanmazdı;
+    // akran değil → 3000 izole kalır ve bayraklanır.
+    expect(assessments[0].usable).toBe(false);
+    expect(assessments[0].issues).toContain("peer-outlier");
+    expect(assessments[1].issues).toContain("stale");
+  });
+
+  it("keeps single-check behavior when there are not enough peers", () => {
+    const inputs = [900, 9500, 10000].map(input);
+    const assessments = assessCompetitorList(inputs, { ownPrice: 9475, now });
+    // 900, band (0.3x=2842) dışı zaten — ama peer-outlier EKLENMEZ (akran az).
+    expect(assessments[0].issues).toContain("out-of-band");
+    expect(assessments[0].issues).not.toContain("peer-outlier");
+    expect(assessments[1].usable).toBe(true);
+  });
+
+  it("preserves input order in the returned array", () => {
+    const inputs = [
+      input(29002.03),
+      input(9499),
+      input(3000),
+      input(9999),
+      input(10580),
+      input(7249),
+    ];
+    const assessments = assessCompetitorList(inputs, { ownPrice: 9475, now });
+    expect(assessments).toHaveLength(6);
+    expect(assessments[1].usable).toBe(true); // 9499
+    expect(assessments[2].usable).toBe(false); // 3000
+  });
+
+  it("equal-priced sellers act as each other's peers (only one copy removed)", () => {
+    // Aynı fiyatta üç satıcı (9082.26×3) — birbirlerinin akranı olarak kalır
+    // ve hiçbiri bayraklanmaz.
+    const inputs = PHILIPS_PRICES.map(input);
+    const assessments = assessCompetitorList(inputs, { ownPrice: 9475, now });
+    const dupIdx = PHILIPS_PRICES.indexOf(9082.26);
+    expect(assessments[dupIdx].usable).toBe(true);
+    expect(assessments[dupIdx + 1].usable).toBe(true);
+    expect(assessments[dupIdx + 2].usable).toBe(true);
+  });
+});

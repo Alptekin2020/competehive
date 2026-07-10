@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "rea
 import { formatTRY, formatPctTR } from "@/lib/format";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { isUsableCompetitor, computeMargin } from "@competehive/shared";
+import { assessCompetitorList, computeMargin } from "@competehive/shared";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
@@ -244,19 +244,19 @@ function ProductsPageInner() {
         const myPrice = p.current_price ? Number(p.current_price) : null;
         const competitorCount = p.competitorCount ?? p.competitors?.length ?? 0;
         // "En düşük rakip" yalnızca kalite politikasından (skor, fiyat bandı,
-        // bayatlık) geçen rakiplerden hesaplanır — detay sayfasıyla tutarlı.
-        const competitorPrices = (p.competitors ?? [])
-          .filter((c) =>
-            isUsableCompetitor(
-              {
-                price: c.current_price ? Number(c.current_price) : null,
-                matchScore: c.match_score ?? null,
-                lastScrapedAt: c.last_scraped_at ?? null,
-              },
-              { ownPrice: myPrice },
-            ),
-          )
-          .map((c) => Number(c.current_price))
+        // bayatlık, akran-medyan aykırılığı) geçen rakiplerden hesaplanır —
+        // detay sayfasıyla tutarlı.
+        const competitorInputs = (p.competitors ?? []).map((c) => ({
+          price: c.current_price ? Number(c.current_price) : null,
+          matchScore: c.match_score ?? null,
+          lastScrapedAt: c.last_scraped_at ?? null,
+        }));
+        const competitorAssessmentsList = assessCompetitorList(competitorInputs, {
+          ownPrice: myPrice,
+        });
+        const competitorPrices = competitorInputs
+          .filter((_, i) => competitorAssessmentsList[i].usable)
+          .map((c) => Number(c.price))
           .filter((price): price is number => Number.isFinite(price));
         const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
         const stale = isStale(p.last_success_at ?? null);

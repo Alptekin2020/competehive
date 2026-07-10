@@ -19,6 +19,13 @@ export {
   hasConflictingCountDescriptors,
   compareProductCodes,
   isAccessoryListing,
+  detectPeerPriceOutlier,
+  assessCompetitorList,
+  PEER_OUTLIER_MIN_PEERS,
+  PEER_OUTLIER_LOW_RATIO,
+  PEER_OUTLIER_LOW_GAP,
+  PEER_OUTLIER_HIGH_RATIO,
+  PEER_OUTLIER_HIGH_GAP,
 } from "./competitor-quality";
 export type {
   CompetitorIssue,
@@ -26,6 +33,7 @@ export type {
   CompetitorAssessmentInput,
   CompetitorAssessmentOptions,
   ProductCodeRelation,
+  PeerOutlierKind,
 } from "./competitor-quality";
 export {
   THIN_MARGIN_PCT,
