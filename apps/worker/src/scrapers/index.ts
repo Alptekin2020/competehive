@@ -233,7 +233,16 @@ export async function closeBrowser(): Promise<void> {
   }
 }
 
-async function scrapeWithPuppeteer(url: string, config: ScraperConfig): Promise<string> {
+interface PuppeteerFetchResult {
+  html: string;
+  finalUrl: string | null;
+  title: string | null;
+}
+
+async function scrapeWithPuppeteer(
+  url: string,
+  config: ScraperConfig,
+): Promise<PuppeteerFetchResult> {
   const browser = await getBrowser();
   const page = await browser.newPage();
 
@@ -264,10 +273,47 @@ async function scrapeWithPuppeteer(url: string, config: ScraperConfig): Promise<
     await new Promise((r) => setTimeout(r, 3000));
 
     const html = await page.content();
-    return html;
+    const finalUrl = page.url() || null;
+    const title = await page.title().catch(() => null);
+    return { html, finalUrl, title };
   } finally {
     await page.close();
   }
+}
+
+// Genel bot-koruma/challenge sayfası imzaları. Dönen değer teşhis loglarında
+// kullanılır (hangi imza yakalandı) — null ise sayfa challenge görünmüyor.
+// Trendyol/Hepsiburada'nın kendi özel tespitleri ayrıdır; bu, generic yol
+// (N11, Amazon TR, Teknosa...) için ortak son kontroldür.
+export function detectBotChallenge(html: string): string | null {
+  const lower = html.toLowerCase();
+  // Gerçek ürün sayfaları büyüktür; inline bundle'lardaki doğal "captcha"
+  // kelimeleri yanlış pozitif üretmesin diye büyük gövdede yalnızca kesin
+  // imzalara bakılır (Hepsiburada isAkamaiBlockHtml dersi).
+  const definite = [
+    'action="/errors/validatecaptcha', // Amazon robot check formu
+    "api-services-support@amazon.com", // Amazon blok sayfası iletişim maili
+    "px-captcha", // PerimeterX (n11 dahil bazı TR siteleri)
+    "_incapsula_", // Imperva Incapsula
+    "queue-it.net", // kuyruk sayfaları
+  ];
+  for (const marker of definite) {
+    if (lower.includes(marker)) return marker;
+  }
+  if (html.length >= 50_000) return null;
+  const smallPageMarkers = [
+    "captcha",
+    "just a moment",
+    "checking your browser",
+    "access denied",
+    "erişim engellendi",
+    "robot check",
+    "olağandışı trafik",
+  ];
+  for (const marker of smallPageMarkers) {
+    if (lower.includes(marker)) return marker;
+  }
+  return null;
 }
 
 // ============================================
@@ -936,40 +982,70 @@ async function scrapeWithFallback(
   parseHtml: (html: string) => ScrapedProduct | null,
   marketplaceName: string,
 ): Promise<ScrapedProduct> {
+  const urlTail = url.split("/").filter(Boolean).slice(-1)[0]?.slice(0, 50) || "unknown";
+  // Teşhis özeti: üretimde "cekilemedi (HTML + Puppeteer)" tek satırı hangi
+  // aşamanın neden düştüğünü söylemiyordu (N11 prod vakası günlerce kör
+  // kaldı). Trendyol scraper'ındaki detay seviyesi generic yola da uygulanır.
+  let htmlFailSummary = "never-ran";
+  let puppeteerFailSummary = "never-ran";
+
   // Strategy 1: Direct HTML fetch
   try {
     const html = await fetchWithRetry(url, config);
-    const product = parseHtml(html);
+    const challenge = detectBotChallenge(html);
+    const product = challenge ? null : parseHtml(html);
     if (product && product.price > 0) {
       logger.info(
         `${marketplaceName} HTML scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
       return product;
     }
-    logger.warn(`${marketplaceName} HTML fetch returned no product data, trying Puppeteer`);
+    htmlFailSummary = challenge
+      ? `challenge=${challenge},len=${html.length}`
+      : `parse-fail,len=${html.length}`;
+    logger.warn(
+      `${marketplaceName} HTML [${urlTail}]: len=${html.length} challenge=${challenge ?? "none"} ` +
+        `parsed=${product ? `name=${!!product.name},price=${product.price}` : "null"} — trying Puppeteer`,
+    );
   } catch (error) {
+    htmlFailSummary = errorMessage(error).slice(0, 80);
     logger.warn(`${marketplaceName} HTML fetch failed: ${errorMessage(error)}, trying Puppeteer`);
   }
 
   // Strategy 2: Puppeteer fallback
   try {
     logger.info(`Attempting ${marketplaceName} scrape with Puppeteer`);
-    const html = await scrapeWithPuppeteer(url, config);
-    const product = parseHtml(html);
+    const { html, finalUrl, title } = await scrapeWithPuppeteer(url, config);
+    const challenge = detectBotChallenge(html);
+    const product = challenge ? null : parseHtml(html);
+
+    logger.info(
+      `${marketplaceName} Puppeteer [${urlTail}]: finalUrl=${finalUrl?.slice(0, 100) ?? "none"} ` +
+        `len=${html.length} challenge=${challenge ?? "none"} title="${(title || "").slice(0, 80)}" ` +
+        `parsed=${product ? `name=${!!product.name},price=${product.price}` : "null"}`,
+    );
+
     if (product && product.price > 0) {
       logger.info(
         `${marketplaceName} Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
       return product;
     }
+    puppeteerFailSummary = challenge
+      ? `challenge=${challenge},len=${html.length}`
+      : `parse-fail,len=${html.length},finalUrl=${finalUrl?.slice(0, 80) ?? "none"}`;
   } catch (error) {
+    puppeteerFailSummary = errorMessage(error).slice(0, 100);
     logger.warn(`${marketplaceName} Puppeteer scrape failed: ${errorMessage(error)}`);
   }
 
-  throw new ScraperError(`${marketplaceName} urun bilgileri cekilemedi (HTML + Puppeteer)`, {
-    code: "SCRAPE_ALL_METHODS_FAILED",
-    retryable: true,
-  });
+  throw new ScraperError(
+    `${marketplaceName} urun bilgileri cekilemedi (HTML: ${htmlFailSummary} | Puppeteer: ${puppeteerFailSummary})`,
+    {
+      code: "SCRAPE_ALL_METHODS_FAILED",
+      retryable: true,
+    },
+  );
 }
 
 // ============================================
@@ -1525,11 +1601,27 @@ export async function scrapeHepsiburada(
 // AMAZON TR SCRAPER
 // ============================================
 
-function parseAmazonTRHtml(html: string): ScrapedProduct | null {
+// Buybox (satın alma kutusu) fiyat kapsamları — öncelik sırasıyla. Canlıda
+// doğrulanan kritik ders (2026-07, HD9650/90 vakası): buybox'sız bir üründe
+// sayfadaki İLK .a-price, "benzer ürünler" karuselindeki ALAKASIZ bir ürünün
+// fiyatıdır (9.5K'lık fritözde 926 TL yakalandı). Fiyat bu kapsamların DIŞINDAN
+// asla alınmaz; buybox boşsa ürün fiyatsız sayılır (yanlış veri > veri yok).
+const AMAZON_BUYBOX_PRICE_SELECTORS = [
+  "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
+  "#corePrice_feature_div .a-price .a-offscreen",
+  "#apex_desktop .a-price .a-offscreen",
+  "#price_inside_buybox",
+  "#priceblock_ourprice",
+  "#priceblock_dealprice",
+  "#sns-base-price",
+];
+
+export function parseAmazonTRHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
+  // Amazon ürün sayfalarında JSON-LD YOKTUR (canlı doğrulandı: 0 blok) —
+  // bu yol yalnızca olası gelecekteki eklemeler için korunur.
   const holder: { data: Partial<ScrapedProduct> } = { data: {} };
-
   $('script[type="application/ld+json"]').each((_, el) => {
     if (holder.data.price && holder.data.price > 0) return;
     const jsonLd = $(el).html();
@@ -1554,17 +1646,46 @@ function parseAmazonTRHtml(html: string): ScrapedProduct | null {
 
   const parsedFromLd = holder.data;
   const htmlName = $("#productTitle").text().trim();
-  const htmlPrice = parsePrice($(".a-price .a-offscreen").first().text().trim());
-  const sellerName = $("#sellerProfileTriggerId").text().trim() || $("#merchantInfo").text().trim();
-  const imageUrl = $("#landingImage").attr("src") || $("#imgTagWrapperId img").attr("src");
-  const inStock = !$("#outOfStock").length && !html.toLowerCase().includes("currently unavailable");
+
+  let htmlPrice = 0;
+  for (const selector of AMAZON_BUYBOX_PRICE_SELECTORS) {
+    const text = $(selector).first().text().trim();
+    if (!text) continue;
+    const parsed = parsePrice(text);
+    if (parsed > 0) {
+      htmlPrice = parsed;
+      break;
+    }
+  }
+
+  // Satıcı: 3P satıcılarda #sellerProfileTriggerId ("TAŞARAVM" canlı vakası);
+  // yeni vitrinde #merchantInfoFeature_feature_div "Satıcı X ..." metni taşır.
+  const merchantFeatureText = $("#merchantInfoFeature_feature_div").text().trim();
+  const merchantFromFeature = merchantFeatureText.match(/Satıcı\s+(\S[^\n]*?)(?:\s{2,}|$)/)?.[1];
+  const sellerName =
+    $("#sellerProfileTriggerId").text().trim() ||
+    merchantFromFeature?.trim() ||
+    $("#merchantInfo").text().trim().replace(/\s+/g, " ").slice(0, 80) ||
+    undefined;
+
+  const imageUrl =
+    $("#landingImage").attr("src") ||
+    $("#imgTagWrapperId img").attr("src") ||
+    $("meta[property='og:image']").attr("content");
+
+  const availabilityText = $("#availability").text().trim().toLowerCase();
+  const inStock =
+    !$("#outOfStock").length &&
+    !html.toLowerCase().includes("currently unavailable") &&
+    !availabilityText.includes("mevcut değil") &&
+    !availabilityText.includes("temin edilemiyor");
 
   const result: ScrapedProduct = {
     name: parsedFromLd.name || htmlName,
     price: parsedFromLd.price || htmlPrice,
     currency: parsedFromLd.currency || "TRY",
     inStock: parsedFromLd.inStock ?? inStock,
-    sellerName: parsedFromLd.sellerName || sellerName || undefined,
+    sellerName: parsedFromLd.sellerName || sellerName,
     imageUrl: parsedFromLd.imageUrl || imageUrl || undefined,
   };
 
@@ -1586,10 +1707,19 @@ export async function scrapeAmazonTR(
 // N11 SCRAPER
 // ============================================
 
-function parseN11Html(html: string): ScrapedProduct | null {
+export function parseN11Html(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
-  const holder: { data: Partial<ScrapedProduct> } = { data: {} };
+  // İki fiyat kaynağı ayrı tutulur çünkü anlamları FARKLI (canlı doğrulanan
+  // N11 yapısı, 2026-07): JSON-LD artık @type=AggregateOffer taşıyor ve
+  // `price` alanı YOK — yalnızca ürünün TÜM satıcılar içindeki en düşüğü olan
+  // `lowPrice` var. DOM'daki fiyat ise sayfada gösterilen (magaza=... ile
+  // istenen) satıcının kendi fiyatıdır. Kendi-fiyat takibi için DOM önce
+  // gelir; lowPrice yalnızca DOM ayrıştırılamadığında son çaredir.
+  const holder: {
+    data: Partial<ScrapedProduct>;
+    aggregateLowPrice: number;
+  } = { data: {}, aggregateLowPrice: 0 };
 
   $('script[type="application/ld+json"]').each((_, el) => {
     if (holder.data.price && holder.data.price > 0) return;
@@ -1597,16 +1727,20 @@ function parseN11Html(html: string): ScrapedProduct | null {
     if (!jsonLd) return;
     try {
       const ld = JSON.parse(jsonLd);
+      if (ld?.["@type"] !== "Product" && !ld?.offers) return;
       const offer = Array.isArray(ld?.offers) ? ld.offers[0] : ld?.offers;
-      if (offer?.price) {
+      const directPrice = offer?.price ? parsePrice(String(offer.price)) : 0;
+      const lowPrice = offer?.lowPrice ? parsePrice(String(offer.lowPrice)) : 0;
+      if (directPrice > 0 || lowPrice > 0 || ld?.name) {
         holder.data = {
           name: ld?.name,
-          price: parsePrice(String(offer.price ?? "")),
-          currency: offer.priceCurrency || "TRY",
-          sellerName: offer.seller?.name,
+          price: directPrice,
+          currency: offer?.priceCurrency || "TRY",
+          sellerName: offer?.seller?.name,
           imageUrl: Array.isArray(ld?.image) ? ld.image[0] : ld?.image,
-          inStock: offer.availability?.includes("InStock") ?? true,
+          inStock: offer?.availability?.includes("InStock") ?? true,
         };
+        holder.aggregateLowPrice = lowPrice;
       }
     } catch {
       // continue
@@ -1620,12 +1754,24 @@ function parseN11Html(html: string): ScrapedProduct | null {
   );
   const imageUrl =
     $(".imgObj").attr("data-original") || $("meta[property='og:image']").attr("content");
-  const sellerName = $(".unf-p-sellerInfo a").text().trim() || undefined;
+  // .unf-p-sellerInfo eski vitrinden kalma (canlıda artık yok). Satıcı adı
+  // yakalanamazsa BU SAYFANIN canonical/og:url'indeki ?magaza= parametresinden
+  // okunur — HTML genelinde regex taraması yapılmaz çünkü JSON-LD içindeki
+  // AggregateOffer.url BAŞKA satıcının (en ucuzun) magaza parametresini taşır.
+  const canonicalUrl =
+    $('link[rel="canonical"]').attr("href") || $('meta[property="og:url"]').attr("content") || "";
+  const magazaMatch = canonicalUrl.match(/[?&]magaza=([A-Za-z0-9_-]+)/);
+  const sellerName =
+    $(".unf-p-sellerInfo a").text().trim() ||
+    (magazaMatch ? decodeURIComponent(magazaMatch[1]) : undefined) ||
+    undefined;
   const inStock = !html.toLowerCase().includes("stokta yok");
 
   const result: ScrapedProduct = {
     name: parsedFromLd.name || htmlName,
-    price: parsedFromLd.price || htmlPrice,
+    // Öncelik: sayfada gösterilen satıcı fiyatı (DOM) → JSON-LD düz Offer
+    // fiyatı → AggregateOffer.lowPrice (piyasa en düşüğü; yaklaşık değer).
+    price: htmlPrice || parsedFromLd.price || holder.aggregateLowPrice || 0,
     currency: parsedFromLd.currency || "TRY",
     inStock: parsedFromLd.inStock ?? inStock,
     sellerName: parsedFromLd.sellerName || sellerName,
