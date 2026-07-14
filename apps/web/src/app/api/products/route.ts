@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Rate limit: 10 products per minute per user
-    const rl = await rateLimit(`rate:products:${user.id}`, 10, 60);
+    const rl = await rateLimit(`rate:products:${user.id}`, 10, 60, { failClosed: true });
     if (!rl.success) return rateLimitResponse(rl.reset);
 
     const body = await req.json();

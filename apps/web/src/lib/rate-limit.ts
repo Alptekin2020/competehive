@@ -67,6 +67,10 @@ interface SlidingWindowResult {
   resetAt: number;
 }
 
+interface SlidingWindowOptions {
+  failClosed?: boolean;
+}
+
 /**
  * Sliding window rate limiter using Redis sorted sets.
  * @param identifier - User ID or IP address
@@ -79,6 +83,7 @@ export async function checkRateLimit(
   limit: number,
   windowSeconds: number,
   prefix: string = "rl",
+  options?: SlidingWindowOptions,
 ): Promise<SlidingWindowResult> {
   try {
     const key = `${prefix}:${identifier}`;
@@ -100,8 +105,17 @@ export async function checkRateLimit(
       resetAt: now + windowSeconds,
     };
   } catch (error) {
-    // If Redis is down, allow the request (fail open)
+    // Varsayılan fail-open (kullanıcı deneyimi), ama ücretli dış API/queue
+    // tetikleyen rotalar fail-closed kullanır; Redis kesintisi maliyet korumasını
+    // sessizce kaldırmamalı.
     console.warn("Rate limit check failed:", error);
+    if (options?.failClosed) {
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: Math.floor(Date.now() / 1000) + windowSeconds,
+      };
+    }
     return { allowed: true, remaining: limit, resetAt: 0 };
   }
 }
@@ -113,11 +127,11 @@ export async function checkRateLimit(
 export const RATE_LIMITS = {
   api: { limit: 60, window: 60, prefix: "rl:api" },
   productAdd: { limit: 10, window: 60, prefix: "rl:add" },
-  bulkImport: { limit: 3, window: 300, prefix: "rl:bulk" },
+  bulkImport: { limit: 3, window: 300, prefix: "rl:bulk", failClosed: true },
   // Checkout sayfası her açılışta bir oturum oluşturur — plan kıyaslayan meşru
   // bir kullanıcı 5 dakikada 5'ten fazla sayfa görüntüleyebilir; limit satın
   // almayı bloklamayacak kadar geniş, kötüye kullanımı kesecek kadar dar olmalı.
-  checkout: { limit: 10, window: 300, prefix: "rl:checkout" },
+  checkout: { limit: 10, window: 300, prefix: "rl:checkout", failClosed: true },
   refresh: { limit: 10, window: 300, prefix: "rl:refresh" },
   auth: { limit: 10, window: 900, prefix: "rl:auth" },
 };
