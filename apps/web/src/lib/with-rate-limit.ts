@@ -5,6 +5,7 @@ interface RateLimitConfig {
   limit: number;
   window: number;
   prefix: string;
+  failClosed?: boolean;
 }
 
 /**
@@ -19,7 +20,9 @@ export async function applyRateLimit(
   const identifier =
     userId || req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "anonymous";
 
-  const result = await checkRateLimit(identifier, config.limit, config.window, config.prefix);
+  const result = await checkRateLimit(identifier, config.limit, config.window, config.prefix, {
+    failClosed: config.failClosed,
+  });
 
   if (!result.allowed) {
     return NextResponse.json(

@@ -65,6 +65,23 @@ npm run dev:web
 npm run dev:worker
 ```
 
+## Geliştirici Kontrol Listesi
+
+Kod değişikliğinden önce/sonra aşağıdaki kontrolleri çalıştırın:
+
+```bash
+npm run check:schema-sync
+npm run typecheck
+npm run lint
+npm run test:run
+npm run build
+```
+
+> Not: Prisma komutları `DATABASE_URL` bekler. Lokal ortamda gerçek veritabanı
+> yoksa yalnızca şema doğrulaması için geçici/dummy bir PostgreSQL bağlantı
+> URL'i kullanılabilir; runtime ve migration işlemlerinde gerçek bağlantı
+> bilgileri kullanılmalıdır.
+
 ## Railway Kurulumu
 
 1. Railway'de yeni proje oluştur
