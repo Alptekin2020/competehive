@@ -691,17 +691,43 @@ export const alertWorker = new Worker(
       userThresholdPct: rule.user.alertThresholdPct,
     });
 
+    // Cooldown kontrolü (kural, ürün) bazlı: Redis birincil, Redis yokken
+    // kural bazlı lastTriggered'a düşülür. Sonuç job içinde cache'lenir —
+    // kazanan-seçme ön geçişi ve ana döngü aynı kuralı iki kez sorgulamasın.
+    const cooldownCache = new Map<string, boolean>();
+    const ruleOnCooldown = async (rule: (typeof rules)[number]): Promise<boolean> => {
+      const cached = cooldownCache.get(rule.id);
+      if (cached !== undefined) return cached;
+      let result = false;
+      const onCooldown = await isOnCooldown(rule.id, productId);
+      if (onCooldown === true) {
+        result = true;
+      } else if (onCooldown === null && rule.lastTriggered) {
+        const cooldownMs = rule.cooldownMinutes * 60 * 1000;
+        result = Date.now() - rule.lastTriggered.getTime() < cooldownMs;
+      }
+      cooldownCache.set(rule.id, result);
+      return result;
+    };
+
     // Aynı fiyat olayında PRICE_DROP/PRICE_INCREASE ile PERCENTAGE_CHANGE
     // birlikte tetiklenebiliyordu — kullanıcıya aynı değişim için "%5,2 arttı"
     // ve "Fiyat arttı" diye İKİ ayrı mesaj gidiyordu. Koşulu sağlayan
     // fiyat-hareketi kuralları arasından tek kazanan seçilir; diğerleri bu
     // olay için atlanır (bildirim İÇERİĞİ zaten tutar + yüzdeyi birlikte taşır).
+    // Kazanan yalnızca GÖNDERİLEBİLİR (cooldown'da olmayan) kurallar arasından
+    // seçilir — cooldown'daki kural kazanıp gönderilebilecek diğer kuralı da
+    // bastırsaydı olay tamamen sessiz kalırdı.
     const firedMovementRules = rules.filter(
       (r) =>
         PRICE_MOVEMENT_RULE_TYPES.has(r.ruleType) &&
         evaluateAlertRule(r.ruleType, contextFor(r, 0)),
     );
-    const movementWinner = pickPriceMovementWinner(firedMovementRules);
+    const sendableMovementRules: typeof rules = [];
+    for (const rule of firedMovementRules) {
+      if (!(await ruleOnCooldown(rule))) sendableMovementRules.push(rule);
+    }
+    const movementWinner = pickPriceMovementWinner(sendableMovementRules);
 
     for (const rule of rules) {
       if (
@@ -745,16 +771,8 @@ export const alertWorker = new Worker(
       if (!shouldAlert) continue;
 
       // Cooldown (kural, ürün) bazlıdır: genel bir kuralın A ürünündeki
-      // tetiklenmesi B ürününün bildirimini bastırmamalı. Redis erişilemezse
-      // kural bazlı lastTriggered'a geri düşülür.
-      const onCooldown = await isOnCooldown(rule.id, productId);
-      if (onCooldown === true) continue;
-      if (onCooldown === null && rule.lastTriggered) {
-        const cooldownMs = rule.cooldownMinutes * 60 * 1000;
-        if (Date.now() - rule.lastTriggered.getTime() < cooldownMs) {
-          continue;
-        }
-      }
+      // tetiklenmesi B ürününün bildirimini bastırmamalı.
+      if (await ruleOnCooldown(rule)) continue;
 
       {
         await sendAlerts(rule, {
