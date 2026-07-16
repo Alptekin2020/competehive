@@ -44,6 +44,7 @@ const createAlertSchema = z.object({
     "PRICE_THRESHOLD",
     "PERCENTAGE_CHANGE",
     "COMPETITOR_CHEAPER",
+    "COMPETITOR_PRICE_CHANGE",
     "OUT_OF_STOCK",
     "BACK_IN_STOCK",
     "LOW_MARGIN",

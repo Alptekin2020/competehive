@@ -17,7 +17,15 @@ import {
 } from "../utils/scrape-failures";
 import { captureError } from "../sentry";
 import { PLAN_EXPIRY_GRACE_MS } from "../shared";
-import { evaluateAlertRule, resolveApplicableRules } from "./alert-rules";
+import {
+  evaluateAlertRule,
+  filterSignificantCompetitorMoves,
+  pickPriceMovementWinner,
+  resolveApplicableRules,
+  PRICE_MOVEMENT_RULE_TYPES,
+  type AlertEvalContext,
+  type CompetitorPriceMove,
+} from "./alert-rules";
 
 const prisma = new PrismaClient();
 
@@ -87,8 +95,15 @@ export async function maybeEnqueueAlerts(params: {
   currentPrice: number;
   previousInStock: boolean | null;
   inStock: boolean;
+  /**
+   * Aynı tarama sırasında tespit edilen rakip fiyat hareketleri (örn. aynı
+   * ilanın diğer satıcıları). Kendi fiyat/stok değişmese bile rakip hareketi
+   * tek başına bir alert kontrolü tetikler (COMPETITOR_PRICE_CHANGE).
+   */
+  competitorMoves?: CompetitorPriceMove[];
 }): Promise<void> {
   const { productId, previousPrice, currentPrice, previousInStock, inStock } = params;
+  const competitorMoves = params.competitorMoves ?? [];
 
   const priceChange = previousPrice ? currentPrice - previousPrice : null;
   const priceChangePct =
@@ -97,14 +112,16 @@ export async function maybeEnqueueAlerts(params: {
       : null;
   const priceChanged = priceChange !== null && priceChange !== 0;
   const stockChanged = previousInStock !== null && previousInStock !== inStock;
+  const competitorChanged = competitorMoves.length > 0;
 
-  if (!priceChanged && !stockChanged) {
+  if (!priceChanged && !stockChanged && !competitorChanged) {
     return;
   }
 
   const eventTypes = [
     ...(priceChanged ? ["price-change"] : []),
     ...(stockChanged ? ["stock-change"] : []),
+    ...(competitorChanged ? ["competitor-price-change"] : []),
   ];
 
   await alertQueue.add("check-alerts", {
@@ -116,6 +133,7 @@ export async function maybeEnqueueAlerts(params: {
     priceChangePct,
     inStock,
     previousInStock,
+    competitorMoves,
   });
 }
 
@@ -134,10 +152,11 @@ async function syncSameListingCompetitors(
   productId: string,
   productUrl: string,
   scraped: ScrapedProduct,
-): Promise<void> {
+): Promise<CompetitorPriceMove[]> {
   const sellers = scraped.otherSellers ?? [];
-  if (sellers.length === 0) return;
+  if (sellers.length === 0) return [];
 
+  const moves: CompetitorPriceMove[] = [];
   try {
     const parsed = new URL(productUrl);
     const listingBase = `${parsed.origin}${parsed.pathname}`;
@@ -145,8 +164,38 @@ async function syncSameListingCompetitors(
     const top = [...sellers].sort((a, b) => a.price - b.price).slice(0, 10);
     const now = new Date();
 
+    // Rakip fiyat hareketi tespiti için upsert ÖNCESİ fiyatlar (URL → fiyat).
+    const existingRows = await prisma.competitor.findMany({
+      where: {
+        trackedProductId: productId,
+        competitorUrl: { in: top.map((s) => `${listingBase}?merchantId=${s.merchantId}`) },
+      },
+      select: { competitorUrl: true, currentPrice: true },
+    });
+    const previousPriceByUrl = new Map(
+      existingRows.map((row) => [
+        row.competitorUrl,
+        row.currentPrice ? Number(row.currentPrice) : null,
+      ]),
+    );
+
     for (const [index, seller] of top.entries()) {
       const competitorUrl = `${listingBase}?merchantId=${seller.merchantId}`;
+
+      // Aynı ilanın satıcısı = matchScore 100; kalite kapısı gerektirmez.
+      const previousPrice = previousPriceByUrl.get(competitorUrl) ?? null;
+      if (
+        previousPrice &&
+        previousPrice > 0 &&
+        seller.price > 0 &&
+        seller.price !== previousPrice
+      ) {
+        moves.push({
+          competitorName: seller.sellerName ?? "Trendyol satıcısı",
+          previousPrice,
+          currentPrice: seller.price,
+        });
+      }
       const competitor = await prisma.competitor.upsert({
         where: {
           trackedProductId_competitorUrl: { trackedProductId: productId, competitorUrl },
@@ -205,6 +254,7 @@ async function syncSameListingCompetitors(
     // Rakip senkronu ana taramayı asla düşürmesin — fiyat/stok güncellemesi kritik.
     logger.error({ productId, error }, "Same-listing competitor sync failed (non-fatal)");
   }
+  return moves;
 }
 
 // ============================================
@@ -295,7 +345,8 @@ export const scrapeWorker = new Worker(
 
       // Aynı ilandaki diğer satıcıları rakip olarak senkronla — alert
       // kuyruğundan ÖNCE ki COMPETITOR_CHEAPER taze buybox fiyatlarını görsün.
-      await syncSameListingCompetitors(productId, productUrl, result);
+      // Dönen fiyat hareketleri COMPETITOR_PRICE_CHANGE kuralını besler.
+      const competitorMoves = await syncSameListingCompetitors(productId, productUrl, result);
 
       // Fiyat/stok değiştiyse alert kontrolünü kuyruğa al — tüm fiyat-güncelleme
       // yollarıyla paylaşılan ortak yardımcı (manuel "Yenile" ve 6 saatlik
@@ -306,6 +357,7 @@ export const scrapeWorker = new Worker(
         currentPrice: result.price,
         previousInStock,
         inStock: result.inStock,
+        competitorMoves,
       });
 
       logger.info(
@@ -518,14 +570,21 @@ export const alertWorker = new Worker(
       inStock,
       previousInStock,
       eventTypes,
+      competitorMoves,
     } = job.data;
 
     const normalizedEventTypes: string[] = Array.isArray(eventTypes) ? eventTypes : [];
+    const normalizedCompetitorMoves: CompetitorPriceMove[] = Array.isArray(competitorMoves)
+      ? competitorMoves
+      : [];
     const isPriceEvent =
       normalizedEventTypes.includes("price-change") || (priceChange !== null && priceChange !== 0);
     const isStockEvent =
       normalizedEventTypes.includes("stock-change") ||
       (typeof previousInStock === "boolean" && previousInStock !== inStock);
+    const isCompetitorPriceEvent =
+      normalizedEventTypes.includes("competitor-price-change") &&
+      normalizedCompetitorMoves.length > 0;
 
     logger.info({ productId, priceChange, isPriceEvent, isStockEvent }, "Checking alerts");
 
@@ -610,21 +669,64 @@ export const alertWorker = new Worker(
       }
     }
 
+    // Ortak değerlendirme bağlamı — hem kazanan-seçme ön geçişi hem ana döngü
+    // aynı bağlamı kullanır ki iki değerlendirme asla ayrışmasın.
+    const contextFor = (
+      rule: (typeof rules)[number],
+      significantCompetitorMoveCount: number,
+    ): AlertEvalContext => ({
+      currentPrice,
+      priceChange,
+      priceChangePct,
+      isPriceEvent,
+      isStockEvent,
+      isCompetitorPriceEvent,
+      significantCompetitorMoveCount,
+      inStock,
+      previousStockState,
+      thresholdValue: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
+      direction: rule.direction,
+      minCompetitorPrice,
+      marginPct,
+      userThresholdPct: rule.user.alertThresholdPct,
+    });
+
+    // Aynı fiyat olayında PRICE_DROP/PRICE_INCREASE ile PERCENTAGE_CHANGE
+    // birlikte tetiklenebiliyordu — kullanıcıya aynı değişim için "%5,2 arttı"
+    // ve "Fiyat arttı" diye İKİ ayrı mesaj gidiyordu. Koşulu sağlayan
+    // fiyat-hareketi kuralları arasından tek kazanan seçilir; diğerleri bu
+    // olay için atlanır (bildirim İÇERİĞİ zaten tutar + yüzdeyi birlikte taşır).
+    const firedMovementRules = rules.filter(
+      (r) =>
+        PRICE_MOVEMENT_RULE_TYPES.has(r.ruleType) &&
+        evaluateAlertRule(r.ruleType, contextFor(r, 0)),
+    );
+    const movementWinner = pickPriceMovementWinner(firedMovementRules);
+
     for (const rule of rules) {
-      const conditionMet = evaluateAlertRule(rule.ruleType, {
-        currentPrice,
-        priceChange,
-        priceChangePct,
-        isPriceEvent,
-        isStockEvent,
-        inStock,
-        previousStockState,
-        thresholdValue: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
-        direction: rule.direction,
-        minCompetitorPrice,
-        marginPct,
-        userThresholdPct: rule.user.alertThresholdPct,
-      });
+      if (
+        PRICE_MOVEMENT_RULE_TYPES.has(rule.ruleType) &&
+        movementWinner !== null &&
+        rule !== movementWinner
+      ) {
+        continue;
+      }
+
+      // COMPETITOR_PRICE_CHANGE: gürültü tabanlarını (kullanıcı eşiği + kural
+      // eşiği) aşan hareketler kural bazında süzülür — bildirim de yalnızca
+      // bu anlamlı hareketleri listeler.
+      const significantMoves =
+        rule.ruleType === "COMPETITOR_PRICE_CHANGE"
+          ? filterSignificantCompetitorMoves(normalizedCompetitorMoves, {
+              userThresholdPct: rule.user.alertThresholdPct,
+              ruleThresholdPct: rule.thresholdValue != null ? Number(rule.thresholdValue) : null,
+            })
+          : [];
+
+      const conditionMet = evaluateAlertRule(
+        rule.ruleType,
+        contextFor(rule, significantMoves.length),
+      );
 
       // Seviye-tetiklemeli kurallarda edge detection: koşul sürekli doğruysa
       // (ör. rakip haftalardır bizden ucuz) her fiyat olayında aynı uyarıyı
@@ -669,6 +771,7 @@ export const alertWorker = new Worker(
           competitorPrice: minCompetitorPrice,
           cheapestCompetitorName,
           cheaperCompetitorCount,
+          competitorMoves: significantMoves,
         });
 
         await markCooldown(rule.id, productId, rule.cooldownMinutes);

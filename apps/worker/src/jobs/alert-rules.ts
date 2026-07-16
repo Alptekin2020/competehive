@@ -13,6 +13,14 @@ export interface AlertEvalContext {
   isPriceEvent: boolean;
   /** Whether this evaluation was triggered by a stock change. */
   isStockEvent: boolean;
+  /** Whether this evaluation was triggered by competitor price updates. */
+  isCompetitorPriceEvent: boolean;
+  /**
+   * Number of competitor price moves that cleared the noise floors for the
+   * rule being evaluated (see filterSignificantCompetitorMoves). Drives
+   * COMPETITOR_PRICE_CHANGE.
+   */
+  significantCompetitorMoveCount: number;
   /** Current stock state of the tracked product. */
   inStock: boolean;
   /** Previous stock state, or null when unknown. */
@@ -39,9 +47,62 @@ export interface AlertEvalContext {
 // user-level alertThresholdPct acts as a global noise floor on exactly these:
 // a move smaller than the user's threshold produces no alert. Deliberately
 // excluded — PRICE_THRESHOLD (an explicit target price; a small move across the
-// target still matters), COMPETITOR_CHEAPER (driven by a competitor's price,
-// not our own delta) and the stock rules (no price delta at all).
-const PRICE_MOVEMENT_RULE_TYPES = new Set(["PRICE_DROP", "PRICE_INCREASE", "PERCENTAGE_CHANGE"]);
+// target still matters), COMPETITOR_CHEAPER / COMPETITOR_PRICE_CHANGE (driven
+// by a competitor's price, not our own delta — the competitor rule applies the
+// same floor per-move in filterSignificantCompetitorMoves) and the stock rules
+// (no price delta at all).
+export const PRICE_MOVEMENT_RULE_TYPES = new Set([
+  "PRICE_DROP",
+  "PRICE_INCREASE",
+  "PERCENTAGE_CHANGE",
+]);
+
+/**
+ * Aynı fiyat değişimi için birden fazla fiyat-hareketi kuralı (PRICE_DROP /
+ * PRICE_INCREASE / PERCENTAGE_CHANGE) tetiklenebilir — kullanıcıya aynı olay
+ * "%5,2 arttı" ve "Fiyat arttı" diye İKİ ayrı mesajla gitmesin. Koşulu sağlayan
+ * fiyat-hareketi kuralları arasından TEK kazanan seçilir; diğerleri o olay için
+ * bastırılır. PERCENTAGE_CHANGE tercih edilir (kullanıcının bilinçli kurduğu
+ * eşiği taşır), yoksa ilk tetiklenen kural kazanır.
+ */
+export function pickPriceMovementWinner<T extends { ruleType: string }>(firedRules: T[]): T | null {
+  const movement = firedRules.filter((r) => PRICE_MOVEMENT_RULE_TYPES.has(r.ruleType));
+  if (movement.length === 0) return null;
+  return movement.find((r) => r.ruleType === "PERCENTAGE_CHANGE") ?? movement[0];
+}
+
+// ============================================
+// Rakip fiyat hareketi (COMPETITOR_PRICE_CHANGE)
+// ============================================
+
+export interface CompetitorPriceMove {
+  /** Bildirimde gösterilecek rakip adı; null olabilir (legacy/isimsiz kayıt). */
+  competitorName: string | null;
+  previousPrice: number;
+  currentPrice: number;
+}
+
+/**
+ * Rakip fiyat hareketlerinden yalnızca ANLAMLI olanları bırakır: geçersiz
+ * fiyatlar elenir ve mutlak % değişim, kullanıcı gürültü tabanı
+ * (alertThresholdPct) ile kuralın kendi eşiğinin (thresholdValue, opsiyonel)
+ * BÜYÜĞÜNÜ aşmak zorundadır. Serper/scrape kaynaklı küçük fiyat oynamaları
+ * böylece spam üretmez.
+ */
+export function filterSignificantCompetitorMoves<T extends CompetitorPriceMove>(
+  moves: T[],
+  opts: { userThresholdPct: number; ruleThresholdPct: number | null },
+): T[] {
+  const floor = Math.max(opts.userThresholdPct || 0, opts.ruleThresholdPct ?? 0);
+  return moves.filter((move) => {
+    const { previousPrice, currentPrice } = move;
+    if (!Number.isFinite(previousPrice) || previousPrice <= 0) return false;
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) return false;
+    if (currentPrice === previousPrice) return false;
+    const changePct = Math.abs(((currentPrice - previousPrice) / previousPrice) * 100);
+    return changePct >= floor;
+  });
+}
 
 /**
  * Decide whether a single alert rule should fire for the given context.
@@ -91,6 +152,12 @@ export function evaluateAlertRule(ruleType: string, ctx: AlertEvalContext): bool
       // Fires whenever a tracked competitor is cheaper than our current price.
       if (ctx.minCompetitorPrice === null || ctx.currentPrice <= 0) return false;
       return ctx.minCompetitorPrice < ctx.currentPrice;
+
+    case "COMPETITOR_PRICE_CHANGE":
+      // Yön fark etmeksizin, gürültü tabanlarını aşan en az bir rakip fiyat
+      // hareketi varsa tetiklenir. Anlamlılık filtresi kural bazında worker'da
+      // uygulanır (filterSignificantCompetitorMoves) — sayısı ctx'e gelir.
+      return ctx.isCompetitorPriceEvent && ctx.significantCompetitorMoveCount > 0;
 
     case "LOW_MARGIN":
       // Maliyeti girilmiş ürünlerde, fiyat değişimi sonrası kâr marjı kullanıcının

@@ -39,6 +39,12 @@ const RULE_TYPE_META: Record<
   PRICE_THRESHOLD: { icon: "🎯", label: "Fiyat Eşiği", category: "price", critical: true },
   PERCENTAGE_CHANGE: { icon: "📊", label: "Yüzde Değişim", category: "price" },
   COMPETITOR_CHEAPER: { icon: "⚡", label: "Rakip Daha Ucuz", category: "price", critical: true },
+  COMPETITOR_PRICE_CHANGE: {
+    icon: "🔀",
+    label: "Rakip Fiyat Değişimi",
+    category: "price",
+    critical: true,
+  },
   OUT_OF_STOCK: { icon: "🚫", label: "Stoktan Çıktı", category: "stock", critical: true },
   BACK_IN_STOCK: { icon: "✅", label: "Stoğa Girdi", category: "stock" },
   LOW_MARGIN: { icon: "💸", label: "Düşük Marj", category: "price", critical: true },

@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   evaluateAlertRule,
+  filterSignificantCompetitorMoves,
+  pickPriceMovementWinner,
   resolveApplicableRules,
   type AlertEvalContext,
+  type CompetitorPriceMove,
   type ResolvableRule,
 } from "../jobs/alert-rules";
 
@@ -12,6 +15,8 @@ const base: AlertEvalContext = {
   priceChangePct: null,
   isPriceEvent: false,
   isStockEvent: false,
+  isCompetitorPriceEvent: false,
+  significantCompetitorMoveCount: 0,
   inStock: true,
   previousStockState: null,
   thresholdValue: null,
@@ -145,6 +150,25 @@ describe("evaluateAlertRule", () => {
           minCompetitorPrice: 50,
         }),
       ).toBe(false);
+    });
+  });
+
+  describe("COMPETITOR_PRICE_CHANGE", () => {
+    it("fires when a competitor price event carries at least one significant move", () => {
+      const ctx = { ...base, isCompetitorPriceEvent: true, significantCompetitorMoveCount: 1 };
+      expect(evaluateAlertRule("COMPETITOR_PRICE_CHANGE", ctx)).toBe(true);
+    });
+    it("does not fire without a competitor price event", () => {
+      const ctx = { ...base, significantCompetitorMoveCount: 2 };
+      expect(evaluateAlertRule("COMPETITOR_PRICE_CHANGE", ctx)).toBe(false);
+    });
+    it("does not fire when no move cleared the noise floors", () => {
+      const ctx = { ...base, isCompetitorPriceEvent: true, significantCompetitorMoveCount: 0 };
+      expect(evaluateAlertRule("COMPETITOR_PRICE_CHANGE", ctx)).toBe(false);
+    });
+    it("does not fire on own-price events alone", () => {
+      const ctx = { ...base, isPriceEvent: true, priceChange: -10, priceChangePct: -10 };
+      expect(evaluateAlertRule("COMPETITOR_PRICE_CHANGE", ctx)).toBe(false);
     });
   });
 
@@ -290,6 +314,83 @@ describe("evaluateAlertRule", () => {
     expect(evaluateAlertRule("NONSENSE", { ...base, isPriceEvent: true, priceChange: -1 })).toBe(
       false,
     );
+  });
+});
+
+// ============================================
+// pickPriceMovementWinner — aynı fiyat olayı için tek bildirim
+// ============================================
+
+describe("pickPriceMovementWinner", () => {
+  it("prefers PERCENTAGE_CHANGE over PRICE_DROP/PRICE_INCREASE", () => {
+    const fired = [
+      { id: "a", ruleType: "PRICE_DROP" },
+      { id: "b", ruleType: "PERCENTAGE_CHANGE" },
+    ];
+    expect(pickPriceMovementWinner(fired)?.id).toBe("b");
+  });
+
+  it("falls back to the first fired movement rule when no PERCENTAGE_CHANGE fired", () => {
+    const fired = [{ id: "a", ruleType: "PRICE_INCREASE" }];
+    expect(pickPriceMovementWinner(fired)?.id).toBe("a");
+  });
+
+  it("ignores non-movement rules and returns null when none fired", () => {
+    expect(pickPriceMovementWinner([{ id: "x", ruleType: "COMPETITOR_CHEAPER" }])).toBeNull();
+    expect(pickPriceMovementWinner([])).toBeNull();
+  });
+});
+
+// ============================================
+// filterSignificantCompetitorMoves — gürültü tabanları
+// ============================================
+
+describe("filterSignificantCompetitorMoves", () => {
+  const move = (previousPrice: number, currentPrice: number): CompetitorPriceMove => ({
+    competitorName: "Rakip",
+    previousPrice,
+    currentPrice,
+  });
+
+  it("keeps moves whose abs % change clears the user floor", () => {
+    const moves = [move(100, 94), move(100, 97)]; // -6% ve -3%
+    const kept = filterSignificantCompetitorMoves(moves, {
+      userThresholdPct: 5,
+      ruleThresholdPct: null,
+    });
+    expect(kept).toHaveLength(1);
+    expect(kept[0].currentPrice).toBe(94);
+  });
+
+  it("applies the larger of the user floor and the rule threshold", () => {
+    const moves = [move(100, 93)]; // -7%
+    expect(
+      filterSignificantCompetitorMoves(moves, { userThresholdPct: 5, ruleThresholdPct: 10 }),
+    ).toHaveLength(0);
+    expect(
+      filterSignificantCompetitorMoves(moves, { userThresholdPct: 5, ruleThresholdPct: 6 }),
+    ).toHaveLength(1);
+  });
+
+  it("keeps increases as well as drops", () => {
+    const moves = [move(100, 110)];
+    expect(
+      filterSignificantCompetitorMoves(moves, { userThresholdPct: 5, ruleThresholdPct: null }),
+    ).toHaveLength(1);
+  });
+
+  it("drops unchanged and invalid prices", () => {
+    const moves = [move(100, 100), move(0, 50), move(100, 0)];
+    expect(
+      filterSignificantCompetitorMoves(moves, { userThresholdPct: 0, ruleThresholdPct: null }),
+    ).toHaveLength(0);
+  });
+
+  it("keeps every real move when both floors are zero", () => {
+    const moves = [move(100, 99.5)];
+    expect(
+      filterSignificantCompetitorMoves(moves, { userThresholdPct: 0, ruleThresholdPct: null }),
+    ).toHaveLength(1);
   });
 });
 

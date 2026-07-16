@@ -23,6 +23,7 @@ import { buildZeroReason } from "../utils/zero-reason";
 
 export { buildZeroReason };
 import { alertQueue } from "./processor";
+import type { CompetitorPriceMove } from "./alert-rules";
 
 interface OnboardJobData {
   productId: string;
@@ -219,11 +220,18 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // Daha önce kabul edilmiş rakip URL'leri: periyodik yeniden taramada bunlara
     // tekrar AI çalıştırmıyoruz (maliyet + AI varyansının kabul edilmiş bir
     // rakibi düşürmesini önler). Sadece fiyatları Serper'dan tazelenir.
+    // currentPrice/matchScore, rakip fiyat hareketi tespiti için (upsert öncesi
+    // fiyat + kalite kapısı) birlikte çekilir.
     const knownCompetitors = await prisma.competitor.findMany({
       where: { trackedProductId: productId },
-      select: { competitorUrl: true },
+      select: { competitorUrl: true, competitorName: true, currentPrice: true, matchScore: true },
     });
     const knownUrls = new Set(knownCompetitors.map((c) => c.competitorUrl));
+    const knownByUrl = new Map(knownCompetitors.map((c) => [c.competitorUrl, c]));
+
+    // Bu turda tespit edilen anlamlı-olabilecek rakip fiyat hareketleri —
+    // tur sonunda tek bir alert job'ına eklenir (COMPETITOR_PRICE_CHANGE).
+    const competitorMoves: CompetitorPriceMove[] = [];
 
     const processResults = async (batch: SerperShoppingResult[]) => {
       for (const result of batch) {
@@ -415,6 +423,26 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
         const marketplace = retailerToMarketplace(retailer.name);
 
+        // Rakip fiyat hareketi: bilinen bir rakibin fiyatı bu turda değiştiyse
+        // kaydet (upsert başarılı olursa listeye girer). Kalite kapısı
+        // COMPETITOR_CHEAPER ile aynı: güncel skor (bu turda indirgenmiş
+        // olabilir) MIN_MATCH_SCORE altındaysa karar dışı; null skor
+        // manuel/legacy kayıttır ve geçer.
+        const known = knownByUrl.get(result.link);
+        const knownPreviousPrice = known?.currentPrice ? Number(known.currentPrice) : null;
+        const effectiveScore = matchResult?.score ?? known?.matchScore ?? null;
+        const detectedMove: CompetitorPriceMove | null =
+          knownPreviousPrice &&
+          knownPreviousPrice > 0 &&
+          price !== knownPreviousPrice &&
+          (effectiveScore === null || effectiveScore >= MIN_MATCH_SCORE)
+            ? {
+                competitorName: result.title || known?.competitorName || null,
+                previousPrice: knownPreviousPrice,
+                currentPrice: price,
+              }
+            : null;
+
         try {
           const competitor = await prisma.competitor.upsert({
             where: {
@@ -467,6 +495,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           });
 
           savedCount++;
+          if (detectedMove) competitorMoves.push(detectedMove);
         } catch (err) {
           console.error(`Competitor kaydetme hatası (${result.link}):`, err);
         }
@@ -544,17 +573,24 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       }
     }
 
-    // COMPETITOR_CHEAPER alarmlarını rakip fiyatları güncellendiğinde de tetikle.
-    if (savedCount > 0 && sourcePrice && sourcePrice > 0) {
+    // Rakip fiyatları güncellendiğinde alarmları tetikle: COMPETITOR_CHEAPER
+    // (kendi fiyat biliniyorsa) + COMPETITOR_PRICE_CHANGE (bu turda anlamlı
+    // olabilecek rakip fiyat hareketi varsa — kendi fiyat bilinmese bile).
+    const alertEventTypes = [
+      ...(savedCount > 0 && sourcePrice && sourcePrice > 0 ? ["competitor-change"] : []),
+      ...(competitorMoves.length > 0 ? ["competitor-price-change"] : []),
+    ];
+    if (alertEventTypes.length > 0) {
       await alertQueue.add("check-alerts", {
         productId,
-        eventTypes: ["competitor-change"],
-        currentPrice: sourcePrice,
+        eventTypes: alertEventTypes,
+        currentPrice: sourcePrice && sourcePrice > 0 ? sourcePrice : 0,
         previousPrice: null,
         priceChange: null,
         priceChangePct: null,
         inStock: product.status !== "OUT_OF_STOCK",
         previousInStock: null,
+        competitorMoves,
       });
     }
 

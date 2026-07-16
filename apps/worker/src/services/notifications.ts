@@ -198,11 +198,64 @@ function marketplaceLabel(mp: string): string {
 function isDrop(n: number | null): boolean {
   return n != null && n < 0;
 }
+// Rakip fiyat hareketlerinin ortak yönü: hepsi düşüşse "drop", hepsi artışsa
+// "increase", karışıksa "mixed". Başlık/emoji seçimini besler.
+type CompetitorMovesDirection = "drop" | "increase" | "mixed";
+function competitorMovesDirection(
+  moves: NonNullable<AlertData["competitorMoves"]>,
+): CompetitorMovesDirection {
+  const hasDrop = moves.some((m) => m.currentPrice < m.previousPrice);
+  const hasIncrease = moves.some((m) => m.currentPrice > m.previousPrice);
+  if (hasDrop && hasIncrease) return "mixed";
+  return hasIncrease ? "increase" : "drop";
+}
+function competitorMovesHeading(moves: NonNullable<AlertData["competitorMoves"]>): {
+  emoji: string;
+  heading: string;
+} {
+  const direction = competitorMovesDirection(moves);
+  const many = moves.length > 1;
+  switch (direction) {
+    case "increase":
+      return {
+        emoji: "📈",
+        heading: many ? `${moves.length} rakip fiyat artırdı` : "Rakibiniz fiyat artırdı",
+      };
+    case "mixed":
+      return { emoji: "🔀", heading: `${moves.length} rakip fiyat değiştirdi` };
+    default:
+      return {
+        emoji: "📉",
+        heading: many ? `${moves.length} rakip fiyat düşürdü` : "Rakibiniz fiyat düşürdü",
+      };
+  }
+}
+// Tek bir rakip hareketini "önceki → yeni (±%X)" satırına çevirir.
+function competitorMoveLine(move: {
+  competitorName: string | null;
+  previousPrice: number;
+  currentPrice: number;
+}): string {
+  const pctChange =
+    move.previousPrice > 0
+      ? ((move.currentPrice - move.previousPrice) / move.previousPrice) * 100
+      : null;
+  const sign = move.currentPrice < move.previousPrice ? "−" : "+";
+  const pctPart = pctChange !== null ? ` (${sign}%${absPct(pctChange)})` : "";
+  const name = move.competitorName?.trim() || "Rakip";
+  return `${name}: ${money(move.previousPrice)} → ${money(move.currentPrice)} ₺${pctPart}`;
+}
+// Bildirimde en fazla bu kadar rakip satırı listelenir; kalanı "+N rakip daha".
+const MAX_COMPETITOR_MOVE_LINES = 5;
 // Negatif marj = zarar; pozitif ama düşük marj = "ince" uyarı. İkisi de LOW_MARGIN.
 function isLoss(marginPct: number | null | undefined): boolean {
   return typeof marginPct === "number" && marginPct < 0;
 }
-function emailHeadline(ruleType: string, drop: boolean): { emoji: string; heading: string } {
+function emailHeadline(
+  ruleType: string,
+  drop: boolean,
+  data?: AlertData,
+): { emoji: string; heading: string } {
   switch (ruleType) {
     case "OUT_OF_STOCK":
       return { emoji: "🚫", heading: "Stoktan çıktı" };
@@ -210,14 +263,21 @@ function emailHeadline(ruleType: string, drop: boolean): { emoji: string; headin
       return { emoji: "✅", heading: "Stoğa girdi" };
     case "COMPETITOR_CHEAPER":
       return { emoji: "⚡", heading: "Rakip daha ucuz" };
+    case "COMPETITOR_PRICE_CHANGE": {
+      const moves = data?.competitorMoves ?? [];
+      if (moves.length === 0) return { emoji: "🔀", heading: "Rakip fiyatı değişti" };
+      return competitorMovesHeading(moves);
+    }
     case "PRICE_THRESHOLD":
       return { emoji: "🎯", heading: "Hedef fiyata ulaşıldı" };
     case "LOW_MARGIN":
       return { emoji: "💸", heading: "Kâr marjı düştü" };
     default:
+      // Takip edilen ürün kullanıcının KENDİ ürünü — fiyatı genelde kendisi
+      // değiştirir. "Fiyat düştü" haberi yerine "siz değiştirdiniz" dili.
       return drop
-        ? { emoji: "📉", heading: "Fiyat düştü" }
-        : { emoji: "📈", heading: "Fiyat arttı" };
+        ? { emoji: "📉", heading: "Fiyatınızı düşürdünüz" }
+        : { emoji: "📈", heading: "Fiyatınızı artırdınız" };
   }
 }
 
@@ -235,30 +295,32 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
     .filter(Boolean)
     .join("  ·  ");
 
+  // Kendi ürün fiyat hareketi (PRICE_DROP / PRICE_INCREASE / PERCENTAGE_CHANGE
+  // ve bilinmeyen türler): takip edilen ürün kullanıcının KENDİ ürünü olduğu
+  // için "Fiyat düştü" haberi yerine "Fiyatınızı düşürdünüz" dili kullanılır.
+  // Üç kural tipi de AYNI metni üretir — tutar + yüzde tek mesajda; alert
+  // worker'daki tekilleştirme ile birlikte kullanıcıya tek mesaj gider.
+  const ownPriceChangeMessage = () => {
+    const drop = isDrop(data.priceChange);
+    const emoji = drop ? "📉" : "📈";
+    const heading = drop ? "Fiyatınızı düşürdünüz" : "Fiyatınızı artırdınız";
+    const sign = drop ? "−" : "+";
+    return [
+      `${emoji} <b>${heading}</b>`,
+      ``,
+      name,
+      `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
+      `Değişim: <b>${sign}${changeAbs} ₺</b> (%${changePct})`,
+      marketplace,
+      ``,
+      linkLine,
+    ].join("\n");
+  };
+
   switch (ruleType) {
     case "PRICE_DROP":
-      return [
-        `📉 <b>Fiyat düştü</b>`,
-        ``,
-        name,
-        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
-        `Değişim: <b>−${changeAbs} ₺</b> (%${changePct})`,
-        marketplace,
-        ``,
-        linkLine,
-      ].join("\n");
-
     case "PRICE_INCREASE":
-      return [
-        `📈 <b>Fiyat arttı</b>`,
-        ``,
-        name,
-        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
-        `Değişim: <b>+${changeAbs} ₺</b> (%${changePct})`,
-        marketplace,
-        ``,
-        linkLine,
-      ].join("\n");
+      return ownPriceChangeMessage();
 
     case "PRICE_THRESHOLD":
       return [
@@ -273,21 +335,8 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         linkLine,
       ].join("\n");
 
-    case "PERCENTAGE_CHANGE": {
-      const dir = isDrop(data.priceChange) ? "düştü" : "arttı";
-      const emoji = isDrop(data.priceChange) ? "📉" : "📈";
-      const sign = isDrop(data.priceChange) ? "−" : "+";
-      return [
-        `${emoji} <b>%${changePct} ${dir}</b>`,
-        ``,
-        name,
-        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
-        `Değişim: <b>${sign}${changeAbs} ₺</b>`,
-        marketplace,
-        ``,
-        linkLine,
-      ].join("\n");
-    }
+    case "PERCENTAGE_CHANGE":
+      return ownPriceChangeMessage();
 
     case "COMPETITOR_CHEAPER": {
       const compPrice = data.competitorPrice ?? null;
@@ -302,6 +351,26 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
         name,
         `${lead} <b>${compName} · ${money(compPrice)} ₺</b>`,
         `Senin fiyatın: <b>${money(data.currentPrice)} ₺</b>${diffPct !== null ? ` (%${pct(diffPct)} daha pahalı)` : ""}`,
+        marketplace,
+        ``,
+        linkLine,
+      ].join("\n");
+    }
+
+    case "COMPETITOR_PRICE_CHANGE": {
+      const moves = data.competitorMoves ?? [];
+      const { emoji, heading } = competitorMovesHeading(moves.length > 0 ? moves : []);
+      const moveLines = moves
+        .slice(0, MAX_COMPETITOR_MOVE_LINES)
+        .map((m) => escapeHtml(competitorMoveLine(m)));
+      const extraCount = moves.length - MAX_COMPETITOR_MOVE_LINES;
+      return [
+        `${emoji} <b>${heading}</b>`,
+        ``,
+        name,
+        ...moveLines,
+        ...(extraCount > 0 ? [`… ve ${extraCount} rakip daha`] : []),
+        ...(data.currentPrice > 0 ? [`Sizin fiyatınız: <b>${money(data.currentPrice)} ₺</b>`] : []),
         marketplace,
         ``,
         linkLine,
@@ -340,21 +409,8 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
       ].join("\n");
     }
 
-    default: {
-      const dir = isDrop(data.priceChange) ? "düştü" : "arttı";
-      const emoji = isDrop(data.priceChange) ? "📉" : "📈";
-      const sign = isDrop(data.priceChange) ? "−" : "+";
-      return [
-        `${emoji} <b>Fiyat ${dir}</b>`,
-        ``,
-        name,
-        `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
-        `Değişim: <b>${sign}${changeAbs} ₺</b> (%${changePct})`,
-        marketplace,
-        ``,
-        linkLine,
-      ].join("\n");
-    }
+    default:
+      return ownPriceChangeMessage();
   }
 }
 
@@ -379,6 +435,12 @@ interface AlertData {
   competitorPrice?: number | null;
   cheapestCompetitorName?: string | null;
   cheaperCompetitorCount?: number | null;
+  // Anlamlı rakip fiyat hareketleri — yalnızca COMPETITOR_PRICE_CHANGE için.
+  competitorMoves?: Array<{
+    competitorName: string | null;
+    previousPrice: number;
+    currentPrice: number;
+  }> | null;
 }
 
 // ============================================
@@ -386,19 +448,28 @@ interface AlertData {
 // ============================================
 
 function generateNotificationTitle(ruleType: string, data: AlertData): string {
-  const changePct = absPct(data.priceChangePct);
+  // Kendi ürün fiyat hareketlerinde üç kural tipi de aynı başlığı üretir —
+  // "%X değişim" ve "Fiyat düştü" aynı olayın iki ayrı bildirimi gibi
+  // görünmesin (tutar + yüzde mesaj gövdesinde birlikte).
+  const ownPriceTitle = isDrop(data.priceChange)
+    ? `📉 Fiyatınızı düşürdünüz: ${data.productName}`
+    : `📈 Fiyatınızı artırdınız: ${data.productName}`;
 
   switch (ruleType) {
     case "PRICE_DROP":
-      return `📉 Fiyat düştü: ${data.productName}`;
     case "PRICE_INCREASE":
-      return `📈 Fiyat arttı: ${data.productName}`;
+    case "PERCENTAGE_CHANGE":
+      return ownPriceTitle;
     case "PRICE_THRESHOLD":
       return `🎯 Fiyat eşiğine ulaştı: ${data.productName}`;
-    case "PERCENTAGE_CHANGE":
-      return `📊 %${changePct} değişim: ${data.productName}`;
     case "COMPETITOR_CHEAPER":
       return `⚡ Rakip daha ucuz: ${data.productName}`;
+    case "COMPETITOR_PRICE_CHANGE": {
+      const moves = data.competitorMoves ?? [];
+      if (moves.length === 0) return `🔀 Rakip fiyatı değişti: ${data.productName}`;
+      const { emoji, heading } = competitorMovesHeading(moves);
+      return `${emoji} ${heading}: ${data.productName}`;
+    }
     case "OUT_OF_STOCK":
       return `🚫 Stoktan çıktı: ${data.productName}`;
     case "BACK_IN_STOCK":
@@ -407,10 +478,8 @@ function generateNotificationTitle(ruleType: string, data: AlertData): string {
       return isLoss(data.marginPct)
         ? `🔻 Zarar uyarısı: ${data.productName}`
         : `💸 Kâr marjı düştü: ${data.productName}`;
-    default: {
-      const direction = isDrop(data.priceChange) ? "düştü" : "arttı";
-      return `🔔 Fiyat ${direction}: ${data.productName}`;
-    }
+    default:
+      return ownPriceTitle;
   }
 }
 
@@ -432,13 +501,46 @@ function generateNotificationMessage(ruleType: string, data: AlertData): string 
     const marginStr = data.marginPct != null ? pct(data.marginPct) : "—";
     return `${data.productName} kâr marjı %${marginStr} seviyesine indi. Satış: ${money(data.currentPrice)} ₺, maliyet: ${money(data.cost ?? null)} ₺, birim kâr: ${money(profit)} ₺. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
+  if (ruleType === "COMPETITOR_PRICE_CHANGE") {
+    const moves = data.competitorMoves ?? [];
+    const ownPricePart =
+      data.currentPrice > 0 ? ` Sizin fiyatınız: ${money(data.currentPrice)} ₺.` : "";
+    if (moves.length === 1) {
+      const move = moves[0];
+      const direction = move.currentPrice < move.previousPrice ? "düşürdü" : "artırdı";
+      const movePct =
+        move.previousPrice > 0
+          ? ` (%${absPct(((move.currentPrice - move.previousPrice) / move.previousPrice) * 100)})`
+          : "";
+      return `${data.productName}: Rakibiniz ${move.competitorName?.trim() || "bir rakip"} fiyatını ${money(move.previousPrice)} ₺'den ${money(move.currentPrice)} ₺'ye ${direction}${movePct}.${ownPricePart} Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
+    }
+    const lines = moves
+      .slice(0, MAX_COMPETITOR_MOVE_LINES)
+      .map((m) => competitorMoveLine(m))
+      .join("; ");
+    const extra =
+      moves.length > MAX_COMPETITOR_MOVE_LINES
+        ? ` ve ${moves.length - MAX_COMPETITOR_MOVE_LINES} rakip daha`
+        : "";
+    return `${data.productName}: ${moves.length} rakip fiyat değiştirdi. ${lines}${extra}.${ownPricePart} Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
+  }
   if (data.previousPrice === null || data.priceChange === null) {
     return `${data.productName} güncel fiyatı: ${money(data.currentPrice)} ₺. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
 
-  const direction = data.priceChange < 0 ? "düştü" : "arttı";
+  // Kendi ürün fiyat hareketi: fiyatı genelde kullanıcının kendisi değiştirir —
+  // "fiyat düştü" haberi yerine "siz değiştirdiniz" dili (PRICE_THRESHOLD gibi
+  // hedef bazlı kurallarda mevcut nötr dil korunur).
+  const isOwnPriceMoveRule =
+    ruleType === "PRICE_DROP" || ruleType === "PRICE_INCREASE" || ruleType === "PERCENTAGE_CHANGE";
   const sign = data.priceChange < 0 ? "-" : "+";
-  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} (${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)}). Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
+  const changeSummary = `(${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)})`;
+  if (isOwnPriceMoveRule) {
+    const direction = data.priceChange < 0 ? "düşürdünüz" : "artırdınız";
+    return `${data.productName} ürününüzün fiyatını ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} ${changeSummary}. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
+  }
+  const direction = data.priceChange < 0 ? "düştü" : "arttı";
+  return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} ${changeSummary}. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
 }
 
 // ============================================
@@ -475,7 +577,7 @@ export async function sendAlerts(rule: AlertRuleWithUser, data: AlertData): Prom
         case "TELEGRAM":
           return await sendTelegramAlert(rule.user, rule.ruleType, data);
         case "WEBHOOK":
-          return await sendWebhookAlert(rule.user, data);
+          return await sendWebhookAlert(rule.user, data, rule.ruleType);
         default:
           return { status: "SKIPPED", error: `Bilinmeyen kanal: ${channel}` };
       }
@@ -616,7 +718,7 @@ async function sendEmailAlert(
   const changeAbs = absMoney(data.priceChange);
   const changePct = absPct(data.priceChangePct);
   const priceColor = data.priceChange === null ? "#FFFFFF" : drop ? "#22C55E" : "#EF4444";
-  const { emoji, heading } = emailHeadline(ruleType, drop);
+  const { emoji, heading } = emailHeadline(ruleType, drop, data);
 
   // LOW_MARGIN: fiyat kartına maliyet + birim kâr/marj satırlarını ekle. Diğer
   // kural türlerinde boş kalır (mevcut e-posta görünümü değişmez).
@@ -652,6 +754,35 @@ async function sendEmailAlert(
         </td>
       </tr>`
     : "";
+
+  // COMPETITOR_PRICE_CHANGE: fiyat kartına rakip hareket satırlarını ekle.
+  const competitorMoves =
+    ruleType === "COMPETITOR_PRICE_CHANGE" ? (data.competitorMoves ?? []) : [];
+  const extraMoveCount = competitorMoves.length - MAX_COMPETITOR_MOVE_LINES;
+  const competitorMoveRowsHtml =
+    competitorMoves
+      .slice(0, MAX_COMPETITOR_MOVE_LINES)
+      .map((move) => {
+        const moveColor = move.currentPrice < move.previousPrice ? "#22C55E" : "#EF4444";
+        return `<tr>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">${escapeHtml(move.competitorName?.trim() || "Rakip")}</td>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${moveColor}; font-size: 14px; font-weight: 600;">
+          ${money(move.previousPrice)} → ${money(move.currentPrice)} ₺
+        </td>
+      </tr>`;
+      })
+      .join("") +
+    (extraMoveCount > 0
+      ? `<tr>
+        <td colspan="2" style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">… ve ${extraMoveCount} rakip daha</td>
+      </tr>`
+      : "");
+
+  // Rakip hareketi e-postasında ana fiyat "Sizin fiyatınız"dır; bilinmiyorsa
+  // (0) satır tamamen gizlenir — "0,00 ₺" yanıltıcı olur.
+  const isCompetitorMoveEmail = ruleType === "COMPETITOR_PRICE_CHANGE";
+  const ownPriceRowLabel = isCompetitorMoveEmail ? "Sizin fiyatınız" : "Yeni Fiyat";
+  const showOwnPriceRow = !isCompetitorMoveEmail || data.currentPrice > 0;
 
   // Prod'da doğrulanmış gönderici zorunlu (env validasyonu boot'ta zorlar);
   // onboarding@resend.dev yalnızca geliştirmede işe yarar — müşterilere
@@ -732,12 +863,16 @@ async function sendEmailAlert(
                       </td>
                     </tr>`
                 }
-                <tr>
-                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #FFFFFF; font-size: 13px; font-weight: 600;">Yeni Fiyat</td>
+                ${
+                  showOwnPriceRow
+                    ? `<tr>
+                  <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #FFFFFF; font-size: 13px; font-weight: 600;">${ownPriceRowLabel}</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; font-size: 20px; font-weight: 700; color: ${priceColor};">
                     ${money(data.currentPrice)} ₺
                   </td>
-                </tr>
+                </tr>`
+                    : ""
+                }
                 ${
                   data.priceChange === null
                     ? ""
@@ -750,6 +885,7 @@ async function sendEmailAlert(
                 }
                 ${marginRowsHtml}
                 ${competitorRowsHtml}
+                ${competitorMoveRowsHtml}
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Pazaryeri</td>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
@@ -814,11 +950,17 @@ async function sendEmailAlert(
 // Webhook Alert
 // ============================================
 
-async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<DeliveryOutcome> {
+async function sendWebhookAlert(
+  user: AlertUser,
+  data: AlertData,
+  ruleType: string,
+): Promise<DeliveryOutcome> {
   if (!user?.webhookUrl) return { status: "SKIPPED", error: "Webhook URL yok" };
 
   const body = JSON.stringify({
-    event: "price_change",
+    // Rakip fiyat hareketi ayrı bir olay adıyla gider — otomasyonlar kendi
+    // fiyat değişimi ile rakip hareketini ayırt edebilsin.
+    event: ruleType === "COMPETITOR_PRICE_CHANGE" ? "competitor_price_change" : "price_change",
     timestamp: new Date().toISOString(),
     product: {
       name: data.productName,
@@ -851,6 +993,16 @@ async function sendWebhookAlert(user: AlertUser, data: AlertData): Promise<Deliv
             cheapestName: data.cheapestCompetitorName ?? null,
             cheaperCount: data.cheaperCompetitorCount ?? null,
           },
+        }
+      : {}),
+    // Anlamlı rakip fiyat hareketleri (COMPETITOR_PRICE_CHANGE).
+    ...(data.competitorMoves && data.competitorMoves.length > 0
+      ? {
+          competitorChanges: data.competitorMoves.map((move) => ({
+            name: move.competitorName,
+            previous: move.previousPrice,
+            current: move.currentPrice,
+          })),
         }
       : {}),
   });

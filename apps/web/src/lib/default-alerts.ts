@@ -11,13 +11,16 @@ interface DefaultAlertRuleSpec {
 
 // RAKİP ODAKLI varsayılanlar. Ürünün kendi fiyat değişimi kullanıcıya bildirim
 // olarak değersiz — fiyatı zaten kullanıcı kendisi belirliyor. Bu yüzden
-// varsayılanlar rakip hareketlerine odaklanır: bir rakip ucuzladığında ve
-// stok durumu değiştiğinde. Kendi-fiyat kuralları (PRICE_DROP/INCREASE/
-// PERCENTAGE_CHANGE) varsayılan değildir; isteyen kullanıcı elle ekleyebilir.
+// varsayılanlar rakip hareketlerine odaklanır: bir rakip ucuzladığında, bir
+// rakip fiyat değiştirdiğinde ve stok durumu değiştiğinde. Kendi-fiyat
+// kuralları (PRICE_DROP/INCREASE/PERCENTAGE_CHANGE) varsayılan değildir;
+// isteyen kullanıcı elle ekleyebilir.
+// Sıra önemli: plan slotu yetmezse (FREE: 3) listenin BAŞI önceliklidir.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildDefaultRules(_alertThresholdPct: number): DefaultAlertRuleSpec[] {
   return [
     { ruleType: RuleType.COMPETITOR_CHEAPER, cooldownMinutes: 30 },
+    { ruleType: RuleType.COMPETITOR_PRICE_CHANGE, cooldownMinutes: 30 },
     { ruleType: RuleType.OUT_OF_STOCK, cooldownMinutes: 120 },
     { ruleType: RuleType.BACK_IN_STOCK, cooldownMinutes: 15 },
   ];
