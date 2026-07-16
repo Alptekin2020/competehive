@@ -375,6 +375,13 @@ export async function runMigrations() {
 
     console.log("✅ Phase 11 migration: product cost + LOW_MARGIN rule type added");
 
+    // Phase 12: Rakip fiyat değişimi bildirimi — RuleType.COMPETITOR_PRICE_CHANGE.
+    // 202607160001_add_competitor_price_change_rule'ı aynalar (worker image'ında
+    // migration bulunmadığı için `prisma migrate deploy` no-op olabilir).
+    await client.query(`ALTER TYPE "RuleType" ADD VALUE IF NOT EXISTS 'COMPETITOR_PRICE_CHANGE'`);
+
+    console.log("✅ Phase 12 migration: COMPETITOR_PRICE_CHANGE rule type added");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);

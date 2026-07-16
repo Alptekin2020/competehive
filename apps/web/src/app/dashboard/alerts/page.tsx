@@ -46,7 +46,7 @@ const RULE_TYPE_LABELS: Record<
 > = {
   PRICE_DROP: {
     label: "Fiyat Düşüşü",
-    description: "Fiyat düştüğünde bildirim al",
+    description: "Kendi ürününüzün fiyatı düştüğünde bildirim al",
     icon: "📉",
     needsThreshold: false,
     needsDirection: false,
@@ -54,7 +54,7 @@ const RULE_TYPE_LABELS: Record<
   },
   PRICE_INCREASE: {
     label: "Fiyat Artışı",
-    description: "Fiyat arttığında bildirim al",
+    description: "Kendi ürününüzün fiyatı arttığında bildirim al",
     icon: "📈",
     needsThreshold: false,
     needsDirection: false,
@@ -83,6 +83,15 @@ const RULE_TYPE_LABELS: Record<
     needsThreshold: false,
     needsDirection: false,
     recommended: "Öneri: Bu kuralı hızlı kanal (Telegram) ile kullanın.",
+  },
+  COMPETITOR_PRICE_CHANGE: {
+    label: "Rakip Fiyat Değişimi",
+    description: "Bir rakibiniz fiyat düşürdüğünde veya artırdığında",
+    icon: "🔀",
+    needsThreshold: false,
+    needsDirection: false,
+    recommended:
+      "Öneri: Küçük oynamaları elemek için genel bildirim eşiğiniz (%) bu kurala da uygulanır.",
   },
   OUT_OF_STOCK: {
     label: "Stoktan Çıktı",

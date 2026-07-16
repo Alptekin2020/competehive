@@ -51,6 +51,14 @@ const PANEL_TYPES: PanelType[] = [
     group: "competitor",
   },
   {
+    type: "COMPETITOR_PRICE_CHANGE",
+    icon: "🔀",
+    label: "Rakip fiyat değiştirince",
+    hint: "Bir rakibiniz fiyat düşürdüğünde veya artırdığında",
+    defaultCooldown: 30,
+    group: "competitor",
+  },
+  {
     type: "OUT_OF_STOCK",
     icon: "🚫",
     label: "Stok bitince",
