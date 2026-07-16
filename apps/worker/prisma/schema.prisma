@@ -222,6 +222,7 @@ enum RuleType {
   PRICE_THRESHOLD // belirli fiyatın altına/üstüne geçtiğinde
   PERCENTAGE_CHANGE // yüzde değişim
   COMPETITOR_CHEAPER // rakip daha ucuz olduğunda
+  COMPETITOR_PRICE_CHANGE // bir rakip fiyat düşürdüğünde/artırdığında
   OUT_OF_STOCK // stoktan çıktığında
   BACK_IN_STOCK // stoğa girdiğinde
   LOW_MARGIN // kâr marjı belirlenen tabanın altına düştüğünde (maliyet gerekli)
