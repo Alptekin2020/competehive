@@ -846,7 +846,7 @@ async function sendEmailAlert(
           ${
             nearestCompetitor.position === "equal"
               ? "Aynı fiyat"
-              : `${nearestCompetitor.position === "cheaper" ? "−" : "+"}${absMoney(nearestCompetitor.diff)} ₺ (%${absPct(nearestCompetitor.diffPct)}) ${nearestCompetitor.position === "cheaper" ? "daha ucuzsunuz" : "daha pahalısınız"}`
+              : `${nearestCompetitor.position === "cheaper" ? "−" : "+"}${absMoney(nearestCompetitor.diff)} ₺ (%${absPct(nearestCompetitor.diffPct)})`
           }
         </td>
       </tr>`
@@ -1095,15 +1095,20 @@ async function sendWebhookAlert(
       : {}),
     // Fiyatça en yakın geçerli rakip — otomasyonlar yeni fiyatın piyasadaki
     // konumunu (rakibe olan fark dahil) görebilsin. diff > 0 = rakipten pahalı.
-    ...(data.nearestCompetitorPrice != null
-      ? {
-          nearestCompetitor: {
-            name: data.nearestCompetitorName ?? null,
-            price: data.nearestCompetitorPrice,
-            diff: data.currentPrice - data.nearestCompetitorPrice,
-          },
-        }
-      : {}),
+    // Geçerlilik kontrolü diğer kanallarla ortak (resolveNearestCompetitor);
+    // isim ise competitor.cheapestName sözleşmesindeki gibi ham/null kalır —
+    // "Rakip" placeholder'ı yalnızca kullanıcıya görünen metinler içindir.
+    ...((): Record<string, unknown> => {
+      const nearest = resolveNearestCompetitor(data);
+      if (!nearest) return {};
+      return {
+        nearestCompetitor: {
+          name: data.nearestCompetitorName?.trim() || null,
+          price: nearest.price,
+          diff: nearest.diff,
+        },
+      };
+    })(),
     // Anlamlı rakip fiyat hareketleri (COMPETITOR_PRICE_CHANGE).
     ...(data.competitorMoves && data.competitorMoves.length > 0
       ? {
