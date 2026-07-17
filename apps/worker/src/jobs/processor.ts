@@ -20,6 +20,7 @@ import { PLAN_EXPIRY_GRACE_MS } from "../shared";
 import {
   evaluateAlertRule,
   filterSignificantCompetitorMoves,
+  pickNearestCompetitor,
   pickPriceMovementWinner,
   resolveApplicableRules,
   PRICE_MOVEMENT_RULE_TYPES,
@@ -642,10 +643,18 @@ export const alertWorker = new Worker(
     // Kalite politikası (skor, fiyat bandı, bayatlık, akran-medyan aykırılığı)
     // uygulanır — yoksa ₺11'lik bir koli kaydı ya da ₺3.000'lik sahte ilan
     // ₺9.500'lük ürüne sürekli sahte "rakip daha ucuz" alarmı üretir.
+    // Kendi fiyat hareketi kuralları (PRICE_DROP vb.) için de yüklenir: bu
+    // bildirimler fiyatça EN YAKIN rakibi ve ona olan farkı da raporlar.
     let minCompetitorPrice: number | null = null;
     let cheapestCompetitorName: string | null = null;
     let cheaperCompetitorCount = 0;
-    if (rules.some((r) => r.ruleType === "COMPETITOR_CHEAPER")) {
+    let nearestCompetitorPrice: number | null = null;
+    let nearestCompetitorName: string | null = null;
+    if (
+      rules.some(
+        (r) => r.ruleType === "COMPETITOR_CHEAPER" || PRICE_MOVEMENT_RULE_TYPES.has(r.ruleType),
+      )
+    ) {
       const competitors = await prisma.competitor.findMany({
         where: { trackedProductId: productId, currentPrice: { gt: 0 } },
         select: { competitorName: true, currentPrice: true, matchScore: true, lastScrapedAt: true },
@@ -666,6 +675,11 @@ export const alertWorker = new Worker(
         minCompetitorPrice = cheapest.price;
         cheapestCompetitorName = cheapest.name;
         cheaperCompetitorCount = usable.filter((c) => c.price < ownPrice).length;
+        const nearest = pickNearestCompetitor(usable, ownPrice);
+        if (nearest) {
+          nearestCompetitorPrice = nearest.price;
+          nearestCompetitorName = nearest.name;
+        }
       }
     }
 
@@ -789,6 +803,8 @@ export const alertWorker = new Worker(
           competitorPrice: minCompetitorPrice,
           cheapestCompetitorName,
           cheaperCompetitorCount,
+          nearestCompetitorPrice,
+          nearestCompetitorName,
           competitorMoves: significantMoves,
         });
 
