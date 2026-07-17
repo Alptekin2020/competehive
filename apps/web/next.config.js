@@ -8,6 +8,11 @@ const nextConfig = {
       { source: "/sign-up", destination: "/register", permanent: false },
     ];
   },
+  async rewrites() {
+    return {
+      beforeFiles: [{ source: "/competehive-logo.png", destination: "/competehive-logo.svg" }],
+    };
+  },
   turbopack: {
     root: path.join(__dirname, "../.."),
   },
