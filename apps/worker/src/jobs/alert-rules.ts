@@ -105,6 +105,31 @@ export function filterSignificantCompetitorMoves<T extends CompetitorPriceMove>(
 }
 
 /**
+ * Kendi fiyatına (mutlak farkla) EN YAKIN rakibi seçer — kendi fiyat hareketi
+ * bildirimlerindeki "yeni fiyatınla rakibe göre neredesin" bağlamı için.
+ * Geçersiz fiyatlar (<=0, NaN) elenir; eşit uzaklıkta UCUZ olan kazanır
+ * (fiyatlandırma kararı için daha temkinli referans). Aday yoksa null döner.
+ */
+export function pickNearestCompetitor<T extends { price: number }>(
+  competitors: T[],
+  ownPrice: number,
+): T | null {
+  if (!Number.isFinite(ownPrice) || ownPrice <= 0) return null;
+  let best: T | null = null;
+  for (const c of competitors) {
+    if (!Number.isFinite(c.price) || c.price <= 0) continue;
+    if (best === null) {
+      best = c;
+      continue;
+    }
+    const dist = Math.abs(c.price - ownPrice);
+    const bestDist = Math.abs(best.price - ownPrice);
+    if (dist < bestDist || (dist === bestDist && c.price < best.price)) best = c;
+  }
+  return best;
+}
+
+/**
  * Decide whether a single alert rule should fire for the given context.
  * Returns true only when the rule's condition is met; cooldown handling and
  * notification delivery stay in the worker.

@@ -198,6 +198,56 @@ function marketplaceLabel(mp: string): string {
 function isDrop(n: number | null): boolean {
   return n != null && n < 0;
 }
+
+// ============================================
+// En yakın rakip bağlamı (kendi fiyat hareketi bildirimleri)
+// ============================================
+
+// Kendi fiyat hareketi kural türleri — bildirim metni "siz değiştirdiniz"
+// dilini kullanır ve en yakın rakip bağlamını taşır.
+const OWN_PRICE_MOVE_RULE_TYPES = new Set(["PRICE_DROP", "PRICE_INCREASE", "PERCENTAGE_CHANGE"]);
+
+export interface NearestCompetitorContext {
+  name: string;
+  price: number;
+  /** currentPrice - rakip fiyatı; pozitif = rakipten pahalısınız. */
+  diff: number;
+  /** Farkın RAKİP fiyatına oranı (%). */
+  diffPct: number;
+  position: "cheaper" | "more-expensive" | "equal";
+}
+
+/**
+ * Bildirim verisindeki en yakın rakip alanlarını konum bilgisine çevirir.
+ * Rakip fiyatı ya da kendi fiyat geçersizse null döner — mesaja satır eklenmez.
+ * Export: deterministik metin üretimi test edilebilir olsun.
+ */
+export function resolveNearestCompetitor(data: {
+  currentPrice: number;
+  nearestCompetitorPrice?: number | null;
+  nearestCompetitorName?: string | null;
+}): NearestCompetitorContext | null {
+  const price = data.nearestCompetitorPrice;
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isFinite(data.currentPrice) || data.currentPrice <= 0) return null;
+  const diff = data.currentPrice - price;
+  return {
+    name: data.nearestCompetitorName?.trim() || "Rakip",
+    price,
+    diff,
+    diffPct: (diff / price) * 100,
+    position: diff === 0 ? "equal" : diff > 0 ? "more-expensive" : "cheaper",
+  };
+}
+
+// "rakipten 41,00 ₺ daha ucuzsunuz (%3,2)" / "rakiple aynı fiyattasınız" —
+// Telegram ve uygulama içi metin aynı cümleyi paylaşır (Telegram'da <b> sarar).
+function nearestCompetitorDiffSentence(ctx: NearestCompetitorContext, bold: boolean): string {
+  if (ctx.position === "equal") return "rakiple aynı fiyattasınız";
+  const amount = bold ? `<b>${absMoney(ctx.diff)} ₺</b>` : `${absMoney(ctx.diff)} ₺`;
+  const word = ctx.position === "cheaper" ? "ucuzsunuz" : "pahalısınız";
+  return `rakipten ${amount} daha ${word} (%${absPct(ctx.diffPct)})`;
+}
 // Rakip fiyat hareketlerinin ortak yönü: hepsi düşüşse "drop", hepsi artışsa
 // "increase", karışıksa "mixed". Başlık/emoji seçimini besler.
 type CompetitorMovesDirection = "drop" | "increase" | "mixed";
@@ -305,12 +355,21 @@ function formatTelegramMessage(ruleType: string, data: AlertData): string {
     const emoji = drop ? "📉" : "📈";
     const heading = drop ? "Fiyatınızı düşürdünüz" : "Fiyatınızı artırdınız";
     const sign = drop ? "−" : "+";
+    // Yeni fiyatın piyasadaki yeri: fiyatça en yakın rakip + ona olan fark.
+    const nearest = resolveNearestCompetitor(data);
+    const nearestLines = nearest
+      ? [
+          `🆚 En yakın rakip: <b>${escapeHtml(nearest.name)} · ${money(nearest.price)} ₺</b>`,
+          `Fark: ${nearestCompetitorDiffSentence(nearest, true)}`,
+        ]
+      : [];
     return [
       `${emoji} <b>${heading}</b>`,
       ``,
       name,
       `${money(data.previousPrice)} → <b>${money(data.currentPrice)} ₺</b>`,
       `Değişim: <b>${sign}${changeAbs} ₺</b> (%${changePct})`,
+      ...nearestLines,
       marketplace,
       ``,
       linkLine,
@@ -435,6 +494,11 @@ interface AlertData {
   competitorPrice?: number | null;
   cheapestCompetitorName?: string | null;
   cheaperCompetitorCount?: number | null;
+  // Fiyatça en yakın GEÇERLİ rakip — kendi fiyat hareketi bildirimleri
+  // (PRICE_DROP / PRICE_INCREASE / PERCENTAGE_CHANGE) rakibe olan farkı da
+  // raporlasın diye doldurulur.
+  nearestCompetitorPrice?: number | null;
+  nearestCompetitorName?: string | null;
   // Anlamlı rakip fiyat hareketleri — yalnızca COMPETITOR_PRICE_CHANGE için.
   competitorMoves?: Array<{
     competitorName: string | null;
@@ -531,13 +595,16 @@ function generateNotificationMessage(ruleType: string, data: AlertData): string 
   // Kendi ürün fiyat hareketi: fiyatı genelde kullanıcının kendisi değiştirir —
   // "fiyat düştü" haberi yerine "siz değiştirdiniz" dili (PRICE_THRESHOLD gibi
   // hedef bazlı kurallarda mevcut nötr dil korunur).
-  const isOwnPriceMoveRule =
-    ruleType === "PRICE_DROP" || ruleType === "PRICE_INCREASE" || ruleType === "PERCENTAGE_CHANGE";
+  const isOwnPriceMoveRule = OWN_PRICE_MOVE_RULE_TYPES.has(ruleType);
   const sign = data.priceChange < 0 ? "-" : "+";
   const changeSummary = `(${sign}${absMoney(data.priceChange)} ₺, %${absPct(data.priceChangePct)})`;
   if (isOwnPriceMoveRule) {
     const direction = data.priceChange < 0 ? "düşürdünüz" : "artırdınız";
-    return `${data.productName} ürününüzün fiyatını ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} ${changeSummary}. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
+    const nearest = resolveNearestCompetitor(data);
+    const nearestPart = nearest
+      ? ` En yakın rakip ${nearest.name} ${money(nearest.price)} ₺ — ${nearestCompetitorDiffSentence(nearest, false)}.`
+      : "";
+    return `${data.productName} ürününüzün fiyatını ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} ${changeSummary}.${nearestPart} Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
   }
   const direction = data.priceChange < 0 ? "düştü" : "arttı";
   return `${data.productName} fiyatı ${money(data.previousPrice)} ₺'den ${money(data.currentPrice)} ₺'ye ${direction} ${changeSummary}. Pazaryeri: ${marketplaceLabel(data.marketplace)}.`;
@@ -755,6 +822,36 @@ async function sendEmailAlert(
       </tr>`
     : "";
 
+  // Kendi fiyat hareketi e-postası: fiyat kartına fiyatça en yakın rakip +
+  // ona olan fark satırları eklenir. Rakip verisi yoksa kart değişmez.
+  const nearestCompetitor = OWN_PRICE_MOVE_RULE_TYPES.has(ruleType)
+    ? resolveNearestCompetitor(data)
+    : null;
+  const nearestDiffColor =
+    nearestCompetitor?.position === "more-expensive"
+      ? "#EF4444"
+      : nearestCompetitor?.position === "cheaper"
+        ? "#22C55E"
+        : "#FFFFFF";
+  const nearestCompetitorRowsHtml = nearestCompetitor
+    ? `<tr>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">En yakın rakip</td>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: #FFFFFF; font-size: 14px;">
+          ${escapeHtml(nearestCompetitor.name)} · ${money(nearestCompetitor.price)} ₺
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Rakiple fark</td>
+        <td style="padding: 8px 0; border-top: 1px solid #1F1F23; text-align: right; color: ${nearestDiffColor}; font-size: 14px; font-weight: 600;">
+          ${
+            nearestCompetitor.position === "equal"
+              ? "Aynı fiyat"
+              : `${nearestCompetitor.position === "cheaper" ? "−" : "+"}${absMoney(nearestCompetitor.diff)} ₺ (%${absPct(nearestCompetitor.diffPct)})`
+          }
+        </td>
+      </tr>`
+    : "";
+
   // COMPETITOR_PRICE_CHANGE: fiyat kartına rakip hareket satırlarını ekle.
   const competitorMoves =
     ruleType === "COMPETITOR_PRICE_CHANGE" ? (data.competitorMoves ?? []) : [];
@@ -885,6 +982,7 @@ async function sendEmailAlert(
                 }
                 ${marginRowsHtml}
                 ${competitorRowsHtml}
+                ${nearestCompetitorRowsHtml}
                 ${competitorMoveRowsHtml}
                 <tr>
                   <td style="padding: 8px 0; border-top: 1px solid #1F1F23; color: #9CA3AF; font-size: 13px;">Pazaryeri</td>
@@ -995,6 +1093,22 @@ async function sendWebhookAlert(
           },
         }
       : {}),
+    // Fiyatça en yakın geçerli rakip — otomasyonlar yeni fiyatın piyasadaki
+    // konumunu (rakibe olan fark dahil) görebilsin. diff > 0 = rakipten pahalı.
+    // Geçerlilik kontrolü diğer kanallarla ortak (resolveNearestCompetitor);
+    // isim ise competitor.cheapestName sözleşmesindeki gibi ham/null kalır —
+    // "Rakip" placeholder'ı yalnızca kullanıcıya görünen metinler içindir.
+    ...((): Record<string, unknown> => {
+      const nearest = resolveNearestCompetitor(data);
+      if (!nearest) return {};
+      return {
+        nearestCompetitor: {
+          name: data.nearestCompetitorName?.trim() || null,
+          price: nearest.price,
+          diff: nearest.diff,
+        },
+      };
+    })(),
     // Anlamlı rakip fiyat hareketleri (COMPETITOR_PRICE_CHANGE).
     ...(data.competitorMoves && data.competitorMoves.length > 0
       ? {
