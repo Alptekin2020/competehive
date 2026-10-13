@@ -7,6 +7,7 @@ import EmptyState from "@/components/EmptyState";
 import { PlanUsageCard } from "@/components/PlanUsageCard";
 import PriceTrend from "@/components/PriceTrend";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
+import MaintenanceNotice from "@/components/MaintenanceNotice";
 
 interface Stats {
   trackedProducts: number;
@@ -368,6 +369,7 @@ export default function DashboardPage() {
 
   return (
     <div>
+      <MaintenanceNotice />
       <div className="mb-5 sm:mb-7">
         <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
           Genel Bakış
