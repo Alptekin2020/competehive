@@ -1,6 +1,7 @@
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
+import StoreCompatibilityChecker from "@/components/StoreCompatibilityChecker";
 
 export default async function Home() {
   const { userId } = await auth();
@@ -82,8 +83,8 @@ export default async function Home() {
             </h1>
             <p className="text-base sm:text-lg text-dark-400 mb-6 sm:mb-10 max-w-3xl lg:max-w-2xl mx-auto lg:mx-0 px-2 lg:px-0">
               CompeteHive; Trendyol, Hepsiburada, Amazon TR ve diğer marketplace&apos;lerde rakip
-              ürünleri otomatik izler, değişimleri kaydeder ve size anında bildirir. Böylece manuel
-              kontrol yerine hızlı ve veriye dayalı fiyat kararları alırsınız.
+              ürünleri otomatik izler, değişimleri kaydeder ve size anında bildirir. Kendi e-ticaret
+              sitenizdeki fiyatları da pazaryerlerindeki rakiplerinizle aynı ekranda kıyaslarsınız.
             </p>
             <div className="flex flex-col sm:flex-row justify-center lg:justify-start gap-3 sm:gap-4 px-4 lg:px-0">
               <Link
@@ -197,6 +198,42 @@ export default async function Home() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Own store vs marketplaces + public compatibility checker */}
+      <section
+        id="kendi-siteniz"
+        className="py-12 sm:py-20 px-4 sm:px-6 border-t border-dark-900/60 bg-dark-950/40"
+      >
+        <div className="max-w-6xl mx-auto grid gap-8 lg:gap-12 lg:grid-cols-2 items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 bg-hive-500/10 border border-hive-500/20 rounded-full px-3 py-1 mb-5">
+              <span className="text-hive-400 text-xs font-semibold">Yeni</span>
+            </div>
+            <h2 className="text-3xl font-bold text-white mb-4">
+              Kendi sitenizdeki fiyat, pazaryerlerinde rekabetçi mi?
+            </h2>
+            <p className="text-dark-300 leading-relaxed mb-4">
+              Web sitenizdeki ürünü ekleyin; CompeteHive aynı ürünü Trendyol, Hepsiburada, Amazon TR
+              ve diğer satıcılarda bulur, fiyatları tek ekranda karşılaştırır. Biri sizden ucuza
+              satmaya başladığında anında haberiniz olur.
+            </p>
+            <ul className="space-y-2 text-sm text-dark-300">
+              <li>
+                • Shopify dahil yaygın e-ticaret altyapılarıyla kurulmuş sitelerin büyük
+                çoğunluğuyla uyumlu
+              </li>
+              <li>• Kurulum, kod veya entegrasyon gerekmez — ürün linki yeterli</li>
+              <li>• Sitenizin uyumlu olup olmadığını üye olmadan hemen görün</li>
+            </ul>
+          </div>
+          <div>
+            <p className="text-sm text-dark-400 mb-3">
+              Sitenizdeki bir ürünün linkini yapıştırın, birkaç saniyede kontrol edelim:
+            </p>
+            <StoreCompatibilityChecker signedIn={Boolean(userId)} />
           </div>
         </div>
       </section>
@@ -550,7 +587,7 @@ export default async function Home() {
             {[
               {
                 q: "Hangi pazaryerlerini destekliyorsunuz?",
-                a: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, Teknosa, Vatan, MediaMarkt ve PTT AVM için optimize edilmiş takip sunuyoruz. Rakip keşfi ise web genelinde çalışır — rakibiniz başka bir sitede satıyorsa onu da bulur.",
+                a: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, Teknosa, Vatan, MediaMarkt ve PTT AVM için optimize edilmiş takip sunuyoruz. Kendi e-ticaret sitenizdeki ürünleri de takibe alabilirsiniz; uyumluluğu ana sayfadaki kontrol aracıyla üye olmadan test edebilirsiniz. Rakip keşfi ise web genelinde çalışır — rakibiniz başka bir sitede satıyorsa onu da bulur.",
               },
               {
                 q: "Rakipleri nasıl buluyorsunuz, yanlış ürünle kıyaslamaz mısınız?",

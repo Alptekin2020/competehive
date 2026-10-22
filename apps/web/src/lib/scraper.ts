@@ -26,7 +26,13 @@ export async function fetchWithTimeout(
   url: string,
   timeoutMs = 10000,
   maxRedirects = 3,
+  overrides?: { accept?: string; userAgent?: string },
 ): Promise<Response> {
+  const headers = {
+    ...HEADERS,
+    ...(overrides?.accept ? { Accept: overrides.accept } : {}),
+    ...(overrides?.userAgent ? { "User-Agent": overrides.userAgent } : {}),
+  };
   let currentUrl = url;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     await assertPublicHttpUrl(currentUrl);
@@ -37,7 +43,7 @@ export async function fetchWithTimeout(
       // dispatcher: bağlantı anında DNS'i yeniden doğrular (DNS rebinding /
       // TOCTOU koruması). Tip fetch imzasında yok — undici uzantısı.
       res = await fetch(currentUrl, {
-        headers: HEADERS,
+        headers,
         signal: controller.signal,
         cache: "no-store",
         redirect: "manual",

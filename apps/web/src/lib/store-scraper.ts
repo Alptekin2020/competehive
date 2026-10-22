@@ -194,6 +194,79 @@ function detectBotChallenge(html: string): boolean {
   );
 }
 
+// Shopify ürün yolu: /products/<handle>, isteğe bağlı dil öneki
+// (/en/products/…) veya koleksiyon öneki (/collections/x/products/…).
+const SHOPIFY_PRODUCT_PATH =
+  /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:collections\/[^/]+\/)?products\/([^/?#]+)/i;
+
+/** `/products/<handle>.js` JSON endpoint for a Shopify-style product URL, else null. */
+export function shopifyJsonUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(SHOPIFY_PRODUCT_PATH);
+    if (!match) return null;
+    const handle = match[1].replace(/\.(js|json)$/i, "");
+    return `${parsed.origin}/products/${handle}.js`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse Shopify's public `/products/<handle>.js` payload. Prices there are in
+ * the shop currency's minor unit (kuruş); the currency itself isn't included,
+ * so TRY is assumed for Turkish shops.
+ */
+export function parseShopifyProductJson(data: unknown): StorePageResult | null {
+  if (!data || typeof data !== "object") return null;
+  const json = data as JsonNode;
+  const cents = typeof json.price === "number" ? json.price : Number(json.price);
+  if (!Number.isFinite(cents) || cents <= 0) return null;
+  const variants = Array.isArray(json.variants) ? (json.variants as JsonNode[]) : [];
+  const image = asString(json.featured_image);
+  const product: StoreProduct = {
+    ...emptyProduct(),
+    name: asString(json.title) ?? "",
+    price: Math.round(cents) / 100,
+    image: image?.startsWith("//") ? `https:${image}` : image,
+    inStock: json.available !== false,
+    sku: asString(variants[0]?.sku),
+    gtin: asString(variants[0]?.barcode),
+    brand: asString(json.vendor),
+  };
+  return {
+    support: product.name ? "full" : "partial",
+    issues: product.name ? [] : ["Ürün adı okunamadı."],
+    product,
+  };
+}
+
+async function tryShopifyJson(url: string): Promise<StorePageResult | null> {
+  const jsonUrl = shopifyJsonUrl(url);
+  if (!jsonUrl) return null;
+  try {
+    // Shopify mağazaları HTML sayfasını sunucu istemcilerine sık sık 429
+    // (Cloudflare bot yönetimi) ile döndürür; JSON ucu ise açıktır — ama
+    // yalnızca JSON Accept başlığıyla.
+    const res = await fetchWithTimeout(jsonUrl, 10000, 3, {
+      accept: "application/json",
+      userAgent: STORE_USER_AGENT,
+    });
+    if (!res.ok) return null;
+    return parseShopifyProductJson(await res.json());
+  } catch {
+    // Shopify olmayan bir sitenin /products/… yolu: JSON yok, HTML teşhisi geçerli.
+    return null;
+  }
+}
+
+// Bağımsız mağazalara kendimizi dürüstçe tanıtırız. Cloudflare (Shopify vb.),
+// "Chrome" diyen ama Node TLS parmak izi taşıyan istekleri 429'la reddediyor;
+// tanımlı bir bot kimliği ise geçiyor. Kimliğimizi engelleyen siteler için
+// tarayıcı kimliğiyle bir kez daha denenir.
+export const STORE_USER_AGENT = "CompeteHive/1.0 (+https://competehive.com)";
+const BLOCKED_STATUSES = new Set([401, 403, 429, 503]);
+
 const SSRF_MESSAGES = new Set([
   "Geçersiz URL",
   "Yalnızca http/https destekleniyor",
@@ -207,13 +280,21 @@ function unsupported(issue: string): StorePageResult {
 
 /**
  * Fetch an independent store's product page (SSRF-guarded, redirects
- * re-validated per hop) and diagnose whether its price can be tracked.
+ * re-validated per hop) and diagnose whether its price can be tracked. When
+ * the HTML can't be read, Shopify-style URLs fall back to the product JSON.
  * Never throws: failures come back as support="unsupported" with a reason.
  */
 export async function scrapeStorePage(url: string): Promise<StorePageResult> {
+  const fromHtml = await scrapeStoreHtml(url);
+  if (fromHtml.support !== "unsupported") return fromHtml;
+  return (await tryShopifyJson(url)) ?? fromHtml;
+}
+
+async function scrapeStoreHtml(url: string): Promise<StorePageResult> {
   let res: Response;
   try {
-    res = await fetchWithTimeout(url);
+    res = await fetchWithTimeout(url, 10000, 3, { userAgent: STORE_USER_AGENT });
+    if (BLOCKED_STATUSES.has(res.status)) res = await fetchWithTimeout(url);
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
     if (SSRF_MESSAGES.has(message)) return unsupported(`Bu adrese erişilemiyor: ${message}.`);
@@ -224,7 +305,7 @@ export async function scrapeStorePage(url: string): Promise<StorePageResult> {
     if (res.status === 404 || res.status === 410) {
       return unsupported(`Ürün sayfası bulunamadı (HTTP ${res.status}).`);
     }
-    if ([401, 403, 429, 503].includes(res.status)) {
+    if (BLOCKED_STATUSES.has(res.status)) {
       return unsupported(`Site otomatik erişimi engelliyor (HTTP ${res.status}).`);
     }
     return unsupported(`Site beklenmeyen bir yanıt döndü (HTTP ${res.status}).`);

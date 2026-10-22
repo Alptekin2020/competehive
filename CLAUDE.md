@@ -150,6 +150,8 @@ Located in `apps/web/src/app/api/`:
 - Own-store pages are read by `apps/web/src/lib/store-scraper.ts` (JSON-LD → OG/product meta → microdata) which also returns a support level (`full`/`partial`/`unsupported`) + Turkish reasons; `POST /api/products/preview` shows it before adding, and `POST /api/products` rejects own-store URLs whose price can't be read. Bulk import rejects own-store URLs (needs per-URL preview)
 - Marketplace detection matches the URL **hostname** on label boundaries (not substring of the whole URL)
 - Worker scrapes own-store URLs with `untrustedHost: true`: SSRF check (`utils/url-guard.ts`) on every redirect hop and no Puppeteer fallback
+- Own-store requests identify as `CompeteHive/1.0 (+https://competehive.com)` first (Cloudflare 429s a spoofed Chrome UA with a Node TLS fingerprint), retrying once with a browser UA if blocked. Shopify-style `/products/<handle>` URLs also use the public `/products/<handle>.js` JSON (prices in kuruş; needs `Accept: application/json`)
+- Public "Siteniz uyumlu mu?" checker: landing section + `POST /api/public/store-check` (no auth, IP rate limited 5/min & 30/day, 6h Redis cache) and `/notify` (waitlist email). Every check is stored in `store_checks` (`StoreCheck` model) to see which domains are requested/unsupported
 - Never duplicate marketplace labels/colors in component files
 
 ### Plan Limits

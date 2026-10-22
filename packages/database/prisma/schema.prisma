@@ -343,3 +343,23 @@ model ProductTag {
   @@id([productId, tagId])
   @@map("product_tags")
 }
+
+// ============================================
+// STORE CHECKS (Public "Siteniz uyumlu mu?" checker)
+// ============================================
+// Ana sayfadaki herkese açık uyumluluk kontrolünün sonuçları. Desteklenmeyen
+// alan adları hangi altyapıya önce destek ekleneceğini belirler; e-posta,
+// "desteklendiğinde haber ver" talebidir (opsiyonel).
+model StoreCheck {
+  id        String   @id @default(uuid())
+  domain    String
+  url       String
+  support   String // full | partial | unsupported
+  issues    Json?
+  email     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([domain])
+  @@index([support, createdAt])
+  @@map("store_checks")
+}

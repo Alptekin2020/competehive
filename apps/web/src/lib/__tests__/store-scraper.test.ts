@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseStorePage } from "../store-scraper";
+import { parseShopifyProductJson, parseStorePage, shopifyJsonUrl } from "../store-scraper";
 
 function page(head: string, body = ""): string {
   return `<html><head>${head}</head><body>${body}</body></html>`;
@@ -173,5 +173,54 @@ describe("parseStorePage", () => {
 
     expect(result.product.price).toBe(150);
     expect(result.support).toBe("full");
+  });
+});
+
+describe("shopifyJsonUrl", () => {
+  it("maps Shopify product paths to the .js endpoint", () => {
+    expect(shopifyJsonUrl("https://www.jumbo.com.tr/products/kesme-tahtasi?variant=1")).toBe(
+      "https://www.jumbo.com.tr/products/kesme-tahtasi.js",
+    );
+    expect(shopifyJsonUrl("https://magaza.com/collections/yeni/products/vazo")).toBe(
+      "https://magaza.com/products/vazo.js",
+    );
+    expect(shopifyJsonUrl("https://magaza.com/en/products/vazo")).toBe(
+      "https://magaza.com/products/vazo.js",
+    );
+  });
+
+  it("returns null for non-Shopify paths", () => {
+    expect(shopifyJsonUrl("https://seninev.com/urun/CR-1693")).toBeNull();
+    expect(shopifyJsonUrl("not a url")).toBeNull();
+  });
+});
+
+describe("parseShopifyProductJson", () => {
+  it("converts minor-unit prices and reads stock, image and identifiers", () => {
+    const result = parseShopifyProductJson({
+      title: "Victorinox Kesme Tahtası",
+      price: 390900,
+      available: false,
+      vendor: "Victorinox",
+      featured_image: "//cdn.shopify.com/s/files/a.jpg",
+      variants: [{ sku: "7.4123", barcode: "7611160000000" }],
+    });
+
+    expect(result?.support).toBe("full");
+    expect(result?.product).toMatchObject({
+      name: "Victorinox Kesme Tahtası",
+      price: 3909,
+      currency: "TRY",
+      inStock: false,
+      image: "https://cdn.shopify.com/s/files/a.jpg",
+      sku: "7.4123",
+      gtin: "7611160000000",
+      brand: "Victorinox",
+    });
+  });
+
+  it("rejects payloads without a positive price", () => {
+    expect(parseShopifyProductJson({ title: "X", price: 0 })).toBeNull();
+    expect(parseShopifyProductJson("<html>")).toBeNull();
   });
 });
