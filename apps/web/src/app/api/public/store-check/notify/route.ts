@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { apiSuccess, badRequest, notFound, serverError } from "@/lib/api-response";
+import { apiError, apiSuccess, badRequest, notFound, serverError } from "@/lib/api-response";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/client-ip";
+import { STORE_CHECK_UNAVAILABLE } from "@/lib/store-check";
 
 const schema = z.object({
   checkId: z.string().uuid("Geçersiz kontrol kaydı"),
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
     const rl = await rateLimit(`rate:store-check-notify:${clientIp(req)}`, 5, 60 * 60, {
       failClosed: true,
     });
+    if (rl.unavailable) return apiError(STORE_CHECK_UNAVAILABLE, 503);
     if (!rl.success) return rateLimitResponse(rl.reset);
 
     const parsed = schema.safeParse(await req.json().catch(() => null));

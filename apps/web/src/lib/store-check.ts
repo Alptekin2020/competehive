@@ -31,6 +31,9 @@ export interface StoreCheckResult {
 
 const CACHE_TTL_SECONDS = 6 * 60 * 60;
 
+export const STORE_CHECK_UNAVAILABLE =
+  "Kontrol aracı şu an geçici olarak kullanılamıyor. Lütfen biraz sonra tekrar deneyin.";
+
 function cacheKey(url: string): string {
   const parsed = new URL(url);
   const normalized = `${parsed.host.toLowerCase().replace(/^www\./, "")}${parsed.pathname}${parsed.search}`;
