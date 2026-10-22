@@ -3,6 +3,10 @@ import {
   detectMarketplaceFromUrl,
   MARKETPLACE_VALUES,
   isScraperSupportedMarketplace,
+  isTrackableMarketplace,
+  storeBadgeName,
+  storeDisplayName,
+  storeKey,
 } from "../marketplaces";
 
 describe("detectMarketplaceFromUrl", () => {
@@ -64,5 +68,59 @@ describe("isScraperSupportedMarketplace", () => {
     for (const mp of ["CICEKSEPETI", "AKAKCE", "SHOPIFY", "CUSTOM", "UNKNOWN"]) {
       expect(isScraperSupportedMarketplace(mp)).toBe(false);
     }
+  });
+});
+
+describe("detectMarketplaceFromUrl (hostname matching)", () => {
+  it("ignores marketplace domains that only appear in the path or query", () => {
+    expect(detectMarketplaceFromUrl("https://seninev.com/urun/CR-1693?ref=trendyol.com")).toBe(
+      "CUSTOM",
+    );
+    expect(detectMarketplaceFromUrl("https://seninev.com/n11.com-kampanya")).toBe("CUSTOM");
+  });
+
+  it("does not match a domain that merely ends with a marketplace name", () => {
+    expect(detectMarketplaceFromUrl("https://notrendyol.com/p/1")).toBe("CUSTOM");
+  });
+
+  it("matches subdomains and country TLD variants", () => {
+    expect(detectMarketplaceFromUrl("https://m.trendyol.com/p/1")).toBe("TRENDYOL");
+    expect(detectMarketplaceFromUrl("https://www.mediamarkt.com.tr/tr/product/x")).toBe(
+      "MEDIAMARKT",
+    );
+    expect(detectMarketplaceFromUrl("https://magaza.myshopify.com/products/x")).toBe("SHOPIFY");
+  });
+
+  it("returns CUSTOM for unparsable URLs", () => {
+    expect(detectMarketplaceFromUrl("not a url")).toBe("CUSTOM");
+  });
+});
+
+describe("isTrackableMarketplace", () => {
+  it("accepts dedicated marketplaces and independent store sites", () => {
+    for (const mp of ["TRENDYOL", "PTTAVM", "CUSTOM", "SHOPIFY"]) {
+      expect(isTrackableMarketplace(mp)).toBe(true);
+    }
+  });
+
+  it("still rejects comparison sites and DECATHLON", () => {
+    for (const mp of ["AKAKCE", "CIMRI", "EPEY", "DECATHLON"]) {
+      expect(isTrackableMarketplace(mp)).toBe(false);
+    }
+  });
+});
+
+describe("store identity helpers", () => {
+  it("keys independent stores by domain and marketplaces by enum", () => {
+    expect(storeKey("CUSTOM", "https://www.seninev.com/urun/1")).toBe("store:seninev.com");
+    expect(storeKey("CUSTOM", "https://karaca.com/p/2")).toBe("store:karaca.com");
+    expect(storeKey("TRENDYOL", "https://www.trendyol.com/p/3")).toBe("TRENDYOL");
+  });
+
+  it("labels independent stores with their domain", () => {
+    expect(storeBadgeName("CUSTOM", "https://www.seninev.com/urun/1")).toBe("seninev.com");
+    expect(storeBadgeName("TRENDYOL", "https://www.trendyol.com/p/3")).toBeUndefined();
+    expect(storeDisplayName("CUSTOM", "https://seninev.com/urun/1")).toBe("seninev.com");
+    expect(storeDisplayName("TRENDYOL", "https://www.trendyol.com/p/3")).toBe("Trendyol");
   });
 });

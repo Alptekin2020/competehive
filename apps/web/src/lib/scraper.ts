@@ -22,7 +22,7 @@ const HEADERS: Record<string, string> = {
 // otomatik takip edilmez — her sıçrama yeniden doğrulanır. Aksi halde
 // pazaryeri allowlist'inden geçen bir URL, 302 ile iç ağa (localhost,
 // 169.254.169.254) yönlendirilebilirdi.
-async function fetchWithTimeout(
+export async function fetchWithTimeout(
   url: string,
   timeoutMs = 10000,
   maxRedirects = 3,
@@ -57,7 +57,7 @@ async function fetchWithTimeout(
   throw new Error("Çok fazla yönlendirme");
 }
 
-function parsePrice(priceStr: string): number | null {
+export function parsePrice(priceStr: string): number | null {
   if (!priceStr) return null;
   const cleaned = priceStr.replace(/[^\d.,]/g, "").trim();
   if (!cleaned) return null;
@@ -116,7 +116,7 @@ function pickString(...values: Array<string | null | undefined>): string | null 
 }
 
 // Görsel URL'yi temizle — bazen JSON object geliyor, string olmalı
-function cleanImageUrl(img: unknown): string | null {
+export function cleanImageUrl(img: unknown): string | null {
   if (!img) return null;
   if (typeof img === "string") return img;
   if (typeof img === "object" && img !== null) {

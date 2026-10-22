@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { detectMarketplaceFromUrl, isScraperSupportedMarketplace } from "@/lib/marketplaces";
+import {
+  detectMarketplaceFromUrl,
+  isScraperSupportedMarketplace,
+  storeKey,
+} from "@/lib/marketplaces";
 import { apiSuccess, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { z } from "zod";
 import { Marketplace } from "@prisma/client";
@@ -11,6 +15,8 @@ import { RATE_LIMITS } from "@/lib/rate-limit";
 import { addScrapeJob } from "@/lib/queue";
 import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
 import { logger } from "@/lib/logger";
+import { getUsedStoreKeys } from "@/lib/limits";
+import { isGenericStoreMarketplace } from "@competehive/shared";
 
 const bulkSchema = z.object({
   urls: z
@@ -78,14 +84,8 @@ export async function POST(req: NextRequest) {
     // Pazaryeri sayısı limiti — tekli ekleme ucuyla aynı kural. Bu kontrol
     // olmadan 2 pazaryerlik STARTER planı tek toplu istekle 9 pazaryerine
     // yayılabiliyordu.
-    const usedMarketplaces = new Set(
-      (
-        await prisma.trackedProduct.groupBy({
-          by: ["marketplace"],
-          where: { userId: user.id },
-        })
-      ).map((m) => m.marketplace as string),
-    );
+    // Bağımsız siteler alan adıyla sayılır (tekli ekleme ucuyla aynı birim).
+    const usedMarketplaces = await getUsedStoreKeys(user.id);
 
     // Process each URL
     const results: Array<{
@@ -108,6 +108,17 @@ export async function POST(req: NextRequest) {
 
       // Detect marketplace
       const marketplace = detectMarketplaceFromUrl(url);
+      // Kendi-site ürünleri fiyat önizlemesi/doğrulaması gerektirir (fiyatı
+      // okunamayan bir site sessizce ERROR'da kalmasın) — toplu uçta bu
+      // doğrulama 20 sayfa için Vercel süresine sığmaz.
+      if (isGenericStoreMarketplace(marketplace)) {
+        results.push({
+          url,
+          status: "error",
+          message: "Kendi sitenizdeki ürünleri tek tek “Ürün Ekle” ile ekleyin",
+        });
+        continue;
+      }
       if (!isScraperSupportedMarketplace(marketplace)) {
         results.push({
           url,
@@ -119,7 +130,7 @@ export async function POST(req: NextRequest) {
 
       if (
         features.marketplaceLimit < 99 &&
-        !usedMarketplaces.has(marketplace) &&
+        !usedMarketplaces.has(storeKey(marketplace, url)) &&
         usedMarketplaces.size >= features.marketplaceLimit
       ) {
         results.push({
@@ -143,7 +154,7 @@ export async function POST(req: NextRequest) {
         });
 
         existingUrls.add(url); // prevent same URL added twice in same batch
-        usedMarketplaces.add(marketplace); // batch içi pazaryeri limiti tutarlılığı
+        usedMarketplaces.add(storeKey(marketplace, url)); // batch içi pazaryeri limiti tutarlılığı
 
         // Tekli ekleme ucuyla ayni sekilde ilk taramayi hemen kuyrukla —
         // aksi halde urunler zamanlayicinin dongusunu bekleyip "Yükleniyor..."

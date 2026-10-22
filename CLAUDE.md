@@ -146,6 +146,10 @@ Located in `apps/web/src/app/api/`:
 - Helper functions: `getMarketplaceInfo(key)`, `getRetailerInfoFromDomain(domain)`
 - Dedicated scrapers: TRENDYOL, HEPSIBURADA, AMAZON_TR, N11, MEDIAMARKT, PTTAVM; PAZARAMA/TEKNOSA/VATAN use the generic JSON-LD scraper; unknown marketplaces fall back to `scrapeGeneric`
 - DECATHLON is intentionally NOT in `SUPPORTED_SCRAPER_MARKETPLACES` (no comparable competitor pool) — legacy rows still render, new adds are rejected
+- Independent store sites (the seller's own shop, e.g. seninev.com) are trackable as `CUSTOM` (or `SHOPIFY` on myshopify.com): `isTrackableMarketplace()` = dedicated scraper OR `isGenericStoreMarketplace()`. They are identified by domain (`storeHostFromUrl`, `storeKey`) for badges and the plan's marketplace limit
+- Own-store pages are read by `apps/web/src/lib/store-scraper.ts` (JSON-LD → OG/product meta → microdata) which also returns a support level (`full`/`partial`/`unsupported`) + Turkish reasons; `POST /api/products/preview` shows it before adding, and `POST /api/products` rejects own-store URLs whose price can't be read. Bulk import rejects own-store URLs (needs per-URL preview)
+- Marketplace detection matches the URL **hostname** on label boundaries (not substring of the whole URL)
+- Worker scrapes own-store URLs with `untrustedHost: true`: SSRF check (`utils/url-guard.ts`) on every redirect hop and no Puppeteer fallback
 - Never duplicate marketplace labels/colors in component files
 
 ### Plan Limits

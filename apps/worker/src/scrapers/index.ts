@@ -4,6 +4,8 @@ import type { Page } from "puppeteer";
 import { logger } from "../utils/logger";
 import { getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
 import { getProxyConfig } from "../utils/proxy";
+import { assertPublicHttpUrl, UnsafeUrlError } from "../utils/url-guard";
+import { isGenericStoreMarketplace } from "../shared";
 
 // ============================================
 // Scraper Types
@@ -35,7 +37,15 @@ export interface ScraperConfig {
   proxyUrl?: string;
   userAgent?: string;
   timeout?: number;
+  /**
+   * Kullanıcının verdiği, pazaryeri olmayan bir siteye (CUSTOM/SHOPIFY) gidilir:
+   * her yönlendirme sıçramasında SSRF doğrulaması yapılır ve Puppeteer
+   * kullanılmaz (tarayıcı yönlendirmeleri/alt istekleri denetlenemez).
+   */
+  untrustedHost?: boolean;
 }
+
+const MAX_REDIRECTS = 5;
 
 export class ScraperError extends Error {
   readonly code: string;
@@ -137,11 +147,31 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
         Connection: "keep-alive",
       };
 
-      const response = await fetch(url, {
-        headers,
-        signal: controller.signal,
-        redirect: "follow",
-      });
+      let response: Response;
+      if (config.untrustedHost) {
+        // Yönlendirmeler elle izlenir; her sıçrama yeniden doğrulanır — aksi
+        // halde genel bir site 302 ile iç ağa (169.254.169.254) yönlendirebilir.
+        let currentUrl = url;
+        let hops = 0;
+        for (;;) {
+          await assertPublicHttpUrl(currentUrl);
+          response = await fetch(currentUrl, {
+            headers,
+            signal: controller.signal,
+            redirect: "manual",
+          });
+          const location = response.headers.get("location");
+          if (response.status < 300 || response.status >= 400 || !location) break;
+          if (++hops > MAX_REDIRECTS) throw new UnsafeUrlError("Too many redirects");
+          currentUrl = new URL(location, currentUrl).toString();
+        }
+      } else {
+        response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+          redirect: "follow",
+        });
+      }
 
       clearTimeout(timeout);
 
@@ -152,7 +182,8 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
       return await response.text();
     } catch (error) {
       logger.warn(`Fetch attempt ${attempt}/${retries} failed for ${url}: ${errorMessage(error)}`);
-      if (attempt === retries) throw error;
+      // Güvenlik reddi kalıcıdır — yeniden denemek yalnızca süre harcar.
+      if (attempt === retries || error instanceof UnsafeUrlError) throw error;
 
       // Exponential backoff
       await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
@@ -1013,6 +1044,12 @@ async function scrapeWithFallback(
   }
 
   // Strategy 2: Puppeteer fallback
+  if (config.untrustedHost) {
+    throw new ScraperError(
+      `${marketplaceName} urun bilgileri cekilemedi (HTML: ${htmlFailSummary} | Puppeteer: skipped-untrusted-host)`,
+      { code: "SCRAPE_ALL_METHODS_FAILED", retryable: true },
+    );
+  }
   try {
     logger.info(`Attempting ${marketplaceName} scrape with Puppeteer`);
     const { html, finalUrl, title } = await scrapeWithPuppeteer(url, config);
@@ -2113,6 +2150,11 @@ export async function scrapeGeneric(
 // ============================================
 
 export function getScraper(marketplace: string) {
+  if (isGenericStoreMarketplace(marketplace)) {
+    // Bağımsız mağaza siteleri (satıcının kendi sitesi / bilinmeyen alan adı).
+    return (url: string, config: ScraperConfig = {}) =>
+      scrapeGeneric(url, { ...config, untrustedHost: true });
+  }
   switch (marketplace) {
     case "TRENDYOL":
       return scrapeTrendyol;

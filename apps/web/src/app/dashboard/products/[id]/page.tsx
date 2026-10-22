@@ -16,7 +16,6 @@ import {
 import {
   MIN_MATCH_SCORE,
   THIN_MARGIN_PCT,
-  getMarketplaceInfo,
   getRetailerInfoFromDomain,
   assessCompetitorList,
   computeMargin,
@@ -27,6 +26,7 @@ import {
 import { formatPctTR } from "@/lib/format";
 import RefreshButton from "@/components/RefreshButton";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
+import { storeDisplayName } from "@/lib/marketplaces";
 import InfoTip from "@/components/ui/InfoTip";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
@@ -1102,8 +1102,8 @@ export default function ProductDetailPage() {
           {!hasOwnPrice && validCompetitors.length > 0 && (
             <p className="mt-2 text-xs text-zinc-500">
               Kendi fiyatınız alınamadığı için fark hesaplanamıyor.{" "}
-              {getMarketplaceInfo(product.marketplace).name} taraması başarılı olduğunda otomatik
-              dolacak.
+              {storeDisplayName(product.marketplace, product.productUrl)} taraması başarılı
+              olduğunda otomatik dolacak.
             </p>
           )}
         </div>

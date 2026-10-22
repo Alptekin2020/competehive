@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 
+import { storeKey } from "./marketplaces";
 import { resolveEffectivePlan, type PlanInfo } from "./plan-resolve";
 
 export type { PlanInfo } from "./plan-resolve";
@@ -47,4 +48,26 @@ export async function canAddProduct(userId: string): Promise<AddProductCheck> {
     limit: planInfo.maxProducts,
     plan: planInfo.plan,
   };
+}
+
+/**
+ * Store keys (marketplace enum, or "store:<domain>" for independent sites)
+ * the user already tracks — the unit counted by the plan's marketplace limit.
+ */
+export async function getUsedStoreKeys(userId: string): Promise<Set<string>> {
+  const rows = await prisma.trackedProduct.findMany({
+    where: { userId },
+    select: { marketplace: true, productUrl: true },
+  });
+  return new Set(rows.map((r) => storeKey(r.marketplace, r.productUrl)));
+}
+
+/** Turkish error message when adding this store would exceed the limit, else null. */
+export function storeLimitError(
+  usedKeys: Set<string>,
+  key: string,
+  marketplaceLimit: number,
+): string | null {
+  if (marketplaceLimit >= 99 || usedKeys.has(key) || usedKeys.size < marketplaceLimit) return null;
+  return `Mevcut planınızla en fazla ${marketplaceLimit} pazaryeri/mağaza kullanabilirsiniz. Daha fazlası için planınızı yükseltin.`;
 }

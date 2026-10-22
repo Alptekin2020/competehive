@@ -1,4 +1,9 @@
-import { MARKETPLACES, SUPPORTED_SCRAPER_MARKETPLACES } from "@competehive/shared";
+import {
+  MARKETPLACES,
+  SUPPORTED_SCRAPER_MARKETPLACES,
+  isGenericStoreMarketplace,
+  storeHostFromUrl,
+} from "@competehive/shared";
 
 export const MARKETPLACE_VALUES = [
   ...SUPPORTED_SCRAPER_MARKETPLACES,
@@ -49,9 +54,28 @@ const MARKETPLACE_DOMAIN_MAP: Array<{ keyword: string; marketplace: MarketplaceV
   { keyword: "itopya.com", marketplace: "ITOPYA" },
 ];
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Alan adı yalnızca HOSTNAME üzerinde ve etiket sınırında eşleşir. Tüm URL'de
+// "includes" araması, kendi-site linklerini yanlış pazaryerine atıyordu
+// (ör. https://seninev.com/?ref=trendyol.com → TRENDYOL).
+const MARKETPLACE_HOST_PATTERNS = MARKETPLACE_DOMAIN_MAP.filter(({ keyword }) => keyword).map(
+  ({ keyword, marketplace }) => ({
+    pattern: new RegExp(`(^|\\.)${escapeRegExp(keyword.toLowerCase())}(\\.|$)`),
+    marketplace,
+  }),
+);
+
 export function detectMarketplaceFromUrl(url: string): MarketplaceValue {
-  const lower = url.toLowerCase();
-  const found = MARKETPLACE_DOMAIN_MAP.find(({ keyword }) => lower.includes(keyword));
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return "CUSTOM";
+  }
+  const found = MARKETPLACE_HOST_PATTERNS.find(({ pattern }) => pattern.test(host));
   return found?.marketplace ?? "CUSTOM";
 }
 
@@ -66,3 +90,34 @@ export function isScraperSupportedMarketplace(marketplace: string): boolean {
 export const SUPPORTED_MARKETPLACE_LABEL = SUPPORTED_SCRAPER_MARKETPLACES.map(
   (id) => MARKETPLACES[id]?.name ?? id,
 ).join(", ");
+
+/**
+ * True when new products may be added for this marketplace: either a dedicated
+ * scraper exists, or it is an independent store site (CUSTOM/SHOPIFY) scraped
+ * via the generic JSON-LD/meta parser. Comparison sites (Akakçe, Cimri, …) and
+ * DECATHLON stay rejected.
+ */
+export function isTrackableMarketplace(marketplace: string): boolean {
+  return isScraperSupportedMarketplace(marketplace) || isGenericStoreMarketplace(marketplace);
+}
+
+/**
+ * Plan "pazaryeri" limiti için mağaza kimliği: bilinen pazaryerlerinde enum
+ * değeri, bağımsız sitelerde alan adı. Böylece iki farklı kendi-site tek bir
+ * "CUSTOM" pazaryeri sayılmaz.
+ */
+export function storeKey(marketplace: string, url: string): string {
+  if (!isGenericStoreMarketplace(marketplace)) return marketplace;
+  return `store:${storeHostFromUrl(url) ?? marketplace}`;
+}
+
+/** Badge label override for independent stores (domain instead of "Diğer"). */
+export function storeBadgeName(marketplace: string, url: string | null | undefined) {
+  if (!url || !isGenericStoreMarketplace(marketplace)) return undefined;
+  return storeHostFromUrl(url) ?? undefined;
+}
+
+/** Human-readable store name: marketplace label or the store's domain. */
+export function storeDisplayName(marketplace: string, url: string): string {
+  return storeBadgeName(marketplace, url) ?? MARKETPLACES[marketplace]?.name ?? marketplace;
+}

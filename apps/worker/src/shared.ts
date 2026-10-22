@@ -123,3 +123,22 @@ export interface AlertRuleWithUser {
     productUrl: string;
   } | null;
 }
+
+// ---- Bağımsız mağaza siteleri ----
+// packages/shared/src/index.ts (GENERIC_STORE_MARKETPLACES / storeHostFromUrl)
+// aynası; senkron tutulmalı.
+export const GENERIC_STORE_MARKETPLACES = ["CUSTOM", "SHOPIFY"] as const;
+
+export function isGenericStoreMarketplace(marketplace: string): boolean {
+  return (GENERIC_STORE_MARKETPLACES as readonly string[]).includes(marketplace);
+}
+
+/** Lowercased hostname without a leading "www.", or null for unparsable URLs. */
+export function storeHostFromUrl(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    return host || null;
+  } catch {
+    return null;
+  }
+}

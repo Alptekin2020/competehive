@@ -11,6 +11,7 @@ import EmptyState from "@/components/EmptyState";
 import { AddProductModal } from "@/components/products/AddProductModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
+import { storeBadgeName } from "@/lib/marketplaces";
 import PriceTrend from "@/components/PriceTrend";
 import TagFilterBar from "@/components/TagFilterBar";
 import TagManagerModal from "@/components/TagManagerModal";
@@ -752,7 +753,10 @@ function ProductsPageInner() {
                     </div>
 
                     <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
-                      <MarketplaceBadge marketplace={product.marketplace} />
+                      <MarketplaceBadge
+                        marketplace={product.marketplace}
+                        overrideName={storeBadgeName(product.marketplace, product.product_url)}
+                      />
                       <span className="text-gray-500">{competitorCount} rakip</span>
                       {stale &&
                         (neverScraped ? (
@@ -957,7 +961,10 @@ function ProductsPageInner() {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <MarketplaceBadge marketplace={product.marketplace} />
+                      <MarketplaceBadge
+                        marketplace={product.marketplace}
+                        overrideName={storeBadgeName(product.marketplace, product.product_url)}
+                      />
                     </td>
                     <td className="px-4 py-3 text-white">{formatTRY(myPrice)}</td>
                     <td className="px-4 py-3 text-gray-300">{competitorCount}</td>
