@@ -20,6 +20,7 @@ import { urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { buildSearchQueries } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
+import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 
 export { buildZeroReason };
 import { alertQueue } from "./processor";
@@ -216,6 +217,11 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // Kendi ürün URL'siyle normalize karşılaştırma. product.productUrl her zaman
     // dolu; onboard yolu url="" geçse bile kendi ürünü kendi rakibi yapmayalım.
     const ownUrlKey = urlMatchKey(product.productUrl || url || "") || null;
+    // Kendi-site ürünlerinde (CUSTOM/SHOPIFY) aynı alan adındaki DİĞER ilanlar
+    // satıcının kendi ürünleridir (varyant, kategori sayfası…) — rakip değildir.
+    const ownStoreHost = isGenericStoreMarketplace(product.marketplace)
+      ? storeHostFromUrl(product.productUrl || url || "")
+      : null;
 
     // Daha önce kabul edilmiş rakip URL'leri: periyodik yeniden taramada bunlara
     // tekrar AI çalıştırmıyoruz (maliyet + AI varyansının kabul edilmiş bir
@@ -264,6 +270,11 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               }
             }
           }
+          continue;
+        }
+
+        if (ownStoreHost && storeHostFromUrl(result.link) === ownStoreHost) {
+          console.log(`🏠 Kendi mağaza ilanı rakip sayılmadı: ${result.link.slice(0, 80)}`);
           continue;
         }
 

@@ -8,18 +8,24 @@ import { scrapeProduct } from "@/lib/scraper";
 import { analyzeProduct } from "@/lib/ai-analyzer";
 import {
   detectMarketplaceFromUrl,
-  isScraperSupportedMarketplace,
+  isTrackableMarketplace,
+  storeKey,
   SUPPORTED_MARKETPLACE_LABEL,
 } from "@/lib/marketplaces";
+import { scrapeStorePage } from "@/lib/store-scraper";
 import { logger } from "@/lib/logger";
 import { apiSuccess, unauthorized, badRequest, serverError } from "@/lib/api-response";
 import { addProductSchema } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 import { getEffectiveFeatures } from "@/lib/plan-gates";
-import { canAddProduct } from "@/lib/limits";
+import { canAddProduct, getUsedStoreKeys, storeLimitError } from "@/lib/limits";
 import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
-import { normalizeProductImage } from "@competehive/shared";
+import {
+  isGenericStoreMarketplace,
+  normalizeProductImage,
+  storeHostFromUrl,
+} from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
 
@@ -199,11 +205,12 @@ export async function POST(req: NextRequest) {
     const marketplace = detectMarketplaceFromUrl(productUrl);
     logContext.marketplace = marketplace;
 
-    if (!isScraperSupportedMarketplace(marketplace)) {
+    if (!isTrackableMarketplace(marketplace)) {
       return badRequest(
-        `Bu pazar yeri henüz desteklenmiyor. Desteklenen pazar yerleri: ${SUPPORTED_MARKETPLACE_LABEL}.`,
+        `Bu pazar yeri henüz desteklenmiyor. Desteklenen pazar yerleri: ${SUPPORTED_MARKETPLACE_LABEL} ve kendi e-ticaret siteniz.`,
       );
     }
+    const isOwnStore = isGenericStoreMarketplace(marketplace);
 
     // Ayni URL ikinci kez eklenirse plan kotasi bosuna tukenir ve ayni urun
     // iki kez taranir — toplu ekleme ucuyla ayni kontrol burada da yapilir.
@@ -231,43 +238,50 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Marketplace limit check (etkin plan: süresi dolmuş abonelik FREE sayılır)
+    // Marketplace limit check (etkin plan: süresi dolmuş abonelik FREE sayılır).
+    // Bağımsız siteler alan adıyla sayılır: iki farklı kendi-site iki mağazadır.
     const features = getEffectiveFeatures(user);
     if (features.marketplaceLimit < 99) {
-      const usedMarketplaces = await prisma.trackedProduct.groupBy({
-        by: ["marketplace"],
-        where: { userId: user.id },
-      });
-
-      const alreadyUsing = usedMarketplaces.some(
-        (m) => m.marketplace === (marketplace as Marketplace),
+      const limitError = storeLimitError(
+        await getUsedStoreKeys(user.id),
+        storeKey(marketplace, productUrl),
+        features.marketplaceLimit,
       );
-
-      if (!alreadyUsing && usedMarketplaces.length >= features.marketplaceLimit) {
-        return new Response(
-          JSON.stringify({
-            error: `Mevcut planınızla en fazla ${features.marketplaceLimit} marketplace kullanabilirsiniz. Daha fazlası için planınızı yükseltin.`,
-            upgradeRequired: true,
-          }),
-          { status: 403, headers: { "Content-Type": "application/json" } },
-        );
+      if (limitError) {
+        return new Response(JSON.stringify({ error: limitError, upgradeRequired: true }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
       }
     }
 
-    // 1. Urun sayfasini scrape et
+    // 1. Urun sayfasini scrape et. Kendi-site urunlerinde fiyat okunamiyorsa
+    // urun eklenmez: pazaryerlerinde worker baska yollarla (Serper, Puppeteer)
+    // fiyati kurtarabiliyor, bilinmeyen bir sitede ise sessizce ERROR'da kalirdi.
     let scraped;
-    try {
-      scraped = await scrapeProduct(productUrl, marketplace);
-    } catch (err) {
-      logger.error({ err }, "Scrape error");
-      scraped = {
-        name: "Ürün adı alınamadı",
-        price: null,
-        currency: "TRY",
-        image: null,
-        seller: null,
-        inStock: true,
-      };
+    let storeIdentifiers: { sku: string | null; gtin: string | null } | null = null;
+    if (isOwnStore) {
+      const storePage = await scrapeStorePage(productUrl);
+      if (storePage.support === "unsupported") {
+        return badRequest(`Bu sitedeki fiyat okunamadı: ${storePage.issues.join(" ")}`);
+      }
+      scraped = storePage.product;
+      if (!scraped.name) scraped.name = `${storeHostFromUrl(productUrl) ?? "Mağaza"} ürünü`;
+      storeIdentifiers = { sku: storePage.product.sku, gtin: storePage.product.gtin };
+    } else {
+      try {
+        scraped = await scrapeProduct(productUrl, marketplace);
+      } catch (err) {
+        logger.error({ err }, "Scrape error");
+        scraped = {
+          name: "Ürün adı alınamadı",
+          price: null,
+          currency: "TRY",
+          image: null,
+          seller: null,
+          inStock: true,
+        };
+      }
     }
 
     // 2. AI ile urunu analiz et (marka, model, arama kelimeleri)
@@ -310,6 +324,7 @@ export async function POST(req: NextRequest) {
           model: analysis.model,
           category: analysis.category,
           searchKeywords: analysis.searchKeywords,
+          ...(storeIdentifiers ?? {}),
         },
       },
     });
