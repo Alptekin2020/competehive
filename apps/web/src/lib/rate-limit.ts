@@ -4,6 +4,8 @@ interface RateLimitResult {
   success: boolean;
   remaining: number;
   reset: number;
+  /** Redis erişilemediği için karar verilemedi (fail-closed/open uygulandı). */
+  unavailable?: boolean;
 }
 
 /**
@@ -38,9 +40,9 @@ export async function rateLimit(
     // tetikleyen rotalar (Serper/OpenAI) fail-closed ister: Redis kesintisi
     // maliyet korumasını sessizce kaldırmamalı.
     if (options?.failClosed) {
-      return { success: false, remaining: 0, reset: windowSeconds };
+      return { success: false, remaining: 0, reset: windowSeconds, unavailable: true };
     }
-    return { success: true, remaining: maxRequests, reset: windowSeconds };
+    return { success: true, remaining: maxRequests, reset: windowSeconds, unavailable: true };
   }
 }
 

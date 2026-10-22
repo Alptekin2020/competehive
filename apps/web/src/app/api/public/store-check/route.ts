@@ -2,10 +2,10 @@ export const maxDuration = 15; // Vercel timeout 15 saniye
 
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { apiSuccess, badRequest, serverError } from "@/lib/api-response";
+import { apiError, apiSuccess, badRequest, serverError } from "@/lib/api-response";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/client-ip";
-import { runStoreCheck } from "@/lib/store-check";
+import { runStoreCheck, STORE_CHECK_UNAVAILABLE } from "@/lib/store-check";
 
 const schema = z.object({
   url: z
@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
   try {
     const ip = clientIp(req);
     const perMinute = await rateLimit(`rate:store-check:min:${ip}`, 5, 60, { failClosed: true });
+    // Redis kapalıyken sınır uygulanamaz; araç kapalı kalır ama ziyaretçiye
+    // yanıltıcı "çok fazla istek" yerine geçici kesinti bildirilir.
+    if (perMinute.unavailable) return apiError(STORE_CHECK_UNAVAILABLE, 503);
     if (!perMinute.success) return rateLimitResponse(perMinute.reset);
     const perDay = await rateLimit(`rate:store-check:day:${ip}`, 30, 24 * 60 * 60, {
       failClosed: true,
