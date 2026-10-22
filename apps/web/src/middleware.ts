@@ -14,6 +14,7 @@ const isPublicRoute = createRouteMatcher([
   "/destek(.*)",
   "/mesafeli-satis(.*)",
   "/api/webhooks(.*)",
+  "/api/public(.*)",
   "/api/telegram/webhook(.*)",
   "/api/health",
   "/api/version",

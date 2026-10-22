@@ -43,6 +43,8 @@ export interface ScraperConfig {
    * kullanılmaz (tarayıcı yönlendirmeleri/alt istekleri denetlenemez).
    */
   untrustedHost?: boolean;
+  /** Accept başlığını değiştirir (ör. Shopify ürün JSON'u için application/json). */
+  accept?: string;
 }
 
 const MAX_REDIRECTS = 5;
@@ -140,7 +142,7 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 
       const headers: Record<string, string> = {
         "User-Agent": config.userAgent || getRandomUserAgent(),
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Accept: config.accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
         "Accept-Encoding": "gzip, deflate, br",
         "Cache-Control": "no-cache",
@@ -2146,14 +2148,97 @@ export async function scrapeGeneric(
 }
 
 // ============================================
+// SHOPIFY PRODUCT JSON (bağımsız mağazalar)
+// ============================================
+// Shopify mağazaları HTML sayfasını sunucu istemcilerine sık sık 429 ile
+// döndürür (Cloudflare bot yönetimi); /products/<handle>.js ucu ise JSON
+// Accept başlığıyla açıktır. apps/web/src/lib/store-scraper.ts'teki
+// shopifyJsonUrl/parseShopifyProductJson'un aynası — senkron tutulmalı.
+
+const SHOPIFY_PRODUCT_PATH =
+  /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:collections\/[^/]+\/)?products\/([^/?#]+)/i;
+
+export function shopifyJsonUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(SHOPIFY_PRODUCT_PATH);
+    if (!match) return null;
+    const handle = match[1].replace(/\.(js|json)$/i, "");
+    return `${parsed.origin}/products/${handle}.js`;
+  } catch {
+    return null;
+  }
+}
+
+/** Prices in the `.js` payload are in minor units (kuruş); currency assumed TRY. */
+export function parseShopifyProductJson(data: unknown): ScrapedProduct | null {
+  if (!data || typeof data !== "object") return null;
+  const json = data as Record<string, unknown>;
+  const cents = typeof json.price === "number" ? json.price : Number(json.price);
+  if (!Number.isFinite(cents) || cents <= 0) return null;
+  const image = typeof json.featured_image === "string" ? json.featured_image : undefined;
+  return {
+    name: typeof json.title === "string" ? json.title.trim() : "",
+    price: Math.round(cents) / 100,
+    currency: "TRY",
+    inStock: json.available !== false,
+    imageUrl: image?.startsWith("//") ? `https:${image}` : image,
+  };
+}
+
+async function scrapeShopifyJson(
+  url: string,
+  config: ScraperConfig,
+): Promise<ScrapedProduct | null> {
+  const jsonUrl = shopifyJsonUrl(url);
+  if (!jsonUrl) return null;
+  try {
+    const body = await fetchWithRetry(jsonUrl, { ...config, accept: "application/json" }, 1);
+    const product = parseShopifyProductJson(JSON.parse(body));
+    if (product) logger.info(`Shopify JSON scraped: ${product.name} - ${product.price} TRY`);
+    return product;
+  } catch (error) {
+    // Shopify olmayan bir sitenin /products/… yolu (404/HTML) — HTML yoluna düşülür.
+    logger.info(`Shopify JSON unavailable for ${url}: ${errorMessage(error)}`);
+    return null;
+  }
+}
+
+// Bağımsız mağazalara kendimizi dürüstçe tanıtırız: Cloudflare (Shopify vb.)
+// "Chrome" diyen ama Node TLS parmak izi taşıyan istekleri 429'la reddediyor,
+// tanımlı bir bot kimliği ise geçiyor. web store-scraper.ts ile aynı değer.
+export const STORE_USER_AGENT = "CompeteHive/1.0 (+https://competehive.com)";
+
+/**
+ * Independent store (CUSTOM/SHOPIFY): Shopify JSON first when the URL fits,
+ * then generic HTML with our bot identity, then once more with a browser UA
+ * for sites that block unknown bots.
+ */
+async function scrapeIndependentStore(
+  url: string,
+  config: ScraperConfig = {},
+): Promise<ScrapedProduct> {
+  const guarded: ScraperConfig = { ...config, untrustedHost: true };
+  const identified: ScraperConfig = { ...guarded, userAgent: config.userAgent ?? STORE_USER_AGENT };
+  const fromJson = await scrapeShopifyJson(url, identified);
+  if (fromJson) return fromJson;
+  try {
+    return await scrapeGeneric(url, identified);
+  } catch (error) {
+    if (config.userAgent) throw error;
+    logger.info(`Independent store retry with browser UA: ${url} (${errorMessage(error)})`);
+    return scrapeGeneric(url, guarded);
+  }
+}
+
+// ============================================
 // SCRAPER FACTORY
 // ============================================
 
 export function getScraper(marketplace: string) {
   if (isGenericStoreMarketplace(marketplace)) {
     // Bağımsız mağaza siteleri (satıcının kendi sitesi / bilinmeyen alan adı).
-    return (url: string, config: ScraperConfig = {}) =>
-      scrapeGeneric(url, { ...config, untrustedHost: true });
+    return scrapeIndependentStore;
   }
   switch (marketplace) {
     case "TRENDYOL":

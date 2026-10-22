@@ -382,6 +382,29 @@ export async function runMigrations() {
 
     console.log("✅ Phase 12 migration: COMPETITOR_PRICE_CHANGE rule type added");
 
+    // Phase 13: Herkese açık "Siteniz uyumlu mu?" kontrol kayıtları.
+    // 202610220001_add_store_checks'i aynalar.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "store_checks" (
+        "id" TEXT NOT NULL,
+        "domain" TEXT NOT NULL,
+        "url" TEXT NOT NULL,
+        "support" TEXT NOT NULL,
+        "issues" JSONB,
+        "email" TEXT,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "store_checks_pkey" PRIMARY KEY ("id")
+      )
+    `);
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS "store_checks_domain_idx" ON "store_checks"("domain")`,
+    );
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS "store_checks_support_created_at_idx" ON "store_checks"("support", "created_at")`,
+    );
+
+    console.log("✅ Phase 13 migration: store_checks table created");
+
     console.log("✅ Migrations tamamlandı");
   } catch (err) {
     console.error("❌ Migration hatası:", err);
