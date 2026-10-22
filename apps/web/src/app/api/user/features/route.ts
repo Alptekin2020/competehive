@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/current-user";
+import { getCurrentUser, isAdminUser } from "@/lib/current-user";
 import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { resolveEffectivePlan } from "@/lib/plan-resolve";
 
@@ -63,6 +63,9 @@ export async function GET() {
 
     return NextResponse.json({
       plan,
+      // Yalnızca menüde yönetici bağlantılarını göstermek için; yetki kontrolü
+      // her yönetici API'sinde ayrıca yapılır.
+      isAdmin: isAdminUser({ clerkId: user.clerkId, email: user.email }),
       features,
       usage: {
         products: productCount,

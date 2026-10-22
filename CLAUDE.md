@@ -152,6 +152,7 @@ Located in `apps/web/src/app/api/`:
 - Worker scrapes own-store URLs with `untrustedHost: true`: SSRF check (`utils/url-guard.ts`) on every redirect hop and no Puppeteer fallback
 - Own-store requests identify as `CompeteHive/1.0 (+https://competehive.com)` first (Cloudflare 429s a spoofed Chrome UA with a Node TLS fingerprint), retrying once with a browser UA if blocked. Shopify-style `/products/<handle>` URLs also use the public `/products/<handle>.js` JSON (prices in kuruş; needs `Accept: application/json`)
 - Public "Siteniz uyumlu mu?" checker: landing section + `POST /api/public/store-check` (no auth, IP rate limited 5/min & 30/day, 6h Redis cache) and `/notify` (waitlist email). Every check is stored in `store_checks` (`StoreCheck` model) to see which domains are requested/unsupported
+- Admin-only "Site Talepleri" view (`/dashboard/admin/store-checks`, `GET /api/admin/store-checks?days=`) summarizes `store_checks` per domain (`lib/store-check-summary.ts`); the sidebar link shows only when `/api/user/features` returns `isAdmin`
 - Never duplicate marketplace labels/colors in component files
 
 ### Plan Limits
