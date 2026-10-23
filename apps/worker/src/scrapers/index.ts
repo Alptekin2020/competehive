@@ -198,20 +198,41 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
 // Puppeteer-based scraping fallback
 // ============================================
 
-let browserInstance: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+type Browser = Awaited<ReturnType<typeof puppeteer.launch>>;
 
-async function getBrowser() {
+let browserInstance: Browser | null = null;
+let browserLaunch: Promise<Browser> | null = null;
+
+// Chromium, worker'ın bellek kullanımının çoğunu oluşturuyor (~0,3–0,5 GB):
+// tek seferlik bir Puppeteer ihtiyacından sonra süreç kapanana kadar açık
+// kalması Railway faturasını belirleyen kalemdi. Açık sayfa kalmayınca bu
+// süre sonunda kapatılır; sonraki ihtiyaçta yeniden açılır (~1–2 sn).
+const BROWSER_IDLE_CLOSE_MS = 2 * 60 * 1000;
+let activePages = 0;
+let idleCloseTimer: NodeJS.Timeout | null = null;
+
+async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.connected) {
     return browserInstance;
   }
+  // Eşzamanlı çağrılar (scrape kuyruğu concurrency=5) tek bir launch'ı paylaşır;
+  // aksi halde iki Chromium açılıp biri sahipsiz kalıyordu.
+  if (!browserLaunch) {
+    browserLaunch = launchBrowser().finally(() => {
+      browserLaunch = null;
+    });
+  }
+  return browserLaunch;
+}
 
+async function launchBrowser(): Promise<Browser> {
   // A previously launched browser that crashed/disconnected must not be reused.
   browserInstance = null;
 
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
   const proxy = getProxyConfig();
 
-  browserInstance = await puppeteer.launch({
+  const instance = await puppeteer.launch({
     headless: true,
     executablePath,
     args: [
@@ -235,12 +256,52 @@ async function getBrowser() {
   });
 
   // If Chromium crashes, drop the singleton so the next call relaunches it
-  // instead of handing out a dead browser.
-  browserInstance.on("disconnected", () => {
-    browserInstance = null;
+  // instead of handing out a dead browser. Only clear it if it is still THIS
+  // instance — an idle-closed browser must not wipe a newer one.
+  instance.on("disconnected", () => {
+    if (browserInstance === instance) browserInstance = null;
   });
 
-  return browserInstance;
+  browserInstance = instance;
+  return instance;
+}
+
+function scheduleIdleClose(): void {
+  if (activePages > 0 || !browserInstance || idleCloseTimer) return;
+  idleCloseTimer = setTimeout(() => {
+    idleCloseTimer = null;
+    if (activePages === 0) {
+      logger.info("Closing idle Puppeteer browser");
+      void closeBrowser();
+    }
+  }, BROWSER_IDLE_CLOSE_MS);
+  idleCloseTimer.unref();
+}
+
+/** Open a page on the shared browser; pair every call with releasePage(). */
+export async function openPage(): Promise<Page> {
+  if (idleCloseTimer) {
+    clearTimeout(idleCloseTimer);
+    idleCloseTimer = null;
+  }
+  activePages++;
+  try {
+    const browser = await getBrowser();
+    return await browser.newPage();
+  } catch (error) {
+    activePages--;
+    scheduleIdleClose();
+    throw error;
+  }
+}
+
+export async function releasePage(page: Page): Promise<void> {
+  try {
+    await page.close();
+  } finally {
+    activePages = Math.max(0, activePages - 1);
+    scheduleIdleClose();
+  }
 }
 
 /**
@@ -256,13 +317,16 @@ async function applyProxyAuth(page: Page): Promise<void> {
 
 /** Close the shared Puppeteer browser (called on graceful shutdown). */
 export async function closeBrowser(): Promise<void> {
-  if (browserInstance) {
+  // Önce referansı bırak: kapanış sürerken gelen bir openPage() kapanmakta olan
+  // tarayıcıyı değil, yeni bir tarayıcıyı alsın.
+  const instance = browserInstance;
+  browserInstance = null;
+  if (instance) {
     try {
-      await browserInstance.close();
+      await instance.close();
     } catch {
       // already closed or crashed — nothing to do
     }
-    browserInstance = null;
   }
 }
 
@@ -276,8 +340,7 @@ async function scrapeWithPuppeteer(
   url: string,
   config: ScraperConfig,
 ): Promise<PuppeteerFetchResult> {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
+  const page = await openPage();
 
   try {
     await applyProxyAuth(page);
@@ -310,7 +373,7 @@ async function scrapeWithPuppeteer(
     const title = await page.title().catch(() => null);
     return { html, finalUrl, title };
   } finally {
-    await page.close();
+    await releasePage(page);
   }
 }
 
@@ -834,8 +897,7 @@ export async function scrapeTrendyol(
   // Strategy 3: Puppeteer (handles JS-rendered pages and bot protection)
   try {
     logger.info("Attempting Trendyol scrape with Puppeteer");
-    const browser = await getBrowser();
-    const page = await browser.newPage();
+    const page = await openPage();
     let pageHtml = "";
     try {
       await applyProxyAuth(page);
@@ -943,7 +1005,7 @@ export async function scrapeTrendyol(
         throw err;
       }
     } finally {
-      await page.close();
+      await releasePage(page);
     }
 
     if (pageHtml) {
@@ -1525,8 +1587,7 @@ export async function scrapeHepsiburada(
   // Strategy 2: Puppeteer (Akamai bot challenge'ını JS rendering ile geçer)
   try {
     logger.info("Attempting Hepsiburada scrape with Puppeteer");
-    const browser = await getBrowser();
-    const page = await browser.newPage();
+    const page = await openPage();
     let pageHtml = "";
     try {
       await applyProxyAuth(page);
@@ -1591,7 +1652,7 @@ export async function scrapeHepsiburada(
         throw err;
       }
     } finally {
-      await page.close();
+      await releasePage(page);
     }
 
     if (pageHtml) {
