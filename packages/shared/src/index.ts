@@ -4,6 +4,7 @@
 
 export { validateWebEnv, validateWorkerEnv, webEnvSchema, workerEnvSchema } from "./env";
 export { normalizeProductImage } from "./normalize-product-image";
+export { parseAvailability } from "./availability";
 export {
   MIN_MATCH_SCORE,
   PRICE_BAND_MIN_RATIO,

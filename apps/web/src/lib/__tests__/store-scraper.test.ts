@@ -224,3 +224,29 @@ describe("parseShopifyProductJson", () => {
     expect(parseShopifyProductJson("<html>")).toBeNull();
   });
 });
+
+describe("parseStorePage stock signals", () => {
+  it("reads og:availability (Evidea shape)", () => {
+    const result = parseStorePage(
+      page(
+        `<meta property="og:title" content="Yapay Çiçek" />
+         <meta property="og:price:amount" content="319.90" />
+         <meta property="og:availability" content="out of stock" />`,
+      ),
+    );
+    expect(result.support).toBe("full");
+    expect(result.product.inStock).toBe(false);
+  });
+
+  it("reads underscore spellings like in_stock (Modanisa shape)", () => {
+    const result = parseStorePage(
+      page(
+        "<title>Eşarp</title>",
+        `<h1>Eşarp</h1><span itemprop="price" content="29.99"></span>
+         <meta itemprop="availability" content="in_stock" />`,
+      ),
+    );
+    expect(result.support).toBe("full");
+    expect(result.product.inStock).toBe(true);
+  });
+});
