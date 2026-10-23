@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 
+import { parseAvailability } from "@competehive/shared";
 import { cleanImageUrl, fetchWithTimeout, parsePrice, type ScrapedProduct } from "@/lib/scraper";
 
 // Bağımsız mağaza siteleri (satıcının kendi sitesi) için fiyat okuma + teşhis.
@@ -26,8 +27,7 @@ export interface StorePageResult {
 
 type JsonNode = Record<string, unknown>;
 
-const IN_STOCK_RE = /instock|in stock|limitedavailability|instoreonly|onlineonly|preorder|presale/i;
-const OUT_OF_STOCK_RE = /outofstock|out of stock|soldout|sold out|discontinued/i;
+const STOCK_UNKNOWN_ISSUE = "Stok durumu okunamadı; ürün stokta kabul edilecek.";
 
 function emptyProduct(): StoreProduct {
   return {
@@ -88,13 +88,6 @@ function firstOffer(product: JsonNode): JsonNode | null {
   return null;
 }
 
-function stockFrom(value: string | null): boolean | null {
-  if (!value) return null;
-  if (OUT_OF_STOCK_RE.test(value)) return false;
-  if (IN_STOCK_RE.test(value)) return true;
-  return null;
-}
-
 /**
  * Pure HTML → product + support diagnosis. Order: JSON-LD (schema.org
  * Product), then Open Graph/product meta tags, then microdata (itemprop).
@@ -132,7 +125,7 @@ export function parseStorePage(html: string): StorePageResult {
     const price = rawPrice ? parsePrice(rawPrice) : null;
     if (price !== null && price > 0) product.price = price;
     currency ??= asString(offer.priceCurrency);
-    stock ??= stockFrom(asString(offer.availability));
+    stock ??= parseAvailability(asString(offer.availability));
     if (!product.seller && offer.seller && typeof offer.seller === "object") {
       product.seller = asString((offer.seller as JsonNode).name);
     }
@@ -157,7 +150,11 @@ export function parseStorePage(html: string): StorePageResult {
     meta('meta[property="product:price:currency"]') ??
     meta('meta[property="og:price:currency"]') ??
     itemprop("priceCurrency");
-  stock ??= stockFrom(meta('meta[property="product:availability"]') ?? itemprop("availability"));
+  stock ??= parseAvailability(
+    meta('meta[property="product:availability"]') ??
+      meta('meta[property="og:availability"]') ??
+      itemprop("availability"),
+  );
 
   if (!product.name) {
     product.name =
@@ -181,7 +178,7 @@ export function parseStorePage(html: string): StorePageResult {
     return { support: "unsupported", issues, product };
   }
   if (!product.name) issues.push("Ürün adı okunamadı.");
-  if (stock === null) issues.push("Stok durumu okunamadı; ürün stokta kabul edilecek.");
+  if (stock === null) issues.push(STOCK_UNKNOWN_ISSUE);
   if (product.currency !== "TRY") {
     issues.push(`Fiyat TL dışında bir para biriminde (${product.currency}).`);
   }
@@ -286,8 +283,19 @@ function unsupported(issue: string): StorePageResult {
  */
 export async function scrapeStorePage(url: string): Promise<StorePageResult> {
   const fromHtml = await scrapeStoreHtml(url);
-  if (fromHtml.support !== "unsupported") return fromHtml;
-  return (await tryShopifyJson(url)) ?? fromHtml;
+  if (fromHtml.support === "full") return fromHtml;
+  const fromJson = await tryShopifyJson(url);
+  if (!fromJson) return fromHtml;
+  if (fromHtml.support === "unsupported") return fromJson;
+  // Fiyat HTML'den okundu ama stok okunamadı: Shopify JSON'undaki `available`
+  // ile tamamlanır (HTML'deki para birimi/fiyat korunur).
+  if (!fromHtml.issues.includes(STOCK_UNKNOWN_ISSUE)) return fromHtml;
+  const issues = fromHtml.issues.filter((issue) => issue !== STOCK_UNKNOWN_ISSUE);
+  return {
+    support: issues.length > 0 ? "partial" : "full",
+    issues,
+    product: { ...fromHtml.product, inStock: fromJson.product.inStock },
+  };
 }
 
 async function scrapeStoreHtml(url: string): Promise<StorePageResult> {

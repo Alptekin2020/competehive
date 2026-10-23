@@ -6,6 +6,7 @@ import { getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
 import { getProxyConfig } from "../utils/proxy";
 import { assertPublicHttpUrl, UnsafeUrlError } from "../utils/url-guard";
 import { isGenericStoreMarketplace } from "../shared";
+import { parseAvailability } from "../utils/availability";
 
 // ============================================
 // Scraper Types
@@ -2265,6 +2266,149 @@ async function scrapeShopifyJson(
   }
 }
 
+// ============================================
+// INDEPENDENT STORE HTML (bağımsız mağazalar)
+// ============================================
+// apps/web/src/lib/store-scraper.ts → parseStorePage'in aynası — senkron
+// tutulmalı. Web önizlemesi bir sayfayı "destekleniyor" diye kabul ettiyse
+// worker da aynı alanlardan okuyabilmeli; aksi halde ürün ilk taramada ERROR'a
+// düşer (microdata fiyatlı siteler: Loft, Modanisa). Sıra: JSON-LD
+// (Product/ProductGroup, @graph/mainEntity, AggregateOffer) → Open Graph /
+// product meta → microdata (itemprop).
+
+type JsonNode = Record<string, unknown>;
+
+function jsonHasType(node: JsonNode, ...types: string[]): boolean {
+  const raw = node["@type"];
+  const list = Array.isArray(raw) ? raw : [raw];
+  return list.some((t) => typeof t === "string" && types.includes(t));
+}
+
+function findProductNode(value: unknown, depth = 0): JsonNode | null {
+  if (depth > 6 || value === null || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findProductNode(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  const node = value as JsonNode;
+  if (jsonHasType(node, "Product", "ProductGroup")) return node;
+  for (const key of ["@graph", "mainEntity", "itemListElement", "item"]) {
+    const found = findProductNode(node[key], depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function jsonString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function jsonImage(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return jsonImage(value[0]);
+  if (typeof value === "object") {
+    const node = value as JsonNode;
+    return jsonImage(node.contentUrl) ?? jsonImage(node.url);
+  }
+  return null;
+}
+
+function firstOffer(product: JsonNode): JsonNode | null {
+  const pick = (offers: unknown): JsonNode | null => {
+    const first = Array.isArray(offers) ? offers[0] : offers;
+    return first && typeof first === "object" ? (first as JsonNode) : null;
+  };
+  const direct = pick(product.offers);
+  if (direct) return direct;
+  const variants = product.hasVariant;
+  const variant = Array.isArray(variants) ? variants[0] : variants;
+  if (variant && typeof variant === "object") return pick((variant as JsonNode).offers);
+  return null;
+}
+
+/** Independent-store product page → product, or null when no price is readable. */
+export function parseStorePageHtml(html: string): ScrapedProduct | null {
+  const $ = cheerio.load(html);
+  let name = "";
+  let price = 0;
+  let image: string | null = null;
+  let seller: string | null = null;
+  let currency: string | null = null;
+  let stock: boolean | null = null;
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (price > 0) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse($(el).html() || "");
+    } catch {
+      // Bozuk JSON-LD bloğu: diğer bloklar ve meta etiketleri denenir.
+      return;
+    }
+    const node = findProductNode(parsed);
+    if (!node) return;
+    if (!name) name = jsonString(node.name) ?? "";
+    if (!image) image = jsonImage(node.image);
+    const offer = firstOffer(node);
+    if (!offer) return;
+    price = parsePrice(jsonString(offer.price) ?? jsonString(offer.lowPrice));
+    currency ??= jsonString(offer.priceCurrency);
+    stock ??= parseAvailability(jsonString(offer.availability));
+    if (!seller && offer.seller && typeof offer.seller === "object") {
+      seller = jsonString((offer.seller as JsonNode).name);
+    }
+  });
+
+  const meta = (selector: string) => jsonString($(selector).first().attr("content"));
+  const itemprop = (prop: string) => {
+    const el = $(`[itemprop="${prop}"]`).first();
+    if (!el.length) return null;
+    return jsonString(el.attr("content")) ?? jsonString(el.attr("href")) ?? jsonString(el.text());
+  };
+
+  if (price <= 0) {
+    price = parsePrice(
+      meta('meta[property="product:price:amount"]') ??
+        meta('meta[property="og:price:amount"]') ??
+        itemprop("price"),
+    );
+  }
+  if (price <= 0) return null;
+
+  currency ??=
+    meta('meta[property="product:price:currency"]') ??
+    meta('meta[property="og:price:currency"]') ??
+    itemprop("priceCurrency");
+  stock ??= parseAvailability(
+    meta('meta[property="product:availability"]') ??
+      meta('meta[property="og:availability"]') ??
+      itemprop("availability"),
+  );
+  if (!name) {
+    name =
+      meta('meta[property="og:title"]') ??
+      jsonString($("h1").first().text()) ??
+      jsonString($("title").first().text()) ??
+      "";
+  }
+  image ??= meta('meta[property="og:image"]');
+
+  return {
+    name,
+    price,
+    currency: (currency ?? "TRY").toUpperCase(),
+    inStock: stock ?? true,
+    imageUrl: image ?? undefined,
+    sellerName: seller ?? undefined,
+  };
+}
+
 // Bağımsız mağazalara kendimizi dürüstçe tanıtırız: Cloudflare (Shopify vb.)
 // "Chrome" diyen ama Node TLS parmak izi taşıyan istekleri 429'la reddediyor,
 // tanımlı bir bot kimliği ise geçiyor. web store-scraper.ts ile aynı değer.
@@ -2272,7 +2416,7 @@ export const STORE_USER_AGENT = "CompeteHive/1.0 (+https://competehive.com)";
 
 /**
  * Independent store (CUSTOM/SHOPIFY): Shopify JSON first when the URL fits,
- * then generic HTML with our bot identity, then once more with a browser UA
+ * then the store-page HTML parser with our bot identity, then once more with a browser UA
  * for sites that block unknown bots.
  */
 async function scrapeIndependentStore(
@@ -2284,11 +2428,11 @@ async function scrapeIndependentStore(
   const fromJson = await scrapeShopifyJson(url, identified);
   if (fromJson) return fromJson;
   try {
-    return await scrapeGeneric(url, identified);
+    return await scrapeWithFallbackCached(url, identified, parseStorePageHtml, "Store");
   } catch (error) {
     if (config.userAgent) throw error;
     logger.info(`Independent store retry with browser UA: ${url} (${errorMessage(error)})`);
-    return scrapeGeneric(url, guarded);
+    return scrapeWithFallbackCached(url, guarded, parseStorePageHtml, "Store");
   }
 }
 
