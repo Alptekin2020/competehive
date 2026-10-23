@@ -18,6 +18,11 @@ const NAV_ITEMS = [
   { href: "/dashboard/yardim", label: "Yardım", icon: "help" },
 ];
 
+// Yalnızca yöneticilere gösterilir (/api/user/features → isAdmin).
+const ADMIN_NAV_ITEMS = [
+  { href: "/dashboard/admin/store-checks", label: "Site Talepleri", icon: "globe" },
+];
+
 function NavIcon({ name, className }: { name: string; className?: string }) {
   const c = className || "w-5 h-5";
   switch (name) {
@@ -98,6 +103,22 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
           <line x1="6" y1="20" x2="6" y2="14" />
         </svg>
       );
+    case "globe":
+      return (
+        <svg
+          className={c}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <line x1="2" y1="12" x2="22" y2="12" />
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        </svg>
+      );
     case "settings":
       return (
         <svg
@@ -139,6 +160,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarPlan, setSidebarPlan] = useState<{
     plan: string;
+    isAdmin?: boolean;
     features: { maxProducts: number; [key: string]: unknown };
     usage: { products: number; [key: string]: unknown };
   } | null>(null);
@@ -174,7 +196,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Nav */}
           <nav className="flex-1 px-3 py-4 space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {[...NAV_ITEMS, ...(sidebarPlan?.isAdmin ? ADMIN_NAV_ITEMS : [])].map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
