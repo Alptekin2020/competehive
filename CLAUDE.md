@@ -176,6 +176,7 @@ Entry point: `apps/worker/src/index.ts`
 - Structured logging with Pino
 - Custom `ScraperError` class with `code`, `retryable`, `softFail` fields
 - User-agent rotation (5 browser user agents)
+- Puppeteer: one shared Chromium, opened via `openPage()`/`releasePage()` and closed after 2 minutes with no open page (Chromium is most of the worker's memory, which drives the Railway bill); concurrent callers share a single launch
 - Graceful shutdown on SIGTERM/SIGINT
 
 ### Scrapers
