@@ -16,7 +16,8 @@ import { addScrapeJob } from "@/lib/queue";
 import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
 import { logger } from "@/lib/logger";
 import { getUsedStoreKeys } from "@/lib/limits";
-import { isGenericStoreMarketplace } from "@competehive/shared";
+import { getMarketplaceInfo, isGenericStoreMarketplace } from "@competehive/shared";
+import { provisionalProductName } from "@/lib/provisional-name";
 
 const bulkSchema = z.object({
   urls: z
@@ -146,7 +147,11 @@ export async function POST(req: NextRequest) {
           data: {
             userId: user.id,
             productUrl: url,
-            productName: "Yükleniyor...",
+            // Geçici ad URL slug'ından türetilir; worker'ın ilk taraması
+            // gerçek başlığı yazar. Sabit "Yükleniyor..." adı, ilk tarama
+            // başarısız olunca kalıcılaşıyor ve rakip aramasına sorgu olarak
+            // gidiyordu.
+            productName: provisionalProductName(url, marketplace),
             marketplace: marketplace as Marketplace,
             status: "ACTIVE",
             scrapeInterval,
@@ -156,11 +161,10 @@ export async function POST(req: NextRequest) {
         existingUrls.add(url); // prevent same URL added twice in same batch
         usedMarketplaces.add(storeKey(marketplace, url)); // batch içi pazaryeri limiti tutarlılığı
 
-        // Tekli ekleme ucuyla ayni sekilde ilk taramayi hemen kuyrukla —
-        // aksi halde urunler zamanlayicinin dongusunu bekleyip "Yükleniyor..."
-        // olarak kalir. Rakip kesfi bilerek kuyruklanmaz: urun adi henuz
-        // "Yükleniyor..." oldugu icin coplu bir arama sorgusu uretirdi; adin
-        // dolmasindan sonra periyodik kesif dongusu rakipleri kendisi bulur.
+        // Tekli ekleme ucuyla aynı şekilde ilk taramayı hemen kuyrukla —
+        // aksi halde ürünler zamanlayıcının döngüsünü bekler. Rakip keşfi
+        // bilerek kuyruklanmaz: ad henüz geçicidir (slug'dan türetilmiş);
+        // gerçek başlık dolduktan sonra periyodik keşif döngüsü rakipleri bulur.
         try {
           await addScrapeJob(product.id, marketplace, url);
         } catch (queueError) {
@@ -170,7 +174,7 @@ export async function POST(req: NextRequest) {
         results.push({
           url,
           status: "success",
-          message: `${marketplace} ürünü eklendi`,
+          message: `${getMarketplaceInfo(marketplace).name} ürünü eklendi`,
           product: { id: product.id, marketplace: product.marketplace },
         });
       } catch (err: unknown) {

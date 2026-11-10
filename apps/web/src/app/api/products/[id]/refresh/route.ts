@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { applyRateLimit } from "@/lib/with-rate-limit";
 import { RATE_LIMITS, rateLimit } from "@/lib/rate-limit";
 import { resolveEffectivePlan } from "@/lib/plan-resolve";
-import { updateTrackedProductRefresh } from "@/lib/tracked-product-refresh";
+import { isRefreshStale, updateTrackedProductRefresh } from "@/lib/tracked-product-refresh";
 
 // Plana göre günlük manuel yenileme kotası. Manuel yenileme, plan tarama
 // aralığını fiilen deler (FREE = günde 1 tarama hakkı ama yenile butonu
@@ -50,8 +50,13 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
 
     if (!product) return notFound("Ürün bulunamadı");
 
-    // Prevent spam: if there's already a pending/processing refresh, reject
-    if (product.refreshStatus === "pending" || product.refreshStatus === "processing") {
+    // Prevent spam: if there's already a pending/processing refresh, reject.
+    // Takılı kalmış (zaman aşımına uğramış) bir istek yenisini engellemez —
+    // aksi halde worker'ın hiç işlemediği bir iş butonu kalıcı olarak kilitler.
+    if (
+      (product.refreshStatus === "pending" || product.refreshStatus === "processing") &&
+      !isRefreshStale(product)
+    ) {
       return NextResponse.json(
         { error: "Bu ürün için zaten bir yenileme işlemi devam ediyor" },
         { status: 429 },
