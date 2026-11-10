@@ -23,7 +23,7 @@ import {
   type CompetitorAssessment,
   type MarginBand,
 } from "@competehive/shared";
-import { formatPctTR } from "@/lib/format";
+import { formatPctTR, parseTrNumber } from "@/lib/format";
 import RefreshButton from "@/components/RefreshButton";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import { storeDisplayName } from "@/lib/marketplaces";
@@ -44,6 +44,9 @@ interface PriceHistoryEntry {
   inStock: boolean;
   sellerName: string | null;
   scrapedAt: string;
+  // Sunucu sınıflandırır (lib/price-history.ts): true = ürünün kendi fiyatı,
+  // false = rakip fiyatı. Satıcı adından tahmin edilmez.
+  isOwn: boolean;
 }
 
 interface CompetitorEntry {
@@ -127,62 +130,57 @@ function retailerColor(name: string): string {
   return map[name] ?? "#6B7280";
 }
 
-// price_history'yi Recharts için hazırla
-function prepareChartData(history: PriceHistoryEntry[], ownSellerHints: string[]) {
-  const byDate: Record<
+// price_history'yi Recharts için hazırla. Kendi fiyat / rakip ayrımı sunucudan
+// gelen isOwn bayrağıyla yapılır; eskiden satıcı adında pazaryeri enum'u
+// aranıyordu ve elle girilen fiyat "rakip", aynı pazaryerindeki rakip "kendi
+// fiyat" olarak çiziliyordu.
+function prepareChartData(history: PriceHistoryEntry[]) {
+  const byDay = new Map<
     string,
-    { _timestamp: number; _prices: Record<string, number> } & Record<
-      string,
-      number | Record<string, number>
-    >
-  > = {};
-  const ownHints = ownSellerHints.map((hint) => hint.toLowerCase());
+    { timestamp: number; label: string; own: number | null; competitors: Record<string, number> }
+  >();
 
+  // history sunucudan scrapedAt artan sırada gelir: aynı gün içinde son kayıt kazanır.
   for (const entry of history) {
-    const seller = entry.sellerName || "Bilinmeyen";
+    const price = Number(entry.price);
+    if (!Number.isFinite(price)) continue;
     const entryDate = new Date(entry.scrapedAt);
-    const date = entryDate.toLocaleDateString("tr-TR", {
-      day: "2-digit",
-      month: "2-digit",
-    });
-    if (!byDate[date])
-      byDate[date] = { _timestamp: entryDate.getTime(), _prices: {} as Record<string, number> };
-    byDate[date][seller] = Number(entry.price);
-    byDate[date]._prices[seller] = Number(entry.price);
+    // Anahtar yılı da içerir — "01/11" etiketi farklı yıllarda çakışmasın.
+    const dayKey = `${entryDate.getFullYear()}-${entryDate.getMonth()}-${entryDate.getDate()}`;
+    let bucket = byDay.get(dayKey);
+    if (!bucket) {
+      bucket = {
+        timestamp: entryDate.getTime(),
+        label: entryDate.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" }),
+        own: null,
+        competitors: {},
+      };
+      byDay.set(dayKey, bucket);
+    }
+    if (entry.isOwn) bucket.own = price;
+    else bucket.competitors[competitorSeriesName(entry)] = price;
   }
 
-  return Object.entries(byDate)
-    .map(([date, row]) => {
-      const sellerEntries = Object.entries(row._prices);
-      const competitorEntries = sellerEntries.filter(([seller]) => {
-        const normalizedSeller = seller.toLowerCase();
-        return !ownHints.some((hint) => normalizedSeller.includes(hint));
-      });
-
-      const lowestCompetitor =
-        competitorEntries.length > 0
-          ? Math.min(...competitorEntries.map(([, price]) => price))
-          : null;
-      const avgCompetitor =
-        competitorEntries.length > 0
-          ? competitorEntries.reduce((acc, [, price]) => acc + price, 0) / competitorEntries.length
-          : null;
-
-      const ownEntries = sellerEntries.filter(([seller]) => {
-        const normalizedSeller = seller.toLowerCase();
-        return ownHints.some((hint) => normalizedSeller.includes(hint));
-      });
-      const ownPriceLine = ownEntries.length > 0 ? ownEntries[ownEntries.length - 1][1] : null;
-
+  return [...byDay.values()]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((bucket) => {
+      const competitorPrices = Object.values(bucket.competitors);
       return {
-        ...row,
-        date,
-        ownPriceLine,
-        lowestCompetitor,
-        avgCompetitor,
+        ...bucket.competitors,
+        date: bucket.label,
+        ownPriceLine: bucket.own,
+        lowestCompetitor: competitorPrices.length > 0 ? Math.min(...competitorPrices) : null,
+        avgCompetitor:
+          competitorPrices.length > 0
+            ? competitorPrices.reduce((acc, price) => acc + price, 0) / competitorPrices.length
+            : null,
       };
-    })
-    .sort((a, b) => a._timestamp - b._timestamp);
+    });
+}
+
+// Rakip satırının grafik serisi adı (satıcı/pazaryeri görünen adı).
+function competitorSeriesName(entry: PriceHistoryEntry): string {
+  return entry.sellerName?.trim() || "Rakip";
 }
 
 function formatPrice(price: number, currency = "TRY") {
@@ -321,16 +319,13 @@ export default function ProductDetailPage() {
     setCostSaved(false);
 
     const trimmed = costInput.trim();
-    // Boş = maliyeti temizle (null). type="text" olduğu için ham metin gelir:
-    // virgül (TR ondalık) noktaya çevrilir, virgül varsa binlik ayıracı noktalar
-    // atılır. Geçersiz girişte sessizce temizlemek yerine kullanıcıya hata gösterilir.
+    // Boş = maliyeti temizle (null). type="text" olduğu için ham metin gelir;
+    // parseTrNumber Türkçe yazımı çözer ("1.500" = 1500, "1.499,90" = 1499,9).
+    // Geçersiz girişte sessizce temizlemek yerine kullanıcıya hata gösterilir.
     let cost: number | null = null;
     if (trimmed !== "") {
-      const normalized = trimmed.includes(",")
-        ? trimmed.replace(/\./g, "").replace(",", ".")
-        : trimmed;
-      const parsed = Number(normalized);
-      if (!Number.isFinite(parsed) || parsed < 0) {
+      const parsed = parseTrNumber(trimmed);
+      if (parsed === null || parsed < 0) {
         setCostError("Geçerli bir maliyet girin (0 veya daha büyük).");
         return;
       }
@@ -365,12 +360,10 @@ export default function ProductDetailPage() {
     if (!product || savingPrice) return;
     setPriceError(null);
 
-    const trimmed = priceInput.trim();
-    const normalized = trimmed.includes(",")
-      ? trimmed.replace(/\./g, "").replace(",", ".")
-      : trimmed;
-    const parsed = Number(normalized);
-    if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
+    // "2.499" Türkçe yazımda 2499'dur — ham Number() bunu 2,499 TL okuyup
+    // fiyatı 1000'e bölüyordu (pozisyon/öneri/alarm hesapları da bozuluyordu).
+    const parsed = parseTrNumber(priceInput);
+    if (parsed === null || parsed <= 0) {
       setPriceError("Geçerli bir fiyat girin (0'dan büyük).");
       return;
     }
@@ -409,13 +402,9 @@ export default function ProductDetailPage() {
       return { ownPrice: directOwnPrice, ownPriceIsStale: false };
     }
 
-    const hints = ["Benim Ürünüm", "Kendi Mağazam", product.marketplace].map((h) =>
-      h.toLowerCase(),
-    );
     const history = product.priceHistory || [];
     const fallbackEntry = history.reduce<PriceHistoryEntry | null>((latest, current) => {
-      const seller = (current.sellerName || "").toLowerCase();
-      if (!seller || !hints.some((h) => seller.includes(h))) return latest;
+      if (!current.isOwn) return latest;
       if (safePrice(current.price) === null) return latest;
       if (!latest) return current;
       return new Date(current.scrapedAt).getTime() > new Date(latest.scrapedAt).getTime()
@@ -652,7 +641,6 @@ export default function ProductDetailPage() {
 
   const priceHistory = product.priceHistory || [];
   const competitors = product.competitors || [];
-  const ownSellerHints = ["Benim Ürünüm", "Kendi Mağazam", product.marketplace];
   const now = new Date();
   const rangeStart =
     timeRange === "7d"
@@ -663,8 +651,11 @@ export default function ProductDetailPage() {
   const filteredHistory = rangeStart
     ? priceHistory.filter((entry) => new Date(entry.scrapedAt) >= rangeStart)
     : priceHistory;
-  const chartData = prepareChartData(filteredHistory, ownSellerHints);
-  const retailers = [...new Set(filteredHistory.map((h) => h.sellerName || "Bilinmeyen"))];
+  const chartData = prepareChartData(filteredHistory);
+  // Satıcı bazlı çizgiler yalnızca rakipler içindir; kendi fiyat "Benim Fiyatım" çizgisidir.
+  const retailers = [
+    ...new Set(filteredHistory.filter((h) => !h.isOwn).map((h) => competitorSeriesName(h))),
+  ];
 
   // Merkezi kalite politikası (packages/shared/competitor-quality): fiyat var mı,
   // AI skoru yeterli mi, fiyat kendi fiyatımızın 0.3x–3x bandında mı, veri 72 saatten
@@ -1466,10 +1457,12 @@ export default function ProductDetailPage() {
                     <YAxis
                       tick={{ fill: "#6B7280", fontSize: 11 }}
                       axisLine={{ stroke: "#1F1F23" }}
+                      // İki ondalık hane: 0 hanede 4.500 "5 B", 1.500 "2 B" oluyor,
+                      // düşük fiyatlarda etiketler tekrarlanıyordu ("1₺, 1₺").
                       tickFormatter={(v) =>
                         new Intl.NumberFormat("tr-TR", {
                           notation: "compact",
-                          maximumFractionDigits: 0,
+                          maximumFractionDigits: 2,
                         }).format(v) + "₺"
                       }
                     />
@@ -1489,11 +1482,7 @@ export default function ProductDetailPage() {
                         type="monotone"
                         dataKey={retailer}
                         stroke={retailerColor(retailer)}
-                        strokeWidth={
-                          retailer.toLowerCase().includes(product.marketplace.toLowerCase())
-                            ? 3
-                            : 1.8
-                        }
+                        strokeWidth={1.8}
                         dot={false}
                         connectNulls
                       />
