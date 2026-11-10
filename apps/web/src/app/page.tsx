@@ -188,7 +188,7 @@ export default async function Home() {
                 <div className="h-20 flex items-end gap-1.5">
                   {trendBars.map((bar, index) => (
                     <div
-                      key={bar + index}
+                      key={`${index}-${bar}`}
                       className={`flex-1 rounded-t-md ${
                         index > trendBars.length - 3 ? "bg-hive-400/70" : "bg-hive-500/35"
                       }`}
@@ -414,7 +414,7 @@ export default async function Home() {
               {
                 icon: "📊",
                 title: "Otomatik Fiyat Takibi",
-                desc: "Seçili marketplace&apos;lerdeki fiyatları düzenli aralıklarla otomatik tarayın ve tek ekranda görün.",
+                desc: "Seçili marketplace'lerdeki fiyatları düzenli aralıklarla otomatik tarayın ve tek ekranda görün.",
               },
               {
                 icon: "🔔",
@@ -429,7 +429,7 @@ export default async function Home() {
               {
                 icon: "🏪",
                 title: "Çoklu Marketplace",
-                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, Teknosa, Vatan ve MediaMarkt&apos;ı tek panelden yönetin.",
+                desc: "Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, Teknosa, Vatan ve MediaMarkt'ı tek panelden yönetin.",
               },
             ].map((f, i) => (
               <div
@@ -646,7 +646,7 @@ export default async function Home() {
             <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-sm text-dark-400">© 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
-          <div className="flex gap-6 text-sm text-dark-500">
+          <div className="flex gap-6 text-sm text-dark-500 flex-wrap justify-center">
             <Link href="/privacy" className="hover:text-white transition">
               Gizlilik
             </Link>

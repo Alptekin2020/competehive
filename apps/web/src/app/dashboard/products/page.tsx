@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
-import { formatTRY, formatPctTR } from "@/lib/format";
+import { formatTRY, formatPctTR, foldForSearch } from "@/lib/format";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { assessCompetitorList, computeMargin } from "@competehive/shared";
@@ -11,7 +11,7 @@ import EmptyState from "@/components/EmptyState";
 import { AddProductModal } from "@/components/products/AddProductModal";
 import BulkImportModal from "@/components/BulkImportModal";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
-import { storeBadgeName } from "@/lib/marketplaces";
+import { storeBadgeName, storeDisplayName } from "@/lib/marketplaces";
 import PriceTrend from "@/components/PriceTrend";
 import TagFilterBar from "@/components/TagFilterBar";
 import TagManagerModal from "@/components/TagManagerModal";
@@ -237,7 +237,9 @@ function ProductsPageInner() {
   };
 
   const filteredProducts = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
+    // foldForSearch: "SIRT" / "sirt" / "sırt" aynı ürünü bulsun (düz toLowerCase
+    // Türkçe I/ı ayrımını çözemez).
+    const normalizedQuery = foldForSearch(searchQuery.trim());
 
     const withMeta = products
       .filter((p) => (selectedTagId ? p.tags?.some((pt) => pt.tag?.id === selectedTagId) : true))
@@ -281,9 +283,14 @@ function ProductsPageInner() {
       })
       .filter(({ product }) => {
         if (!normalizedQuery) return true;
+        // Pazaryeri hem görünen adıyla ("Amazon TR", kendi sitede alan adı)
+        // hem de enum anahtarıyla aranabilir.
         return (
-          product.product_name?.toLowerCase().includes(normalizedQuery) ||
-          product.marketplace?.toLowerCase().includes(normalizedQuery)
+          foldForSearch(product.product_name).includes(normalizedQuery) ||
+          foldForSearch(product.marketplace).includes(normalizedQuery) ||
+          foldForSearch(storeDisplayName(product.marketplace, product.product_url)).includes(
+            normalizedQuery,
+          )
         );
       })
       .filter(
@@ -360,8 +367,14 @@ function ProductsPageInner() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-    } catch {
-      setError("CSV dışa aktarma sırasında bir hata oluştu.");
+    } catch (err) {
+      // Sayfa hata durumuna (setError) düşürmek ürün listesini tümüyle
+      // "Ürünler yüklenemedi" ekranıyla değiştiriyordu — yalnızca bant göster.
+      console.error("Product CSV export failed", err);
+      setDeleteFeedback({
+        type: "error",
+        message: "CSV dışa aktarma sırasında bir hata oluştu. Lütfen tekrar deneyin.",
+      });
     } finally {
       setExporting(false);
     }
@@ -663,7 +676,9 @@ function ProductsPageInner() {
       )}
 
       {!loading && !error && products.length > 0 && viewMode === "cards" && (
-        <div className="grid gap-4">
+        // grid-cols-1 = minmax(0, 1fr): örtük "auto" sütunda kartlar içerik
+        // genişliğinin altına inemiyor, telefonda sayfa yatay taşıyordu.
+        <div className="grid grid-cols-1 gap-4">
           {filteredProducts.length === 0 && (
             <div className="rounded-2xl border border-[#1F1F23] bg-[#111113] p-8 text-center">
               <h3 className="text-white font-semibold">Bu görünümde ürün bulunamadı</h3>
@@ -673,8 +688,11 @@ function ProductsPageInner() {
               </p>
               <button
                 onClick={() => {
+                  // Etiket filtresi de temizlenir: boş bir etiket seçiliyken
+                  // buton hiçbir şey değiştirmiyor, kullanıcı "0 ürün"de kalıyordu.
                   setSearchQuery("");
                   setQuickFilter("ALL");
+                  setSelectedTagId(null);
                 }}
                 className="mt-4 text-sm text-amber-400 hover:text-amber-300 transition"
               >

@@ -6,6 +6,7 @@ import { StatCardSkeleton } from "@/components/Skeleton";
 import EmptyState from "@/components/EmptyState";
 import { PlanUsageCard } from "@/components/PlanUsageCard";
 import PriceTrend from "@/components/PriceTrend";
+import { getMarketplaceInfo } from "@competehive/shared";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import MaintenanceNotice from "@/components/MaintenanceNotice";
 
@@ -470,7 +471,7 @@ export default function DashboardPage() {
               <option value="ALL">Tüm marketplace</option>
               {reporting?.filters.marketplaces?.map((marketplace) => (
                 <option key={marketplace} value={marketplace}>
-                  {marketplace}
+                  {getMarketplaceInfo(marketplace).name}
                 </option>
               ))}
             </select>
@@ -627,7 +628,9 @@ export default function DashboardPage() {
                     >
                       <div className="min-w-0">
                         <p className="text-xs text-white truncate">{item.name}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">{item.marketplace}</p>
+                        <p className="text-[10px] text-gray-500 mt-0.5">
+                          {getMarketplaceInfo(item.marketplace).name}
+                        </p>
                       </div>
                       <span className="text-[11px] text-amber-300">{item.metric || "İncele"}</span>
                     </Link>

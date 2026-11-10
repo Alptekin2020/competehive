@@ -111,7 +111,7 @@ export default function DestekPage() {
             <img src="/competehive-logo.png" alt="CompeteHive" className="w-8 h-8" />
             <span className="text-sm text-dark-400">&copy; 2026 CompeteHive. Hive Ecosystem.</span>
           </div>
-          <div className="flex gap-6 text-sm text-dark-500">
+          <div className="flex gap-6 text-sm text-dark-500 flex-wrap justify-center">
             <Link href="/privacy" className="hover:text-white transition">
               Gizlilik
             </Link>

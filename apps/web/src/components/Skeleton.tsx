@@ -41,16 +41,20 @@ export function StatCardSkeleton() {
   );
 }
 
+// Sabit yükseklikler: Math.random() sunucu ve istemci render'ında farklı değer
+// üretip her ürün detayı açılışında hydration uyuşmazlığı hatası veriyordu.
+const CHART_SKELETON_BAR_HEIGHTS = [62, 85, 58, 92, 47, 74, 66, 88, 53, 79, 95, 60, 71, 83];
+
 export function ChartSkeleton() {
   return (
     <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-6">
       <Skeleton className="h-5 w-32 mb-4" />
       <div className="flex items-end gap-1 h-48">
-        {Array.from({ length: 14 }).map((_, i) => (
+        {CHART_SKELETON_BAR_HEIGHTS.map((height, i) => (
           <Skeleton
             key={i}
             className="flex-1 rounded-sm"
-            style={{ height: `${30 + Math.random() * 70}%` } as React.CSSProperties}
+            style={{ height: `${height}%` } as React.CSSProperties}
           />
         ))}
       </div>

@@ -50,13 +50,16 @@ export async function rateLimit(
  * Returns a 429 response helper for rate-limited routes.
  */
 export function rateLimitResponse(reset: number) {
-  return new Response(JSON.stringify({ error: "Cok fazla istek. Lutfen bekleyin." }), {
-    status: 429,
-    headers: {
-      "Content-Type": "application/json",
-      "Retry-After": String(reset),
+  return new Response(
+    JSON.stringify({ error: "Çok fazla istek gönderdiniz. Lütfen biraz bekleyin." }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(reset),
+      },
     },
-  });
+  );
 }
 
 // ============================================
