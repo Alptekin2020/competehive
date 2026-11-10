@@ -4,6 +4,22 @@ import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, notFound, badRequest, serverError } from "@/lib/api-response";
 import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
+import { classifyOwnPriceHistory } from "@/lib/price-history";
+import { getMarketplaceInfo, getRetailerInfoFromDomain } from "@competehive/shared";
+
+// Ürün URL'sinin pazaryeri görünen adı ("Trendyol", "Amazon TR"). Worker kendi
+// fiyat satırlarını bu adla yazar; bilinmeyen alan adlarında null döner.
+function ownRetailerNameFromUrl(productUrl: string): string | null {
+  try {
+    const { retailerName, retailerDomain } = getRetailerInfoFromDomain(
+      new URL(productUrl).hostname,
+    );
+    return retailerName !== retailerDomain ? retailerName : null;
+  } catch {
+    // Geçersiz URL — pazaryeri enum'undan türetilen ad zaten ayrıca kullanılır.
+    return null;
+  }
+}
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -30,6 +46,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         marketplace: true,
         productUrl: true,
         productImage: true,
+        sellerName: true,
         currentPrice: true,
         cost: true,
         currency: true,
@@ -75,6 +92,29 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       return notFound("Ürün bulunamadı");
     }
 
+    // Kendi fiyat / rakip ayrımı: rakip satırlarının competitor_prices'ta aynı
+    // an + aynı tutarla ikizi vardır (bkz. lib/price-history.ts). İstemci
+    // grafiği satıcı adından tahmin etmek yerine bu bayrağı kullanır.
+    const competitorIds = product.competitors.map((competitor) => competitor.id);
+    const competitorPoints =
+      competitorIds.length > 0
+        ? await prisma.competitorPrice.findMany({
+            where: {
+              competitorId: { in: competitorIds },
+              scrapedAt: { gte: historyWindowStart },
+            },
+            select: { price: true, scrapedAt: true },
+          })
+        : [];
+    const ownFlags = classifyOwnPriceHistory(product.priceHistory, {
+      competitorPoints,
+      ownSellerNames: [
+        product.sellerName,
+        getMarketplaceInfo(product.marketplace).name,
+        ownRetailerNameFromUrl(product.productUrl),
+      ],
+    });
+
     const responseProduct = {
       id: product.id,
       productName: product.productName,
@@ -91,18 +131,21 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       refreshError: product.refreshError,
       lastScrapedAt: product.lastScrapedAt,
       priceHistory: product.priceHistory.map(
-        (entry: {
-          id: bigint;
-          trackedProductId: string;
-          price: unknown;
-          previousPrice: unknown;
-          currency: string;
-          priceChange: unknown;
-          priceChangePct: unknown;
-          inStock: boolean;
-          sellerName: string | null;
-          scrapedAt: Date;
-        }) => ({
+        (
+          entry: {
+            id: bigint;
+            trackedProductId: string;
+            price: unknown;
+            previousPrice: unknown;
+            currency: string;
+            priceChange: unknown;
+            priceChangePct: unknown;
+            inStock: boolean;
+            sellerName: string | null;
+            scrapedAt: Date;
+          },
+          index: number,
+        ) => ({
           id: entry.id.toString(),
           trackedProductId: entry.trackedProductId,
           price: entry.price,
@@ -113,6 +156,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           inStock: entry.inStock,
           sellerName: entry.sellerName,
           scrapedAt: entry.scrapedAt,
+          isOwn: ownFlags[index],
         }),
       ),
       competitors: product.competitors.map(

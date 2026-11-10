@@ -55,3 +55,37 @@ export async function updateTrackedProductRefresh(
     }
   }
 }
+
+// ============================================
+// Takılı kalan yenileme istekleri
+// ============================================
+//
+// "pending"/"processing" durumunu yalnızca worker kapatır. İş kuyrukta
+// işlenmezse (worker kapalı, iş kayboldu) durum sonsuza dek açık kalıyordu:
+// "Fiyatları Yenile" kilitli, sayfa 3 sn'de bir sorgu atıyor, yeni istek 429
+// alıyordu. Bu süreden uzun süredir ilerlemeyen istek zaman aşımına uğramış
+// sayılır; normal bir yenileme birkaç dakikayı geçmez.
+export const REFRESH_STALE_AFTER_MS = 10 * 60 * 1000;
+
+export const REFRESH_TIMEOUT_MESSAGE = "Yenileme zaman aşımına uğradı. Lütfen tekrar deneyin.";
+
+/**
+ * Açık görünen bir yenileme isteği takılmış mı? İlerleme göstergesi olarak
+ * isteğin zamanı ile satırın son güncellenme zamanından yeni olanı alınır
+ * (worker "processing"e geçerken satırı günceller).
+ */
+export function isRefreshStale(
+  product: {
+    refreshStatus: string | null;
+    refreshRequestedAt: Date | null;
+    updatedAt: Date;
+  },
+  now: Date = new Date(),
+): boolean {
+  if (product.refreshStatus !== "pending" && product.refreshStatus !== "processing") return false;
+  const lastProgressAt = Math.max(
+    product.refreshRequestedAt?.getTime() ?? 0,
+    product.updatedAt.getTime(),
+  );
+  return now.getTime() - lastProgressAt > REFRESH_STALE_AFTER_MS;
+}

@@ -91,6 +91,9 @@ const GENERIC_FILLER_TOKENS = new Set([
   "fiyati",
   "fiyatlar",
   "fiyatlari",
+  // Toplu eklemenin eski yer tutucu adı ("Yükleniyor..."): ilk taraması
+  // başarısız olan ürünlerde kalıcılaşıp Serper'a sorgu olarak gidiyordu.
+  "yukleniyor",
 ]);
 
 function foldToken(t: string): string {

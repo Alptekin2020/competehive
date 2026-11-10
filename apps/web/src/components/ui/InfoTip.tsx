@@ -39,12 +39,14 @@ export default function InfoTip({
       >
         ?
       </button>
-      {/* Görünürken pointer-events açık: imleç balon üzerine gidince kapanmasın,
-          balon açıkken tıklamalar arkadaki öğelere geçmesin. */}
+      {/* Kapalıyken display:none — yalnızca "invisible" olduğunda 240px'lik balon
+          yerleşime katılmaya devam ediyor ve sağ kenara yakın kartlarda sayfayı
+          yatay kaydırılabilir yapıyordu (ürün detayı, uyarılar). Balon grubun
+          çocuğu olduğundan imleç üzerine gidince açık kalır. */}
       <span
         id={tooltipId}
         role="tooltip"
-        className={`pointer-events-none absolute z-50 w-60 ${vertical} ${horizontal} rounded-lg border border-[#2F2F33] bg-[#1A1A1E] p-2.5 text-left text-xs leading-relaxed text-gray-200 shadow-xl opacity-0 invisible transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100 group-focus-within:pointer-events-auto`}
+        className={`absolute z-50 hidden w-60 max-w-[calc(100vw-2rem)] ${vertical} ${horizontal} rounded-lg border border-[#2F2F33] bg-[#1A1A1E] p-2.5 text-left text-xs leading-relaxed text-gray-200 shadow-xl group-hover:block group-focus-within:block`}
       >
         {text}
       </span>

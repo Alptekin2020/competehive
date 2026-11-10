@@ -235,13 +235,13 @@ export function AddProductModal({
               <span className="text-base leading-none mt-0.5">🔔</span>
               <div className="min-w-0">
                 <p className="text-xs sm:text-sm text-hive-300 font-medium">
-                  Tüm bildirimler otomatik açılır
+                  Temel bildirimler otomatik açılır
                 </p>
                 <p className="text-[11px] sm:text-xs text-dark-400 mt-1 leading-relaxed">
-                  Fiyat düşüşü, fiyat artışı, rakip ucuzladığında, stoğa girince ve yüzde değişim
-                  bildirimleri planınıza uygun kanallarla aktif edilir. İstemediklerinizi{" "}
-                  <span className="text-dark-200">Uyarılar</span> sayfasından tek tıkla
-                  kapatabilirsiniz.
+                  Bir rakip sizden ucuza düştüğünde, rakip fiyat değiştirdiğinde ve stok durumu
+                  değiştiğinde planınıza uygun kanallarla bildirim alırsınız.{" "}
+                  <span className="text-dark-200">Uyarılar</span> sayfasından dilediğinizi
+                  kapatabilir, kendi fiyatınız için yeni kurallar ekleyebilirsiniz.
                 </p>
               </div>
             </div>

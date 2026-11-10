@@ -201,6 +201,20 @@ Located in `apps/worker/src/scrapers/`:
 - Automated pipelines must always persist a `matchScore` — null score is reserved for manual/legacy rows
 - Worker boot runs `cleanupJunkCompetitors()` to purge obvious legacy junk (packaging names, extreme price deviation on unscored rows)
 
+### Price History (own vs competitor rows)
+
+- `price_history` stores BOTH the product's own price rows and competitor price rows; there is no flag column, only `sellerName`
+- `GET /api/products/[id]` classifies each row with `classifyOwnPriceHistory` (`apps/web/src/lib/price-history.ts`) and returns `isOwn`; the chart must use that flag, never guess from the seller name
+- The reliable signal is the `competitor_prices` twin: every worker path that writes a competitor price must write `competitor_prices` and `price_history` with the same `scrapedAt` and price — a competitor row without a twin can be mistaken for the user's own price
+- Own-price rows are recognized by `previousPrice`/`priceChange` (only the own-price scrape sets them), the markers in `OWN_SELLER_MARKERS` ("Benim Ürünüm", "Kendi Mağazam", "Elle girildi"), the product's seller name or its marketplace display name
+
+### User Input & Refresh State
+
+- Amounts typed by users (own price, cost) go through `parseTrNumber` (`apps/web/src/lib/format.ts`): "2.499" is 2499, "1.499,90" is 1499.9 — never raw `Number()`
+- Text search uses `foldForSearch` so "SIRT", "sirt" and "sırt" match
+- A manual refresh left in `pending`/`processing` for more than 10 minutes is timed out by `isRefreshStale` (`lib/tracked-product-refresh.ts`): the status route closes it as `failed`, the refresh route accepts a new request
+- Bulk import names products with `provisionalProductName` (URL slug, else "<Marketplace> ürünü") until the first scrape; never store a "loading" placeholder as the product name
+
 ### Notifications
 
 Located in `apps/worker/src/services/notifications.ts`:
@@ -243,6 +257,9 @@ Located in `apps/web/src/lib/`:
 | `marketplace-search.ts` | Marketplace search logic                          |
 | `marketplaces.ts`       | Marketplace helpers                               |
 | `ai-analyzer.ts`        | AI-powered product analysis                       |
+| `format.ts`             | tr-TR formatters, `parseTrNumber`, search folding |
+| `price-history.ts`      | Own vs competitor price-history classification    |
+| `provisional-name.ts`   | Provisional product name from the URL slug        |
 
 ## Environment Variables
 

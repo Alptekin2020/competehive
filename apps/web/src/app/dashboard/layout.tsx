@@ -274,8 +274,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
       )}
 
-      {/* Main */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      {/* Main — min-w-0: flex öğesinin varsayılan min-width:auto değeri, içerik
+          (kaydırılabilir etiket şeridi, truncate başlıklar) ekrandan genişse
+          sütunu da genişletip telefonda sayfayı yatay taşırıyordu. */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         {/* Top Bar */}
         <header className="h-14 sm:h-16 border-b border-dark-800 flex items-center justify-between px-4 sm:px-6 bg-dark-950/50 backdrop-blur-xl sticky top-0 z-20">
           <button

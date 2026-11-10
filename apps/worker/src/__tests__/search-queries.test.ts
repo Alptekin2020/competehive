@@ -19,6 +19,11 @@ describe("isGenericQuery", () => {
     expect(isGenericQuery("ab")).toBe(true);
   });
 
+  it("flags the legacy bulk-import loading placeholder", () => {
+    expect(isGenericQuery("Yükleniyor...")).toBe(true);
+    expect(buildSearchQueries("Yükleniyor...", "Yükleniyor...", null)).toEqual([]);
+  });
+
   it("accepts real product names", () => {
     expect(isGenericQuery("Erbatab Vitamin D3 K2")).toBe(false);
     expect(isGenericQuery("Lenovo LOQ i5-13450HX")).toBe(false);

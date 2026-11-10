@@ -109,7 +109,8 @@ export default function AlertPrefsCard() {
           Uyarı eşiği (%)
         </label>
         <p className="text-xs text-dark-500">
-          Bu yüzdeden küçük fiyat değişimleri için e-posta gönderilmez.
+          Bu yüzdeden küçük fiyat değişimleri için bildirim gönderilmez (e-posta, Telegram ve
+          webhook dahil).
         </p>
         <input
           id="alert-threshold"
@@ -118,7 +119,9 @@ export default function AlertPrefsCard() {
           max={100}
           step={0.5}
           value={prefs.alertThresholdPct}
-          disabled={saving || !prefs.emailAlertsEnabled}
+          // Eşik tüm kanallara uygulanır; e-posta kapalıyken de düzenlenebilmeli
+          // (yalnızca Telegram kullanan biri eşiği değiştiremiyordu).
+          disabled={saving}
           onChange={(e) => setPrefs({ ...prefs, alertThresholdPct: Number(e.target.value) })}
           onBlur={(e) => {
             const v = Number(e.target.value);
