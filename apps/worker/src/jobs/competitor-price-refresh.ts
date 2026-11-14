@@ -17,10 +17,13 @@
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { runCompetitorDiscovery } from "./competitor-processor";
+import { FREE_REFRESH_AFTER_HOURS, paidUserWhere } from "../utils/plan-cadence";
 
 // Bu süreden daha eski "tamamlanmış" ürünler yeniden taranır. Görüntüleme
 // tarafının 72 saatlik bayatlık eşiğinin altında tutuyoruz ki rakipler "Eski"ye
 // düşmeden tazelensin.
+// Bu değer ÜCRETLİ planlar içindir; ücretsiz plan günde 1 kez taranır
+// (FREE_REFRESH_AFTER_HOURS, utils/plan-cadence.ts).
 export const REFRESH_AFTER_HOURS = 6;
 
 export interface CompetitorRefreshStats {
@@ -62,6 +65,9 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
   const now = options.now ?? new Date();
   const startedAt = Date.now();
   const cutoff = new Date(now.getTime() - refreshAfterHours * 60 * 60 * 1000);
+  const freeCutoff = new Date(
+    now.getTime() - Math.max(refreshAfterHours, FREE_REFRESH_AFTER_HOURS) * 60 * 60 * 1000,
+  );
 
   // En uzun süredir taranmamış (veya hiç taranmamış) ürünler önce. Plan kapısı:
   // süresi dolmuş ücretli planların ürünleri için Serper maliyeti üretme.
@@ -71,7 +77,13 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
       user: {
         OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: now } }],
       },
-      OR: [{ refreshCompletedAt: null }, { refreshCompletedAt: { lt: cutoff } }],
+      // Plana göre sıklık: ücretli kullanıcıların ürünleri 6 saatte bir,
+      // diğer herkes (ücretsiz) günde bir yeniden taranır.
+      OR: [
+        { refreshCompletedAt: null },
+        { refreshCompletedAt: { lt: freeCutoff } },
+        { refreshCompletedAt: { lt: cutoff }, user: paidUserWhere(now) },
+      ],
     },
     orderBy: { refreshCompletedAt: { sort: "asc", nulls: "first" } },
     take: batchSize,

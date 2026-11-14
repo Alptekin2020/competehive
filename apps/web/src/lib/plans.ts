@@ -59,13 +59,13 @@ export const PLANS: PlanInfo[] = [
       process.env.NEXT_PUBLIC_WHOP_STARTER_YEARLY_PLAN_ID ||
       null,
     maxProducts: 50,
-    scrapeInterval: "Günde 1",
+    scrapeInterval: "6 saatte 1",
     marketplaces: "2 marketplace",
     priceHistoryDays: 30,
     channels: ["E-posta", "Telegram"],
     features: [
       "50 ürün takibi",
-      "Günde 1 tarama",
+      "6 saatte 1 tarama",
       "2 marketplace",
       "30 gün fiyat geçmişi",
       "E-posta + Telegram",
@@ -89,13 +89,13 @@ export const PLANS: PlanInfo[] = [
       process.env.NEXT_PUBLIC_WHOP_PRO_YEARLY_PLAN_ID ||
       null,
     maxProducts: 500,
-    scrapeInterval: "12 saatte 1",
+    scrapeInterval: "6 saatte 1",
     marketplaces: "Tüm marketplace'ler",
     priceHistoryDays: 365,
     channels: ["E-posta", "Telegram", "Webhook"],
     features: [
       "500 ürün takibi",
-      "12 saatte 1 tarama",
+      "6 saatte 1 tarama",
       "Tüm marketplace'ler (8+)",
       "1 yıl fiyat geçmişi",
       "E-posta + Telegram + Webhook",
@@ -159,9 +159,9 @@ export function isSellablePlanId(whopPlanId: string | null): whopPlanId is strin
 export function getPlanLimits(planId: string): { maxProducts: number; scrapeInterval: number } {
   switch (planId) {
     case "STARTER":
-      return { maxProducts: 50, scrapeInterval: 1440 };
+      return { maxProducts: 50, scrapeInterval: 360 };
     case "PRO":
-      return { maxProducts: 500, scrapeInterval: 720 };
+      return { maxProducts: 500, scrapeInterval: 360 };
     case "ENTERPRISE":
       return { maxProducts: 99999, scrapeInterval: 360 };
     default:
@@ -182,8 +182,8 @@ export interface PlanTierLimits {
 }
 
 export const PLAN_LIMITS: Record<PlanTier, PlanTierLimits> = {
-  STARTER: { maxProducts: 50, refreshIntervalHours: 24, displayName: "Başlangıç" },
-  PRO: { maxProducts: 500, refreshIntervalHours: 12, displayName: "Profesyonel" },
+  STARTER: { maxProducts: 50, refreshIntervalHours: 6, displayName: "Başlangıç" },
+  PRO: { maxProducts: 500, refreshIntervalHours: 6, displayName: "Profesyonel" },
   ENTERPRISE: { maxProducts: 99999, refreshIntervalHours: 6, displayName: "Kurumsal" },
 };
 

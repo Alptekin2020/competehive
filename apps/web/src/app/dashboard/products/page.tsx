@@ -51,6 +51,8 @@ interface CompetitorItem {
   current_price: string | null;
   competitor_url: string;
   match_score?: number | null;
+  // "pending" = olası eşleşme, kullanıcı onayı bekliyor.
+  review?: "pending" | "confirmed" | null;
   last_scraped_at?: string | null;
   in_stock?: boolean | null;
 }
@@ -900,6 +902,19 @@ function ProductsPageInner() {
                           Verisi eski
                         </span>
                       )}
+                      {(() => {
+                        const pending = (product.competitors ?? []).filter(
+                          (c) => c.review === "pending",
+                        ).length;
+                        return pending > 0 ? (
+                          <span
+                            className="px-2 py-1 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300"
+                            title="Yapay zekâ emin olamadı — ürün sayfasında onaylayın veya reddedin"
+                          >
+                            {pending} eşleşme onay bekliyor
+                          </span>
+                        ) : null;
+                      })()}
                       <span className="ml-auto text-gray-400">{competitorCount} rakip</span>
                     </div>
                     <p className="-mt-2 text-[11px] text-gray-500">

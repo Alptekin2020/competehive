@@ -21,6 +21,7 @@ import { addScrapeJob, addCompetitorSearchJob } from "@/lib/queue";
 import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { canAddProduct, getUsedStoreKeys, storeLimitError } from "@/lib/limits";
 import { ensureDefaultGlobalAlertRules } from "@/lib/default-alerts";
+import { readMatchReview } from "@/lib/match-review";
 import {
   isGenericStoreMarketplace,
   normalizeProductImage,
@@ -61,6 +62,7 @@ export async function GET() {
             currentPrice: true,
             competitorUrl: true,
             matchScore: true,
+            matchAttributes: true,
             lastScrapedAt: true,
             // Son taramadaki stok durumu — "Rakibin stoğu bitti" fırsatı için.
             competitorPrices: {
@@ -159,6 +161,7 @@ export async function GET() {
           current_price: c.currentPrice,
           competitor_url: c.competitorUrl,
           match_score: c.matchScore,
+          review: readMatchReview(c.matchAttributes),
           last_scraped_at: c.lastScrapedAt,
           in_stock: c.competitorPrices[0]?.inStock ?? null,
         })),

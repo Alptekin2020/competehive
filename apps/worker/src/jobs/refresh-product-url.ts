@@ -16,6 +16,7 @@ import {
   type KnownCompetitorSnapshot,
 } from "../utils/stale-competitors";
 import { competitorQueue } from "./processor";
+import { readMatchReview } from "../utils/match-review";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -225,6 +226,9 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
 
     for (const sibling of siblings) {
       for (const c of sibling.competitors) {
+        // Onay bekleyen olası eşleşmeler bu turun dışında: fiyat geçmişine
+        // yazılmaz, hareket/alarm üretmez (keşif turu fiyatını taze tutar).
+        if (readMatchReview(c.matchAttributes) === "pending") continue;
         // Anahtar: izleme parametrelerinden arındırılmış URL. Google Shopping
         // bağlantılara her aramada farklı izleme parametresi ekleyebiliyor; ham
         // URL karşılaştırması kayıtlı rakibin fiyat güncellemesini kaçırıyordu.

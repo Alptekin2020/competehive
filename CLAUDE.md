@@ -163,8 +163,8 @@ Defined in `packages/shared/src/index.ts` (`PLAN_LIMITS`):
 | Plan       | Products | Min Interval | Marketplaces | History   | Channels         |
 | ---------- | -------- | ------------ | ------------ | --------- | ---------------- |
 | FREE       | 5        | 1440 min     | 1            | 7 days    | EMAIL            |
-| STARTER    | 50       | 1440 min     | 2            | 30 days   | EMAIL, TELEGRAM  |
-| PRO        | 500      | 720 min      | 99           | 365 days  | All + auto rules |
+| STARTER    | 50       | 360 min      | 2            | 30 days   | EMAIL, TELEGRAM  |
+| PRO        | 500      | 360 min      | 99           | 365 days  | All + auto rules |
 | ENTERPRISE | 99999    | 360 min      | 99           | Unlimited | All features     |
 
 ### Worker Jobs
@@ -180,6 +180,7 @@ Entry point: `apps/worker/src/index.ts`
 - Puppeteer: one shared Chromium, opened via `openPage()`/`releasePage()` and closed after 2 minutes with no open page (Chromium is most of the worker's memory, which drives the Railway bill); concurrent callers share a single launch
 - Graceful shutdown on SIGTERM/SIGINT
 - Outbound fetch goes through the scraping proxy (global dispatcher) EXCEPT first-party APIs: Serper and OpenAI use `directFetch` (`utils/direct-fetch.ts`) so a proxy 502 cannot kill competitor discovery; Serper calls retry transient failures (`withRetry`)
+- Refresh cadence follows the plan (`utils/plan-cadence.ts`, mirror of web `resolveEffectivePlan`): paid plans every 6h, FREE once a day. The 6-hour refresh-url cycle only covers paid users; the competitor discovery loop uses a 24h cutoff for everyone else; worker boot aligns paid products' `scrapeInterval` to 360
 - The 6-hour refresh-url cycle keeps its last run time in Redis (`utils/refresh-cycle.ts`) and is checked every 10 minutes — a deploy must not reset the clock
 - The refresh-url cycle passes competitor price moves to `maybeEnqueueAlerts` (`detectCompetitorMove`, `utils/stale-competitors.ts`) so COMPETITOR_CHEAPER / COMPETITOR_PRICE_CHANGE fire even when the own price is unchanged. Known competitors Google did not return that are 24h+ stale get a bounded direct `scrape-competitor` job (max 3 per URL, dedicated-scraper marketplaces only)
 - Competitor listings are matched by `competitorUrlKey` (tracking params stripped, seller params kept), never by raw URL; a known competitor is always updated under its stored URL
@@ -206,6 +207,7 @@ Located in `apps/worker/src/scrapers/`:
 - A competitor only enters decision calculations (market position, price suggestion, COMPETITOR_CHEAPER alert) if it passes: valid price, `matchScore` null-or-≥ `MIN_MATCH_SCORE`, price within 0.3x–3x band of own price, scraped within 72h
 - `isPackagingListing()` deterministically rejects packaging/logistics listings (koli, ambalaj, …) before any AI call
 - Automated pipelines must always persist a `matchScore` — null score is reserved for manual/legacy rows
+- User-reviewed matching (`apps/worker/src/utils/match-review.ts`, web mirror `apps/web/src/lib/match-review.ts` — keep in sync): AI rejections scoring 50–69 are stored as pending candidates (`matchAttributes.review = "pending"`, max 5 new per round / 8 pending per product). They stay out of decisions, price history and alerts until the user confirms (`PATCH /api/products/[id]/competitors/[competitorId]` → score 100, `review = "confirmed"`; the worker never downgrades a confirmed row). Deleting a competitor writes its URL to `trackedProduct.metadata.rejectedCompetitorUrls`, and discovery skips those URLs
 - Worker boot runs `cleanupJunkCompetitors()` to purge obvious legacy junk (packaging names, extreme price deviation on unscored rows)
 
 ### Price History (own vs competitor rows)

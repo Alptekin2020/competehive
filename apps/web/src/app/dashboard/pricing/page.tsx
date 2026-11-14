@@ -327,7 +327,7 @@ export default function PricingPage() {
                   // satış sayfasında teslim edilenden hızlı bir vaat, tüketici
                   // hukuku riski ve garanti iade sebebidir.
                   label: "Tarama sıklığı",
-                  values: ["Günde 1", "Günde 1", "12 saatte 1", "6 saatte 1"],
+                  values: ["Günde 1", "6 saatte 1", "6 saatte 1", "6 saatte 1"],
                 },
                 { label: "Marketplace", values: ["1", "2", "8+", "8+"] },
                 {

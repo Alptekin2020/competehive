@@ -25,6 +25,13 @@ import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 export { buildZeroReason };
 import { alertQueue } from "./processor";
 import type { CompetitorPriceMove } from "./alert-rules";
+import {
+  MAX_NEW_CANDIDATES_PER_ROUND,
+  MAX_PENDING_CANDIDATES,
+  readMatchReview,
+  readRejectedUrlKeys,
+  shouldKeepAsCandidate,
+} from "../utils/match-review";
 
 interface OnboardJobData {
   productId: string;
@@ -128,12 +135,14 @@ async function healStoredCompetitors(productId: string, sourceTitle: string): Pr
   if (!sourceTitle || sourceTitle.trim().length < 3) return 0;
   const stored = await prisma.competitor.findMany({
     where: { trackedProductId: productId, matchScore: { gte: MIN_MATCH_SCORE } },
-    select: { id: true, competitorName: true, matchScore: true },
+    select: { id: true, competitorName: true, matchScore: true, matchAttributes: true },
   });
   let healed = 0;
   for (const c of stored) {
     const name = c.competitorName ?? "";
     if (!name) continue;
+    // Kullanıcının "bu aynı ürün" dediği kayıt deterministik kuralla düşürülmez.
+    if (readMatchReview(c.matchAttributes) === "confirmed") continue;
     let newScore: number | null = null;
     let reason = "";
     if (isAccessoryListing(name, sourceTitle)) {
@@ -230,8 +239,22 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // fiyat + kalite kapısı) birlikte çekilir.
     const knownCompetitors = await prisma.competitor.findMany({
       where: { trackedProductId: productId },
-      select: { competitorUrl: true, competitorName: true, currentPrice: true, matchScore: true },
+      select: {
+        id: true,
+        competitorUrl: true,
+        competitorName: true,
+        currentPrice: true,
+        matchScore: true,
+        matchAttributes: true,
+      },
     });
+    // Kullanıcının "bu aynı ürün değil" dediği URL'ler: bir daha getirilmez.
+    const rejectedUrlKeys = readRejectedUrlKeys(product.metadata);
+    // Onay bekleyen olası eşleşmeler (AI emin olamadı; karar hesaplarına girmez).
+    let pendingCandidateCount = knownCompetitors.filter(
+      (c) => readMatchReview(c.matchAttributes) === "pending",
+    ).length;
+    let newCandidateCount = 0;
     // Anahtar: izleme parametrelerinden arındırılmış URL (competitorUrlKey).
     // Ham URL ile karşılaştırınca aynı ilan farklı izleme parametresiyle
     // geldiğinde "yeni rakip" sanılıp hem tekrar AI'a gidiyor hem listede
@@ -281,8 +304,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           continue;
         }
 
-        const known = knownByUrl.get(competitorUrlKey(result.link));
+        const resultUrlKey = competitorUrlKey(result.link);
+        if (rejectedUrlKeys.has(resultUrlKey)) continue;
+
+        const known = knownByUrl.get(resultUrlKey);
         const isKnown = Boolean(known);
+        const knownReview = known ? readMatchReview(known.matchAttributes) : null;
         // Bilinen rakip, KAYITLI URL'si üzerinden güncellenir (mükerrer satır yok).
         const competitorUrl = known?.competitorUrl ?? result.link;
 
@@ -372,6 +399,20 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           continue;
         }
 
+        // Onay bekleyen aday: yalnızca fiyatı taze tutulur. Fiyat geçmişine
+        // yazılmaz (grafiği kirletmesin) ve hareket/alarm üretmez.
+        if (known && knownReview === "pending") {
+          try {
+            await prisma.competitor.update({
+              where: { id: known.id },
+              data: { currentPrice: price, lastScrapedAt: now },
+            });
+          } catch (err) {
+            console.error(`Aday fiyat güncelleme hatası (${result.link}):`, err);
+          }
+          continue;
+        }
+
         // AI matcher — recovery yaptıysak veya bilinen rakipse yeniden çalıştırma.
         // recoveryMatch: pre-match skoru; isKnown: önceden kabul edilmiş.
         let matchResult: MatchResult | null = recoveryMatch;
@@ -382,7 +423,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // konfigürasyon varyantları (20GB/24GB RAM, 1TB SSD, "83SC000QTR 015"
         // gibi rakamlı alt-SKU ekleri, "4 fincan vs 6 fincan") 55'e indirilir
         // ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
-        if (isKnown && !matchResult && isAccessoryListing(result.title, title)) {
+        // Kullanıcının onayladığı kayıtta indirgeme yapılmaz — son söz kullanıcının.
+        const allowDowngrade = isKnown && knownReview !== "confirmed";
+        if (allowDowngrade && !matchResult && isAccessoryListing(result.title, title)) {
           matchResult = {
             isMatch: true,
             score: 40,
@@ -397,7 +440,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           };
         }
         if (
-          isKnown &&
+          allowDowngrade &&
           !matchResult &&
           ((sharesStrongProductCode(title, result.title) &&
             (hasConflictingSpecs(title, result.title) ||
@@ -434,6 +477,33 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             console.log(
               `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
             );
+            // AI emin olamadıysa (50–69) adayı atma: kullanıcı onayına sun.
+            if (
+              shouldKeepAsCandidate(matchResult) &&
+              newCandidateCount < MAX_NEW_CANDIDATES_PER_ROUND &&
+              pendingCandidateCount < MAX_PENDING_CANDIDATES
+            ) {
+              try {
+                await prisma.competitor.create({
+                  data: {
+                    trackedProductId: productId,
+                    competitorUrl,
+                    competitorName: result.title,
+                    marketplace: retailerToMarketplace(retailer.name),
+                    currentPrice: price,
+                    lastScrapedAt: now,
+                    matchScore: matchResult.score,
+                    matchReason: matchResult.reason,
+                    matchAttributes: { ...matchResult.attributes, review: "pending" },
+                  },
+                });
+                newCandidateCount++;
+                pendingCandidateCount++;
+                console.log(`🟡 Olası eşleşme onaya sunuldu: ${result.title.slice(0, 50)}`);
+              } catch (err) {
+                console.error(`Aday kaydetme hatası (${result.link}):`, err);
+              }
+            }
             continue;
           }
         }
@@ -639,7 +709,8 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       `✅ ${productId}: ${savedCount} competitor kaydedildi ` +
         `(price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount}, ` +
         `packaging filtered: ${packagingFilteredCount}, ` +
-        `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount})`,
+        `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount}, ` +
+        `onaya sunulan aday: ${newCandidateCount})`,
     );
     return {
       found: savedCount,

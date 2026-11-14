@@ -17,12 +17,13 @@ import { runMigrations } from "./migrate";
 import { logger } from "./utils/logger";
 import { startHealthServer } from "./health";
 import { setWebhook, setMyCommands } from "./utils/telegram-api";
-import { validateWorkerEnv, PLAN_EXPIRY_GRACE_MS } from "./shared";
+import { validateWorkerEnv } from "./shared";
 import { getProxyConfig } from "./utils/proxy";
 import { closeBrowser } from "./scrapers";
 import { initSentry, captureError, flushSentry } from "./sentry";
 import { beatHeartbeat } from "./utils/heartbeat";
 import { claimRefreshCycle, REFRESH_CYCLE_CHECK_MS } from "./utils/refresh-cycle";
+import { PAID_SCRAPE_INTERVAL_MINUTES, paidUserWhere } from "./utils/plan-cadence";
 
 type TelegramRegistrationResult =
   | { status: "registered"; webhookUrl: string }
@@ -222,6 +223,24 @@ async function start() {
     logger.error({ err }, "Competitor marketplace backfill failed — continuing");
   }
 
+  // Ücretli planların ürün satırındaki tarama aralığını 6 saate hizala: eski
+  // kayıtlar STARTER 24 saat / PRO 12 saat ile açılmıştı; "sonraki kontrol"
+  // göstergesi ve scrape scheduler satırdaki değeri kullanır. Idempotent.
+  try {
+    const aligned = await prisma.trackedProduct.updateMany({
+      where: {
+        scrapeInterval: { gt: PAID_SCRAPE_INTERVAL_MINUTES },
+        user: paidUserWhere(new Date()),
+      },
+      data: { scrapeInterval: PAID_SCRAPE_INTERVAL_MINUTES },
+    });
+    if (aligned.count > 0) {
+      logger.info({ count: aligned.count }, "Paid-plan scrape intervals aligned to 6h");
+    }
+  } catch (err) {
+    logger.error({ err }, "Paid-plan scrape interval alignment failed — continuing");
+  }
+
   await registerTelegramBot();
 
   // Mevcut scrape scheduler — her 60 saniyede bir tarama zamanı gelen ürünleri
@@ -258,15 +277,12 @@ async function start() {
       const uniqueUrlProducts = await prisma.trackedProduct.findMany({
         where: {
           status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
-          // Plan kapısı (B1): süresi dolmuş ücretli planların ürünleri için
-          // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural
+          // 6 saatlik tur yalnızca ÜCRETLİ planlar içindir (satılan vaat:
+          // ücretli 6 saatte 1, ücretsiz günde 1). Ücretsiz kullanıcıların kendi
+          // fiyatı scrape scheduler'ın günlük taramasıyla, rakipleri günlük
+          // keşif döngüsüyle güncellenir. Süresi dolmuş planlar da burada elenir
           // (3 günlük yenileme toleransı dahil).
-          user: {
-            OR: [
-              { planExpiresAt: null },
-              { planExpiresAt: { gte: new Date(Date.now() - PLAN_EXPIRY_GRACE_MS) } },
-            ],
-          },
+          user: paidUserWhere(new Date()),
         },
         distinct: ["productUrl"],
         select: { productUrl: true },
