@@ -1,6 +1,12 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
-import { searchProduct, extractRetailer, isScraperBackedRetailer, parsePrice } from "../serper";
+import {
+  searchProduct,
+  searchMarketplacePages,
+  extractRetailer,
+  isScraperBackedRetailer,
+  parsePrice,
+} from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { Marketplace } from "@prisma/client";
@@ -18,13 +24,14 @@ import {
 } from "../utils/competitor-quality";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { buildSearchQueries } from "../utils/search-queries";
+import { buildSearchQueries, cleanProductTitle } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
 import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 
 export { buildZeroReason };
-import { alertQueue } from "./processor";
+import { alertQueue, competitorQueue } from "./processor";
 import type { CompetitorPriceMove } from "./alert-rules";
+import { MAX_DIRECT_SCRAPES_PER_ROUND, shouldSearchMarketplacePages } from "../utils/second-source";
 import {
   MAX_NEW_CANDIDATES_PER_ROUND,
   MAX_PENDING_CANDIDATES,
@@ -87,10 +94,11 @@ interface KeywordSearchOutcome {
 async function searchSingleKeyword(
   keyword: string,
   seenUrls: Set<string>,
+  searchFn: (query: string) => Promise<SerperShoppingResult[]> = searchProduct,
 ): Promise<KeywordSearchOutcome> {
   const fresh: SerperShoppingResult[] = [];
   try {
-    const results = await searchProduct(keyword);
+    const results = await searchFn(keyword);
     for (const r of results) {
       const normalizedUrl = (r.link || "").replace(/\/$/, "").toLowerCase();
       if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
@@ -255,6 +263,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       (c) => readMatchReview(c.matchAttributes) === "pending",
     ).length;
     let newCandidateCount = 0;
+    let directScrapeQueuedCount = 0;
     // Anahtar: izleme parametrelerinden arındırılmış URL (competitorUrlKey).
     // Ham URL ile karşılaştırınca aynı ilan farklı izleme parametresiyle
     // geldiğinde "yeni rakip" sanılıp hem tekrar AI'a gidiyor hem listede
@@ -337,6 +346,45 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // matchScore=null ile yaratılıp UI'da "güvenilir" muamelesi görüyor.
         let recoveryMatch: MatchResult | null = null;
         const needsRecovery = (!price || price <= 0) && isScraperBacked;
+
+        // Başlık eşleşti ama hafif HTTP ile fiyat alınamadı (datacenter IP'leri
+        // pazaryerlerinde sık engellenir): rakibi fiyatsız kaydet ve worker'ın
+        // tam scraper zincirine (Puppeteer dahil) doğrudan tarama işi ver.
+        // Eskiden bu adaylar atılıyordu — web araması kaynağının sonuçları
+        // çoğunlukla fiyatsız geldiği için bu yol olmadan ikinci kaynak işe
+        // yaramaz. Tur başına sınırlıdır (Chromium, Railway belleğinin çoğu).
+        const queueDirectPriceScrape = async () => {
+          if (directScrapeQueuedCount >= MAX_DIRECT_SCRAPES_PER_ROUND) return;
+          if (knownReview === "pending") return;
+          try {
+            const row = known
+              ? { id: known.id }
+              : await prisma.competitor.create({
+                  data: {
+                    trackedProductId: productId,
+                    competitorUrl,
+                    competitorName: result.title,
+                    marketplace: retailerToMarketplace(retailer.name),
+                    matchScore: recoveryMatch?.score,
+                    matchReason: recoveryMatch?.reason,
+                    matchAttributes: recoveryMatch?.attributes,
+                  },
+                  select: { id: true },
+                });
+            await competitorQueue.add(
+              "scrape-competitor",
+              { competitorId: row.id },
+              {
+                jobId: `discovery-scrape-${row.id}-${Math.floor(now.getTime() / 3_600_000)}`,
+                attempts: 1,
+              },
+            );
+            directScrapeQueuedCount++;
+            console.log(`🧭 Doğrudan fiyat taraması kuyruğa alındı: ${result.title.slice(0, 50)}`);
+          } catch (err) {
+            console.error(`Doğrudan tarama kuyruğa alınamadı (${result.link}):`, err);
+          }
+        };
         if (needsRecovery) {
           // Yeni aday için AI title-only gate; bilinen rakip için zaten geçmiş.
           if (!isKnown) {
@@ -374,13 +422,15 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             } else {
               priceUnrecoverableCount++;
               console.log(
-                `⚠️ Fiyat kurtarılamadı (${recovered.source}, ${retailer.name}): ${result.title.slice(0, 50)} — drop`,
+                `⚠️ Fiyat kurtarılamadı (${recovered.source}, ${retailer.name}): ${result.title.slice(0, 50)}`,
               );
+              await queueDirectPriceScrape();
               continue;
             }
           } catch (err) {
             priceUnrecoverableCount++;
             console.error(`Recovery hatası (${result.link}):`, err);
+            await queueDirectPriceScrape();
             continue;
           }
         }
@@ -617,6 +667,28 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       }
     }
 
+    // İKİNCİ KAYNAK: Google Shopping yeterli rakip getirmediyse pazaryeri ürün
+    // sayfalarını Google web aramasıyla doğrudan ara. Shopping'e ürün beslemesi
+    // vermeyen satıcılar/pazaryerleri (niş ürünlerde çoğunluk) yalnızca böyle
+    // bulunur. Ürün başına tur başına tek ek Serper çağrısı (30 dk önbellekli).
+    const trustedKnownCount = knownCompetitors.filter(
+      (c) => readMatchReview(c.matchAttributes) !== "pending",
+    ).length;
+    if (shouldSearchMarketplacePages(savedCount, trustedKnownCount)) {
+      const webOutcome = await searchSingleKeyword(queries[0], seenUrls, searchMarketplacePages);
+      if (webOutcome.errored) {
+        // İkinci kaynak yardımcıdır: hatası turu başarısız saymaz, yalnızca loglanır.
+        console.error(`Pazaryeri web araması hatası: ${webOutcome.errorMessage}`);
+      } else {
+        console.log(
+          `🌐 Pazaryeri web araması "${queries[0]}": ${webOutcome.results.length} yeni ürün sayfası`,
+        );
+        await processResults(
+          webOutcome.results.map((r) => ({ ...r, title: cleanProductTitle(r.title) })),
+        );
+      }
+    }
+
     // Hiç sonuç yok VE en az bir arama servisi hatası varsa bu bir BAŞARISIZLIK,
     // "rakip yok" değil — kullanıcıya yanıltıcı boş durum yerine tarama hatası
     // gösterilsin (kota biten Serper, tüm ürünleri sessizce "rakipsiz" yapıyordu).
@@ -710,7 +782,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         `(price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount}, ` +
         `packaging filtered: ${packagingFilteredCount}, ` +
         `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount}, ` +
-        `onaya sunulan aday: ${newCandidateCount})`,
+        `onaya sunulan aday: ${newCandidateCount}, doğrudan taramaya: ${directScrapeQueuedCount})`,
     );
     return {
       found: savedCount,

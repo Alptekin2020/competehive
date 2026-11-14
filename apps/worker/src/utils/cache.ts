@@ -48,6 +48,22 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds: number):
   }
 }
 
+/**
+ * Atomik "ilk gelen alır" kilidi (SET NX EX). true: anahtar bu çağrıyla
+ * alındı; false: zaten vardı; null: Redis'e ulaşılamadı. Çağıran null'da
+ * işi ATLAMALI — kilitsiz çalışmak tekrarlı gönderime yol açar.
+ */
+export async function cacheClaim(key: string, ttlSeconds: number): Promise<boolean | null> {
+  try {
+    const r = getRedis();
+    const result = await r.set(key, "1", "EX", ttlSeconds, "NX");
+    return result === "OK";
+  } catch (error) {
+    logger.warn({ error, key }, "Cache claim failed");
+    return null;
+  }
+}
+
 export async function cacheDelete(key: string): Promise<void> {
   try {
     const r = getRedis();

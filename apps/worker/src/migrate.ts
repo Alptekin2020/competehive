@@ -345,6 +345,9 @@ export async function runMigrations() {
     await client.query(
       `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "alert_threshold_pct" DOUBLE PRECISION NOT NULL DEFAULT 5`,
     );
+    await client.query(
+      `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "daily_digest_enabled" BOOLEAN NOT NULL DEFAULT true`,
+    );
 
     // (d) Lookup indexes. NOTE: model Notification has no `created_at` — its
     // timestamp column is `sent_at` (the route's orderBy), so the time index

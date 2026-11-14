@@ -183,6 +183,7 @@ Entry point: `apps/worker/src/index.ts`
 - Refresh cadence follows the plan (`utils/plan-cadence.ts`, mirror of web `resolveEffectivePlan`): paid plans every 6h, FREE once a day. The 6-hour refresh-url cycle only covers paid users; the competitor discovery loop uses a 24h cutoff for everyone else; worker boot aligns paid products' `scrapeInterval` to 360
 - The 6-hour refresh-url cycle keeps its last run time in Redis (`utils/refresh-cycle.ts`) and is checked every 10 minutes — a deploy must not reset the clock
 - The refresh-url cycle passes competitor price moves to `maybeEnqueueAlerts` (`detectCompetitorMove`, `utils/stale-competitors.ts`) so COMPETITOR_CHEAPER / COMPETITOR_PRICE_CHANGE fire even when the own price is unchanged. Known competitors Google did not return that are 24h+ stale get a bounded direct `scrape-competitor` job (max 3 per URL, dedicated-scraper marketplaces only)
+- Second competitor source (`searchMarketplacePages` in `serper.ts`, policy in `utils/second-source.ts`): when a discovery round ends with fewer than 5 trusted competitors, one extra Serper **web** search restricted with `site:` to marketplace domains finds product pages Google Shopping has no feed for. Only product-detail URLs pass (`isMarketplaceProductUrl`). Results usually carry no price: after the AI title gate, a listing whose price the lightweight fetch cannot read is saved priceless and gets a direct `scrape-competitor` job (max 4 per round) instead of being dropped
 - Competitor listings are matched by `competitorUrlKey` (tracking params stripped, seller params kept), never by raw URL; a known competitor is always updated under its stored URL
 - The AI matcher never sees prices (it used price gaps as "different product" evidence); price sanity is deterministic (0.3x–3x band, 4x backstop). Titles are cleaned with `cleanProductTitle` (marketplace SEO suffixes) before search and matching
 - A page that loads fine but has no purchasable offer throws `PRODUCT_UNAVAILABLE` (`isProductUnavailableError`): callers mark the product OUT_OF_STOCK and keep the last price instead of counting a scrape failure. Parsers set `unavailable` only on a positive signal
@@ -231,6 +232,8 @@ Located in `apps/worker/src/services/notifications.ts`:
 - **Email**: Styled HTML via Resend with responsive design and price comparison
 - **Telegram**: Emoji formatting with clickable URLs via node-telegram-bot-api
 - **Webhook**: JSON POST with structured event data (product, price, change metadata)
+
+- **Daily digest** (`jobs/daily-digest.ts`, pure logic in `utils/daily-digest.ts`): one email per user per Istanbul day, sent in the 09:00–12:00 window, only when a product has a cheaper competitor or a competitor price moved in the last 24h (same quality policy as alerts). Once-per-day is a per-user Redis `SET NX` claim (`cacheClaim`); if Redis is unreachable the round is skipped. Opt-out: `users.daily_digest_enabled` (settings toggle, `/api/account/alert-prefs`); also off when `emailAlertsEnabled` is false
 
 ### Components
 

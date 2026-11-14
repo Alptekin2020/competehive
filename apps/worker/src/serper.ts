@@ -230,3 +230,138 @@ export async function searchProduct(query: string): Promise<SerperShoppingResult
 
   return results;
 }
+
+// ============================================
+// İkinci rakip kaynağı: pazaryeri ürün sayfaları (Google web araması)
+// ============================================
+//
+// Google Shopping yalnızca satıcının Google'a ürün beslemesi verdiği ilanları
+// gösterir; pazaryerlerindeki pek çok ilan (özellikle Hepsiburada/N11 ve küçük
+// satıcılar) orada hiç görünmez. Niş ürünlerde keşif bu yüzden "0 rakip" ile
+// dönüyordu. Aynı Serper anahtarıyla Google WEB aramasını pazaryeri alan
+// adlarına kısıtlayarak ürün sayfalarının kendisini buluruz. Bu sonuçlar çoğu
+// zaman fiyat taşımaz — fiyat, worker'ın doğrudan scraper zinciriyle alınır.
+
+/** Web aramasının kısıtlandığı pazaryerleri (hepsinin worker'da scraper'ı var). */
+export const MARKETPLACE_SEARCH_DOMAINS = [
+  "trendyol.com",
+  "hepsiburada.com",
+  "n11.com",
+  "amazon.com.tr",
+  "pazarama.com",
+  "pttavm.com",
+] as const;
+
+/**
+ * URL bir ÜRÜN sayfası mı? Arama/kategori/mağaza/marka sayfaları rakip
+ * olamaz; yalnızca pazaryerinin ürün sayfası kalıbına uyanlar kabul edilir.
+ */
+export function isMarketplaceProductUrl(link: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(link);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  const path = parsed.pathname.toLowerCase();
+  if (host === "trendyol.com") return /-p-\d+\/?$/.test(path);
+  if (host === "hepsiburada.com") return /-pm?-[a-z0-9]+\/?$/.test(path);
+  if (host === "n11.com") return path.startsWith("/urun/");
+  if (host === "amazon.com.tr") return /\/(dp|gp\/product)\/[a-z0-9]{10}(\/|$)/.test(path);
+  if (host === "pazarama.com") return /-p-[a-z0-9]+\/?$/.test(path);
+  if (host === "pttavm.com") return /-p-\d+\/?$/.test(path);
+  return false;
+}
+
+export function buildMarketplaceSearchQuery(query: string): string {
+  const sites = MARKETPLACE_SEARCH_DOMAINS.map((d) => `site:${d}`).join(" OR ");
+  return `${query.trim()} (${sites})`;
+}
+
+interface SerperOrganicResult {
+  title?: string;
+  link?: string;
+  position?: number;
+  price?: number | string;
+  currency?: string;
+}
+
+/**
+ * Organik sonuçları keşif hattının beklediği biçime çevirir: yalnızca ürün
+ * sayfaları, fiyat varsa (zengin sonuç) TRY ise taşınır, yoksa boş bırakılır
+ * (fiyat sonradan doğrudan taramayla alınır).
+ */
+export function mapOrganicToShoppingResults(
+  organic: SerperOrganicResult[],
+): SerperShoppingResult[] {
+  const out: SerperShoppingResult[] = [];
+  for (const r of organic) {
+    if (typeof r?.link !== "string" || typeof r?.title !== "string") continue;
+    if (!isMarketplaceProductUrl(r.link)) continue;
+    const currencyOk =
+      !r.currency || r.currency === "TRY" || r.currency === "TL" || r.currency === "₺";
+    let price = "";
+    if (currencyOk && typeof r.price === "number" && Number.isFinite(r.price) && r.price > 0) {
+      price = r.price.toLocaleString("tr-TR", { minimumFractionDigits: 2 });
+    } else if (currencyOk && typeof r.price === "string") {
+      price = r.price;
+    }
+    out.push({
+      title: r.title,
+      source: "web",
+      link: r.link,
+      price,
+      position: r.position ?? out.length + 1,
+    });
+  }
+  return out;
+}
+
+export async function searchMarketplacePages(query: string): Promise<SerperShoppingResult[]> {
+  const fullQuery = buildMarketplaceSearchQuery(query);
+  // Shopping önbelleğiyle çakışmaması için ayrı anahtar öneki.
+  const cacheKey = `web:${fullQuery}`;
+  const cached = await getCachedSerperResults(cacheKey);
+  if (cached) return cached as SerperShoppingResult[];
+
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) {
+    throw new Error("SERPER_API_KEY tanımlı değil — rakip araması yapılamıyor");
+  }
+
+  const res = await withRetry(
+    async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SERPER_TIMEOUT_MS);
+      try {
+        return await directFetch("https://google.serper.dev/search", {
+          method: "POST",
+          headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ q: fullQuery, gl: "tr", hl: "tr", num: 20 }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    { attempts: 3, shouldRetry: (r) => isTransientStatus(r.status) },
+  );
+
+  if (!res.ok) {
+    const bodySnippet = await res
+      .text()
+      .then((t) => t.slice(0, 200))
+      .catch(() => "");
+    throw new Error(
+      `Serper web arama hatası: ${res.status}${bodySnippet ? ` — ${bodySnippet}` : ""}`,
+    );
+  }
+
+  const data = (await res.json()) as { organic?: SerperOrganicResult[] };
+  const results = mapOrganicToShoppingResults(data.organic ?? []);
+  if (results.length > 0) {
+    await setCachedSerperResults(cacheKey, results);
+  }
+  return results;
+}
