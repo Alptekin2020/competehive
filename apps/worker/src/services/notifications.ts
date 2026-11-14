@@ -155,6 +155,18 @@ function pct(n: number): string {
   return PCT_FORMAT.format(n);
 }
 
+function appBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_APP_URL || "https://www.competehive.com").replace(/\/$/, "");
+}
+
+// Tüm e-postaların başlığındaki marka: sitedeki logo dosyası (apps/web/public,
+// middleware dışında, herkese açık). E-posta istemcileri görseli engellerse
+// alt metni ("CompeteHive") görünür; logo zaten yazıyı içerdiği için yanına
+// ayrıca marka adı yazılmaz.
+export function emailBrandHtml(): string {
+  return `<img src="${appBaseUrl()}/competehive-logo.png" width="56" height="56" alt="CompeteHive" style="display: block; border: 0; font-size: 18px; font-weight: 700; color: #F59E0B;" />`;
+}
+
 // Bildirimden uygulamadaki ürün detayına dönüş linki: kullanıcı aksiyonu
 // (fiyat güncelle, rakipleri incele) pazaryeri sayfasında değil CompeteHive'da
 // alır. NEXT_PUBLIC_APP_URL prod'da www.competehive.com'dur.
@@ -930,7 +942,7 @@ async function sendEmailAlert(
             <table style="width: 100%;">
               <tr>
                 <td>
-                  <span style="font-size: 20px; font-weight: 700; color: #F59E0B;">🐝 CompeteHive</span>
+                  ${emailBrandHtml()}
                 </td>
                 <td style="text-align: right;">
                   <span style="font-size: 12px; color: #6B7280;">Fiyat Uyarısı</span>
@@ -1245,7 +1257,7 @@ async function sendScrapeFailureEmail(
             <table style="width: 100%;">
               <tr>
                 <td>
-                  <span style="font-size: 20px; font-weight: 700; color: #F59E0B;">🐝 CompeteHive</span>
+                  ${emailBrandHtml()}
                 </td>
                 <td style="text-align: right;">
                   <span style="font-size: 12px; color: #6B7280;">Sistem Uyarısı</span>
@@ -1412,10 +1424,6 @@ export async function sendScrapeFailureAlert(
 // Günlük özet e-postası
 // ============================================
 
-function appBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || "https://www.competehive.com").replace(/\/$/, "");
-}
-
 export function renderDailyDigestHtml(digest: Digest): string {
   const base = appBaseUrl();
   const rows = digest.items
@@ -1441,7 +1449,7 @@ export function renderDailyDigestHtml(digest: Digest): string {
           <div style="background: #111113; padding: 24px; border-bottom: 1px solid #1F1F23;">
             <table style="width: 100%;">
               <tr>
-                <td><span style="font-size: 20px; font-weight: 700; color: #F59E0B;">🐝 CompeteHive</span></td>
+                <td>${emailBrandHtml()}</td>
                 <td style="text-align: right;"><span style="font-size: 12px; color: #6B7280;">Günlük Özet</span></td>
               </tr>
             </table>
