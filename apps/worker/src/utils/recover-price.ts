@@ -9,7 +9,7 @@
 // the worker. We pay the Puppeteer cost only in the existing scrape flow.
 
 import * as cheerio from "cheerio";
-import { parsePrice } from "../serper";
+import { isMarketplaceProductUrl, parsePrice } from "../serper";
 
 export type PriceRecoveryResult = {
   price: number | null;
@@ -20,36 +20,89 @@ export type PriceRecoveryResult = {
     | "data-testid"
     | "none"
     | "http-error"
-    | "akamai-block";
+    | "akamai-block"
+    | "not-product-page";
 };
 
 const FETCH_TIMEOUT_MS = 7000;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-function parsePriceFromJsonLd(html: string): number | null {
+type JsonLdNode = Record<string, unknown>;
+
+function isProductNode(node: JsonLdNode): boolean {
+  const type = node["@type"];
+  if (typeof type === "string") return type === "Product";
+  return Array.isArray(type) && type.includes("Product");
+}
+
+/** JSON-LD bloklarındaki üst düzey düğümler (dizi ve @graph açılmış). */
+function collectJsonLdNodes(html: string): JsonLdNode[] {
   const $ = cheerio.load(html);
-  const scripts = $('script[type="application/ld+json"]');
-  for (let i = 0; i < scripts.length; i++) {
-    const raw = $(scripts[i]).text();
-    if (!raw) continue;
+  const nodes: JsonLdNode[] = [];
+  $('script[type="application/ld+json"]').each((_, el) => {
+    const raw = $(el).text();
+    if (!raw) return;
     try {
-      const data = JSON.parse(raw);
-      const candidates = Array.isArray(data) ? data : [data];
-      for (const node of candidates) {
-        const offers = node?.offers;
-        if (!offers) continue;
-        const offerList = Array.isArray(offers) ? offers : [offers];
-        for (const offer of offerList) {
-          const priceField =
-            offer?.price ?? offer?.priceSpecification?.price ?? offer?.lowPrice ?? offer?.highPrice;
-          if (priceField === undefined || priceField === null) continue;
-          const parsed = parsePrice(String(priceField));
-          if (parsed && parsed > 0) return parsed;
+      const data: unknown = JSON.parse(raw);
+      const top = Array.isArray(data) ? data : [data];
+      for (const item of top) {
+        if (!item || typeof item !== "object") continue;
+        nodes.push(item as JsonLdNode);
+        const graph = (item as JsonLdNode)["@graph"];
+        if (Array.isArray(graph)) {
+          for (const g of graph) if (g && typeof g === "object") nodes.push(g as JsonLdNode);
         }
       }
-    } catch {
-      // Malformed JSON-LD payload. Try the next one.
+    } catch (err) {
+      // Bozuk JSON-LD bloğu: diğer bloklar hâlâ geçerli olabilir, atla.
+      void err;
+    }
+  });
+  return nodes;
+}
+
+/**
+ * Sayfa tek bir ürünün sayfası değil de liste/kategori sayfası mı?
+ * Prod vakası (14 Kasım): Hepsiburada yayından kalkmış `-pm-` ilanlarını
+ * kategori sayfasına yönlendiriyor; eski kod o sayfadaki İLK ürünün fiyatını
+ * (126,65 ₺) üç farklı rakibe "kurtarılmış fiyat" olarak yazdı ve 299,90 ₺'lik
+ * ürün için sahte "rakip %58 ucuz" tablosu üretti.
+ */
+export function looksLikeListingPage(html: string): boolean {
+  const nodes = collectJsonLdNodes(html);
+  if (nodes.some((n) => n["@type"] === "ItemList" || n["@type"] === "CollectionPage")) return true;
+  const names = new Set(
+    nodes
+      .filter(isProductNode)
+      .map((n) => (typeof n.name === "string" ? n.name.trim().toLowerCase() : ""))
+      .filter(Boolean),
+  );
+  return names.size > 1;
+}
+
+/**
+ * İstek ürün sayfasından başka bir yere mi yönlendi? Bilinen pazaryerlerinde
+ * ürün URL kalıbı kaybolduysa (kategori/arama/ana sayfa) fiyat okunmaz.
+ */
+export function leftProductPage(requestedUrl: string, finalUrl: string): boolean {
+  if (!finalUrl || finalUrl === requestedUrl) return false;
+  return isMarketplaceProductUrl(requestedUrl) && !isMarketplaceProductUrl(finalUrl);
+}
+
+/** Yalnızca `Product` düğümlerinin teklif fiyatı kabul edilir. */
+export function parsePriceFromJsonLd(html: string): number | null {
+  for (const node of collectJsonLdNodes(html)) {
+    if (!isProductNode(node)) continue;
+    const offers = node.offers;
+    if (!offers) continue;
+    const offerList = (Array.isArray(offers) ? offers : [offers]) as JsonLdNode[];
+    for (const offer of offerList) {
+      const spec = offer?.priceSpecification as JsonLdNode | undefined;
+      const priceField = offer?.price ?? spec?.price ?? offer?.lowPrice ?? offer?.highPrice;
+      if (priceField === undefined || priceField === null) continue;
+      const parsed = parsePrice(String(priceField));
+      if (parsed && parsed > 0) return parsed;
     }
   }
   return null;
@@ -151,6 +204,9 @@ export async function recoverPriceLightweight(url: string): Promise<PriceRecover
     }
     if (!res.ok) {
       return { price: null, source: "http-error" };
+    }
+    if (leftProductPage(url, res.url) || looksLikeListingPage(html)) {
+      return { price: null, source: "not-product-page" };
     }
     const fromJsonLd = parsePriceFromJsonLd(html);
     if (fromJsonLd) return { price: fromJsonLd, source: "jsonld" };
