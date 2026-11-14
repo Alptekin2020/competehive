@@ -22,6 +22,7 @@ import { getProxyConfig } from "./utils/proxy";
 import { closeBrowser } from "./scrapers";
 import { initSentry, captureError, flushSentry } from "./sentry";
 import { beatHeartbeat } from "./utils/heartbeat";
+import { claimRefreshCycle, REFRESH_CYCLE_CHECK_MS } from "./utils/refresh-cycle";
 
 type TelegramRegistrationResult =
   | { status: "registered"; webhookUrl: string }
@@ -243,46 +244,56 @@ async function start() {
   // 6 saatlik URL-DEDUP refresh scheduler
   // ÖNCEDEN: her TrackedProduct için 1 job → N kullanıcı × M ürün = N×M Serper call
   // ŞİMDİ: distinct productUrl başına 1 job → unique URL sayısı kadar Serper call
-  setInterval(
-    async () => {
-      try {
-        const uniqueUrlProducts = await prisma.trackedProduct.findMany({
-          where: {
-            status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
-            // Plan kapısı (B1): süresi dolmuş ücretli planların ürünleri için
-            // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural
-            // (3 günlük yenileme toleransı dahil).
-            user: {
-              OR: [
-                { planExpiresAt: null },
-                { planExpiresAt: { gte: new Date(Date.now() - PLAN_EXPIRY_GRACE_MS) } },
-              ],
-            },
+  //
+  // Son çalışma zamanı Redis'te tutulur ve 10 dakikada bir "vakti geldi mi?"
+  // diye bakılır. Eski hali süreç açılışından itibaren sayan bir setInterval'dı:
+  // her deploy sayacı sıfırladığı için sık deploy edilen günlerde tur hiç
+  // çalışmıyor, fiyatlar 12+ saat bayat kalıyordu (prod: 14 Kasım 12:28 turu
+  // 12:16 deploy'u yüzünden atlandı).
+  const runRefreshUrlCycleIfDue = async () => {
+    try {
+      const due = await claimRefreshCycle();
+      if (!due) return;
+
+      const uniqueUrlProducts = await prisma.trackedProduct.findMany({
+        where: {
+          status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
+          // Plan kapısı (B1): süresi dolmuş ücretli planların ürünleri için
+          // Serper araması (maliyet) yapma — scrape scheduler ile aynı kural
+          // (3 günlük yenileme toleransı dahil).
+          user: {
+            OR: [
+              { planExpiresAt: null },
+              { planExpiresAt: { gte: new Date(Date.now() - PLAN_EXPIRY_GRACE_MS) } },
+            ],
           },
-          distinct: ["productUrl"],
-          select: { productUrl: true },
-        });
+        },
+        distinct: ["productUrl"],
+        select: { productUrl: true },
+      });
 
-        for (const { productUrl } of uniqueUrlProducts) {
-          // Raw URL'ler özel karakter (`:` `/` `?` `#`) içeriyor ve çok uzun olabiliyor;
-          // jobId güvenliği için SHA-1 hash kullanıyoruz (kriptografik amaç değil — sadece kısa stable id).
-          const urlHash = createHash("sha1").update(productUrl).digest("hex").slice(0, 16);
-          await productQueue.add(
-            "refresh-url",
-            { productUrl },
-            {
-              jobId: `refresh-url-${urlHash}-${Date.now()}`,
-            },
-          );
-        }
-
-        logger.info(`Scheduled ${uniqueUrlProducts.length} refresh-url jobs (URL-deduped)`);
-      } catch (err) {
-        logger.error({ err }, "Refresh-url scheduler error");
+      for (const { productUrl } of uniqueUrlProducts) {
+        // Raw URL'ler özel karakter (`:` `/` `?` `#`) içeriyor ve çok uzun olabiliyor;
+        // jobId güvenliği için SHA-1 hash kullanıyoruz (kriptografik amaç değil — sadece kısa stable id).
+        const urlHash = createHash("sha1").update(productUrl).digest("hex").slice(0, 16);
+        await productQueue.add(
+          "refresh-url",
+          { productUrl },
+          {
+            jobId: `refresh-url-${urlHash}-${Date.now()}`,
+          },
+        );
       }
-    },
-    6 * 60 * 60 * 1000,
-  );
+
+      logger.info(`Scheduled ${uniqueUrlProducts.length} refresh-url jobs (URL-deduped)`);
+    } catch (err) {
+      logger.error({ err }, "Refresh-url scheduler error");
+    }
+  };
+  setInterval(() => void runRefreshUrlCycleIfDue(), REFRESH_CYCLE_CHECK_MS);
+  // Açılıştan 3 dk sonra ilk kontrol: deploy sırasında vakti geçmiş bir tur
+  // varsa 6 saat daha beklemeden çalışır.
+  setTimeout(() => void runRefreshUrlCycleIfDue(), 3 * 60 * 1000);
 
   // Periyodik rakip keşfi + fiyat tazeleme (Serper tabanlı): en uzun süredir
   // taranmamış ürünler için tek tek discovery turu çalıştırır — hem yeni rakip

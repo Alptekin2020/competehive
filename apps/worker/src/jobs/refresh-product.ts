@@ -4,9 +4,9 @@ import { searchProduct, extractRetailer, isScraperBackedRetailer, parsePrice } f
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
 import { recoverPriceLightweight } from "../utils/recover-price";
-import { urlMatchKey } from "../utils/url-match";
+import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { getScraper } from "../scrapers";
+import { getScraper, isProductUnavailableError } from "../scrapers";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
 import { buildSearchQueries } from "../utils/search-queries";
@@ -149,10 +149,19 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
         );
       }
     } catch (sourceError) {
-      console.error(
-        `⚠️ Source refresh scrape hatası: ${productId} (${product.marketplace}) ${product.productUrl}`,
-        sourceError,
-      );
+      if (isProductUnavailableError(sourceError)) {
+        // Sayfa sağlıklı, ürün satın alınamıyor: hata değil stok durumu.
+        await prisma.trackedProduct.update({
+          where: { id: productId },
+          data: { status: "OUT_OF_STOCK", lastScrapedAt: now },
+        });
+        console.log(`ℹ️ Ürün şu an satın alınamıyor (stokta yok sayıldı): ${productId}`);
+      } else {
+        console.error(
+          `⚠️ Source refresh scrape hatası: ${productId} (${product.marketplace}) ${product.productUrl}`,
+          sourceError,
+        );
+      }
     }
 
     // ============================================
@@ -228,7 +237,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
     const competitorByUrl = new Map<
       string,
       { competitorUrl: string; id: string; competitorName: string | null }
-    >(product.competitors.map((c) => [c.competitorUrl, c]));
+    >(product.competitors.map((c) => [competitorUrlKey(c.competitorUrl), c]));
 
     const sourcePrice =
       refreshedOwnPrice ?? (product.currentPrice ? Number(product.currentPrice) : null);
@@ -244,7 +253,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
 
       const retailer = extractRetailer(result.link);
       const isScraperBacked = isScraperBackedRetailer(retailer.name);
-      const existingCompetitor = competitorByUrl.get(result.link);
+      const existingCompetitor = competitorByUrl.get(competitorUrlKey(result.link));
 
       let serperPrice = parsePrice(result.price);
 

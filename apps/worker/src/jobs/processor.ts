@@ -1,7 +1,7 @@
 import { Queue, Worker, Job } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import { extractRetailer } from "../serper";
-import { getScraper, ScrapedProduct, ScraperError } from "../scrapers";
+import { getScraper, isProductUnavailableError, ScrapedProduct, ScraperError } from "../scrapers";
 import { sendAlerts, sendScrapeFailureAlert } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
@@ -383,6 +383,33 @@ export const scrapeWorker = new Worker(
               code: "SCRAPE_RUNTIME_ERROR",
               retryable: true,
             });
+
+      // Sayfa sağlıklı ama ürün satın alınamıyor (teklif/stok yok): bu bir
+      // tarama hatası değil. Hata sayacını artırıp ürünü ERROR'a düşürmek
+      // yerine "Stokta yok" olarak işaretle; son bilinen fiyat korunur.
+      if (isProductUnavailableError(error)) {
+        const current = await prisma.trackedProduct.findUnique({
+          where: { id: productId },
+          select: { currentPrice: true, status: true },
+        });
+        await prisma.trackedProduct.update({
+          where: { id: productId },
+          data: { status: "OUT_OF_STOCK", lastScrapedAt: new Date() },
+        });
+        await clearScrapeFailures(productId);
+        const knownPrice = current?.currentPrice ? Number(current.currentPrice) : null;
+        if (current && knownPrice && knownPrice > 0) {
+          await maybeEnqueueAlerts({
+            productId,
+            previousPrice: knownPrice,
+            currentPrice: knownPrice,
+            previousInStock: current.status !== "OUT_OF_STOCK",
+            inStock: false,
+          });
+        }
+        logger.info({ productId }, "Product has no purchasable offer — marked OUT_OF_STOCK");
+        return { success: true, unavailable: true };
+      }
 
       const shouldRetry = scraperError.retryable && attemptsMade < maxAttempts;
 

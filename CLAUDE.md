@@ -179,6 +179,12 @@ Entry point: `apps/worker/src/index.ts`
 - User-agent rotation (5 browser user agents)
 - Puppeteer: one shared Chromium, opened via `openPage()`/`releasePage()` and closed after 2 minutes with no open page (Chromium is most of the worker's memory, which drives the Railway bill); concurrent callers share a single launch
 - Graceful shutdown on SIGTERM/SIGINT
+- Outbound fetch goes through the scraping proxy (global dispatcher) EXCEPT first-party APIs: Serper and OpenAI use `directFetch` (`utils/direct-fetch.ts`) so a proxy 502 cannot kill competitor discovery; Serper calls retry transient failures (`withRetry`)
+- The 6-hour refresh-url cycle keeps its last run time in Redis (`utils/refresh-cycle.ts`) and is checked every 10 minutes — a deploy must not reset the clock
+- Competitor listings are matched by `competitorUrlKey` (tracking params stripped, seller params kept), never by raw URL; a known competitor is always updated under its stored URL
+- The AI matcher never sees prices (it used price gaps as "different product" evidence); price sanity is deterministic (0.3x–3x band, 4x backstop). Titles are cleaned with `cleanProductTitle` (marketplace SEO suffixes) before search and matching
+- A page that loads fine but has no purchasable offer throws `PRODUCT_UNAVAILABLE` (`isProductUnavailableError`): callers mark the product OUT_OF_STOCK and keep the last price instead of counting a scrape failure. Parsers set `unavailable` only on a positive signal
+- Puppeteer page reads go through `readPageHtml` (retries when a bot-check/geo redirect navigates mid-read)
 
 ### Scrapers
 

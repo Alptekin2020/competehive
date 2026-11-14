@@ -1,4 +1,5 @@
 import { getCachedSerperResults, setCachedSerperResults } from "./utils/cache";
+import { directFetch, isTransientStatus, withRetry } from "./utils/direct-fetch";
 
 export interface SerperShoppingResult {
   title: string;
@@ -156,6 +157,8 @@ export function parsePrice(priceStr: string): number | null {
 // ============================================
 // Serper Shopping API
 // ============================================
+const SERPER_TIMEOUT_MS = 15_000;
+
 export async function searchProduct(query: string): Promise<SerperShoppingResult[]> {
   // Check cache first
   const cached = await getCachedSerperResults(query);
@@ -169,19 +172,34 @@ export async function searchProduct(query: string): Promise<SerperShoppingResult
     throw new Error("SERPER_API_KEY tanımlı değil — rakip araması yapılamıyor");
   }
 
-  const res = await fetch("https://google.serper.dev/shopping", {
-    method: "POST",
-    headers: {
-      "X-API-KEY": apiKey,
-      "Content-Type": "application/json",
+  // Proxy'yi BAYPAS eder (directFetch) ve geçici ağ/5xx hatalarında yeniden
+  // dener: prod'da aramalar scraping proxy'sinin 502'si yüzünden düşüyor, ürün
+  // o turda rakipsiz/güncellenmemiş kalıyordu.
+  const res = await withRetry(
+    async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SERPER_TIMEOUT_MS);
+      try {
+        return await directFetch("https://google.serper.dev/shopping", {
+          method: "POST",
+          headers: {
+            "X-API-KEY": apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            q: query,
+            gl: "tr",
+            hl: "tr",
+            num: 20,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
     },
-    body: JSON.stringify({
-      q: query,
-      gl: "tr",
-      hl: "tr",
-      num: 20,
-    }),
-  });
+    { attempts: 3, shouldRetry: (r) => isTransientStatus(r.status) },
+  );
 
   if (!res.ok) {
     // Kota/auth hataları (401/403/429) tüm rakip keşfini sessizce öldürebilir —
@@ -199,7 +217,11 @@ export async function searchProduct(query: string): Promise<SerperShoppingResult
   }
 
   const data = (await res.json()) as { shopping?: SerperShoppingResult[] };
-  const results = data.shopping ?? [];
+  // Bağlantısız sonuçlar (Google'ın kendi karşılaştırma kartları) hiçbir
+  // akışta kullanılamaz ve URL eşleştirmesini çökertiyordu — kaynağında ele.
+  const results = (data.shopping ?? []).filter(
+    (r) => typeof r?.link === "string" && r.link.trim().length > 0,
+  );
 
   // Cache results
   if (results.length > 0) {

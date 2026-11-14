@@ -16,7 +16,7 @@ import {
   sharesStrongProductCode,
   withinPriceBand,
 } from "../utils/competitor-quality";
-import { urlMatchKey } from "../utils/url-match";
+import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { buildSearchQueries } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
@@ -232,8 +232,11 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       where: { trackedProductId: productId },
       select: { competitorUrl: true, competitorName: true, currentPrice: true, matchScore: true },
     });
-    const knownUrls = new Set(knownCompetitors.map((c) => c.competitorUrl));
-    const knownByUrl = new Map(knownCompetitors.map((c) => [c.competitorUrl, c]));
+    // Anahtar: izleme parametrelerinden arındırılmış URL (competitorUrlKey).
+    // Ham URL ile karşılaştırınca aynı ilan farklı izleme parametresiyle
+    // geldiğinde "yeni rakip" sanılıp hem tekrar AI'a gidiyor hem listede
+    // mükerrer satır oluşturuyordu.
+    const knownByUrl = new Map(knownCompetitors.map((c) => [competitorUrlKey(c.competitorUrl), c]));
 
     // Bu turda tespit edilen anlamlı-olabilecek rakip fiyat hareketleri —
     // tur sonunda tek bir alert job'ına eklenir (COMPETITOR_PRICE_CHANGE).
@@ -278,7 +281,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           continue;
         }
 
-        const isKnown = knownUrls.has(result.link);
+        const known = knownByUrl.get(competitorUrlKey(result.link));
+        const isKnown = Boolean(known);
+        // Bilinen rakip, KAYITLI URL'si üzerinden güncellenir (mükerrer satır yok).
+        const competitorUrl = known?.competitorUrl ?? result.link;
 
         // Deterministik ambalaj/koli filtresi — AI çağrısından önce, maliyetsiz.
         // Bilinen rakipler bu filtreyi zaten geçmişti; tekrar uygulamaya gerek yok.
@@ -439,7 +445,6 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // COMPETITOR_CHEAPER ile aynı: güncel skor (bu turda indirgenmiş
         // olabilir) MIN_MATCH_SCORE altındaysa karar dışı; null skor
         // manuel/legacy kayıttır ve geçer.
-        const known = knownByUrl.get(result.link);
         const knownPreviousPrice = known?.currentPrice ? Number(known.currentPrice) : null;
         const effectiveScore = matchResult?.score ?? known?.matchScore ?? null;
         const detectedMove: CompetitorPriceMove | null =
@@ -459,7 +464,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             where: {
               trackedProductId_competitorUrl: {
                 trackedProductId: productId,
-                competitorUrl: result.link,
+                competitorUrl,
               },
             },
             update: {
@@ -473,7 +478,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             },
             create: {
               trackedProductId: productId,
-              competitorUrl: result.link,
+              competitorUrl,
               competitorName: result.title,
               marketplace,
               currentPrice: price,
