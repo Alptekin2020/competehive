@@ -13,7 +13,8 @@ import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { getScraper } from "../scrapers";
 import { extractRetailer } from "../serper";
-import { MIN_MATCH_SCORE } from "../utils/competitor-quality";
+import { MIN_MATCH_SCORE, withinPriceBand } from "../utils/competitor-quality";
+import { readMatchReview } from "../utils/match-review";
 import { alertQueue } from "./processor";
 
 export interface CompetitorScrapeJobData {
@@ -35,6 +36,7 @@ export async function processCompetitorScrapeJob(
       trackedProductId: true,
       currentPrice: true,
       matchScore: true,
+      matchAttributes: true,
       trackedProduct: { select: { currentPrice: true, status: true } },
     },
   });
@@ -43,14 +45,57 @@ export async function processCompetitorScrapeJob(
     return { success: false };
   }
 
+  // Keşfin fiyatsız kaydedip buraya yönlendirdiği otomatik satır (skorlu,
+  // kullanıcı onaysız, hiç fiyatı olmamış): tarama sonuç vermezse listede
+  // kalıcı bir "fiyat yok" satırı olarak durmamalı — silinir, bir sonraki
+  // keşif turu ilan hâlâ yayındaysa yeniden bulur. Manuel eklenen (skoru null)
+  // ve kullanıcının onayladığı satırlara dokunulmaz.
+  const isAutomated =
+    competitor.matchScore !== null && readMatchReview(competitor.matchAttributes) !== "confirmed";
+  const neverPriced = competitor.currentPrice === null;
+  const dropIfUnpriced = async (reason: string) => {
+    if (!isAutomated || !neverPriced) return;
+    await prisma.competitor.delete({ where: { id: competitor.id } }).catch((err) => {
+      logger.warn({ competitorId, err }, "Unpriced discovery competitor delete failed");
+    });
+    logger.info(
+      { competitorId, reason, url: competitor.competitorUrl.slice(0, 120) },
+      "Unpriced discovery competitor removed",
+    );
+  };
+
   const scraper = getScraper(competitor.marketplace);
   // Hata fırlarsa BullMQ job ayarlarına göre yeniden dener.
-  const scraped = await scraper(competitor.competitorUrl);
+  let scraped: Awaited<ReturnType<typeof scraper>>;
+  try {
+    scraped = await scraper(competitor.competitorUrl);
+  } catch (err) {
+    await dropIfUnpriced("scrape-failed");
+    throw err;
+  }
 
   if (!scraped?.price || scraped.price <= 0) {
+    await dropIfUnpriced("no-price");
     throw new Error(
       `Competitor scrape returned no price: ${competitor.competitorUrl.slice(0, 80)}`,
     );
+  }
+
+  // Fiyat makullük kapısı (otomatik satırlar): keşif turundaki 0.3x–3x bandının
+  // aynısı. Prod vakası (14 Kasım): ~1.010 ₺'lik ısıtıcı için PTT AVM sayfasından
+  // 80,34 ₺ okundu (büyük olasılıkla taksit tutarı) ve rakip fiyatı olarak
+  // yazıldı. Bant dışı fiyat yazılmaz; kullanıcının elle eklediği rakipte
+  // karar kullanıcınındır, kapı uygulanmaz.
+  const ownPriceForBand = competitor.trackedProduct?.currentPrice
+    ? Number(competitor.trackedProduct.currentPrice)
+    : 0;
+  if (isAutomated && ownPriceForBand > 0 && !withinPriceBand(ownPriceForBand, scraped.price)) {
+    logger.warn(
+      { competitorId, price: scraped.price, ownPrice: ownPriceForBand },
+      "Competitor direct scrape price outside plausibility band — ignored",
+    );
+    await dropIfUnpriced("price-out-of-band");
+    return { success: false };
   }
 
   const now = new Date();

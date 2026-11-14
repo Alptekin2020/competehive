@@ -165,6 +165,64 @@ export async function cleanupJunkCompetitors(): Promise<{
 }
 
 // ============================================
+// Tek seferlik onarım: 14 Kasım 2026 hatalı fiyat kurtarma penceresi
+// ============================================
+//
+// İkinci rakip kaynağı (#206) 14 Kasım 15:55 UTC'de yayına girdi. Hafif fiyat
+// kurtarma, kategori sayfasına yönlenen Hepsiburada `-pm-` ilanlarından yanlış
+// fiyat okuyordu ve başarısız doğrudan taramalar fiyatsız satır bırakıyordu
+// (düzeltme: utils/recover-price.ts, jobs/competitor-scrape.ts). O pencerede
+// oluşan otomatik, onaysız satırlardan şüpheli olanlar silinir; ilan gerçekten
+// yayındaysa bir sonraki keşif turu doğru fiyatla yeniden bulur. Pencere sabit
+// olduğu için idempotenttir ve sonraki kayıtları etkilemez.
+const RECOVERY_BUG_WINDOW_START = new Date("2026-11-14T15:55:00Z");
+const RECOVERY_BUG_WINDOW_END = new Date("2026-11-15T06:00:00Z");
+
+export async function purgeRecoveryBugCompetitors(): Promise<number> {
+  const rows = await prisma.competitor.findMany({
+    where: {
+      createdAt: { gte: RECOVERY_BUG_WINDOW_START, lt: RECOVERY_BUG_WINDOW_END },
+      matchScore: { not: null },
+      OR: [
+        { currentPrice: null },
+        { marketplace: "HEPSIBURADA", competitorUrl: { contains: "-pm-" } },
+        { marketplace: "PTTAVM" },
+      ],
+    },
+    select: {
+      id: true,
+      trackedProductId: true,
+      matchAttributes: true,
+      competitorPrices: { select: { price: true, scrapedAt: true } },
+    },
+  });
+  const doomed = rows.filter((r) => {
+    const review = (r.matchAttributes as Record<string, unknown> | null)?.review;
+    // Onay bekleyen adaylar ve kullanıcının onayladıkları korunur.
+    return review !== "pending" && review !== "confirmed";
+  });
+  const ids = doomed.map((r) => r.id);
+  if (ids.length === 0) return 0;
+
+  // Grafikteki ikiz satırlar (price_history) cascade ile silinmez: aynı ürün,
+  // aynı an ve aynı fiyatla yazılmış rakip satırlarını da kaldır.
+  const twins = doomed.flatMap((r) =>
+    r.competitorPrices.map((cp) => ({
+      trackedProductId: r.trackedProductId,
+      scrapedAt: cp.scrapedAt,
+      price: cp.price,
+      previousPrice: null,
+    })),
+  );
+  if (twins.length > 0) {
+    await prisma.priceHistory.deleteMany({ where: { OR: twins } });
+  }
+  await prisma.competitor.deleteMany({ where: { id: { in: ids } } });
+  logger.info({ purged: ids.length }, "Recovery-bug competitors purged (one-off)");
+  return ids.length;
+}
+
+// ============================================
 // Legacy marketplace backfill (CUSTOM → gerçek pazaryeri)
 // ============================================
 //

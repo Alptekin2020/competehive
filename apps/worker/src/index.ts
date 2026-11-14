@@ -7,7 +7,11 @@ import { setGlobalDispatcher, ProxyAgent } from "undici";
 import { scrapeWorker, alertWorker, scheduleScans } from "./jobs/processor";
 import { processCompetitorJob } from "./jobs/competitor-processor";
 import { processCompetitorScrapeJob } from "./jobs/competitor-scrape";
-import { backfillCompetitorMarketplaces, cleanupJunkCompetitors } from "./jobs/competitor-cleanup";
+import {
+  backfillCompetitorMarketplaces,
+  cleanupJunkCompetitors,
+  purgeRecoveryBugCompetitors,
+} from "./jobs/competitor-cleanup";
 import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
@@ -212,6 +216,7 @@ async function start() {
   // worker'ı düşürmemeli.
   try {
     await cleanupJunkCompetitors();
+    await purgeRecoveryBugCompetitors();
   } catch (err) {
     logger.error({ err }, "Junk-competitor cleanup failed — continuing");
   }
