@@ -12,6 +12,7 @@ import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
 import { pruneOldPriceHistory } from "./jobs/history-retention";
+import { DAILY_DIGEST_CHECK_MS, runDailyDigestIfDue } from "./jobs/daily-digest";
 import { prisma } from "./db";
 import { runMigrations } from "./migrate";
 import { logger } from "./utils/logger";
@@ -332,6 +333,14 @@ async function start() {
     },
     2 * 60 * 1000,
   );
+
+  // Günlük özet e-postası: İstanbul 09:00–12:00 penceresinde, kullanıcı başına
+  // günde bir (Redis kilidi), yalnızca aksiyon gerektiren değişiklik varsa.
+  setInterval(() => {
+    runDailyDigestIfDue().catch((err) => {
+      logger.error({ err }, "Daily digest scheduler error");
+    });
+  }, DAILY_DIGEST_CHECK_MS);
 
   // Günlük fiyat geçmişi budaması: plan bazlı saklama süresi (FREE 7 gün /
   // STARTER 30 / PRO 365; ENTERPRISE silinmez). Açılıştan 10 dk sonra ilk tur.

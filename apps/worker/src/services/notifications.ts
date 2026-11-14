@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../utils/logger";
 import { sendMessage as tgSendMessage, TelegramApiError } from "../utils/telegram-api";
+import { digestItemSummary, digestSubject, type Digest } from "../utils/daily-digest";
 import { postWebhookSafe } from "../utils/webhook-guard";
 import { resolveAllowedChannels, type AlertRuleWithUser, type AlertUser } from "../shared";
 
@@ -1405,4 +1406,99 @@ export async function sendScrapeFailureAlert(
     },
     "Scrape-failure alert processed",
   );
+}
+
+// ============================================
+// Günlük özet e-postası
+// ============================================
+
+function appBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_APP_URL || "https://www.competehive.com").replace(/\/$/, "");
+}
+
+export function renderDailyDigestHtml(digest: Digest): string {
+  const base = appBaseUrl();
+  const rows = digest.items
+    .map((item) => {
+      const undercut = item.cheaperCount > 0;
+      const accent = undercut ? "#EF4444" : "#22C55E";
+      return `
+            <a href="${base}/dashboard/products/${encodeURIComponent(item.productId)}" style="display: block; text-decoration: none; background: #111113; border: 1px solid #1F1F23; border-left: 3px solid ${accent}; border-radius: 12px; padding: 16px; margin-bottom: 12px;">
+              <p style="margin: 0 0 6px 0; color: #FFFFFF; font-size: 14px; font-weight: 600;">${escapeHtml(item.productName)}</p>
+              <p style="margin: 0 0 8px 0; color: #9CA3AF; font-size: 13px;">${escapeHtml(digestItemSummary(item, pct))}</p>
+              <p style="margin: 0; color: #9CA3AF; font-size: 13px;">
+                Sizin fiyatınız <strong style="color: #FFFFFF;">${money(item.ownPrice)} ₺</strong>
+                &nbsp;·&nbsp; En ucuz rakip <strong style="color: ${accent};">${money(item.cheapestPrice)} ₺</strong>
+                (${escapeHtml(marketplaceLabel(item.cheapestMarketplace))})
+              </p>
+            </a>`;
+    })
+    .join("");
+  const hidden = digest.actionableProductCount - digest.items.length;
+
+  return `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0A0A0B; color: #FFFFFF;">
+          <div style="background: #111113; padding: 24px; border-bottom: 1px solid #1F1F23;">
+            <table style="width: 100%;">
+              <tr>
+                <td><span style="font-size: 20px; font-weight: 700; color: #F59E0B;">🐝 CompeteHive</span></td>
+                <td style="text-align: right;"><span style="font-size: 12px; color: #6B7280;">Günlük Özet</span></td>
+              </tr>
+            </table>
+          </div>
+          <div style="padding: 32px 24px;">
+            <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #FFFFFF;">Bugün bakmanız gereken ${digest.actionableProductCount} ürün var</h2>
+            <p style="margin: 0 0 24px 0; color: #9CA3AF; font-size: 14px;">
+              ${digest.undercutProductCount} üründe rakip sizden ucuz. Son 24 saatte ${digest.totalDrops} rakip fiyat indirdi, ${digest.totalRises} rakip fiyat artırdı.
+            </p>
+            ${rows}
+            ${hidden > 0 ? `<p style="margin: 0 0 16px 0; color: #9CA3AF; font-size: 13px;">ve ${hidden} ürün daha.</p>` : ""}
+            <div style="text-align: center; margin-top: 24px;">
+              <a href="${base}/dashboard/products" style="display: inline-block; background: #F59E0B; color: #000000; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">Tüm Ürünleri Aç →</a>
+            </div>
+          </div>
+          <div style="padding: 16px 24px; border-top: 1px solid #1F1F23; text-align: center;">
+            <p style="margin: 0; color: #6B7280; font-size: 11px;">
+              Bu özet yalnızca aksiyon gerektiren bir değişiklik olduğunda gönderilir.
+              <a href="${base}/dashboard/settings" style="color: #9CA3AF;">Ayarlar</a> sayfasından kapatabilirsiniz.
+            </p>
+          </div>
+        </div>
+      `;
+}
+
+export async function sendDailyDigestEmail(
+  user: { id: string; email: string },
+  digest: Digest,
+): Promise<DeliveryOutcome> {
+  const resend = getResend();
+  if (!resend) return { status: "SKIPPED", error: "RESEND_API_KEY tanımlı değil" };
+  if (!user.email) return { status: "SKIPPED", error: "E-posta adresi yok" };
+
+  const fromAddress =
+    process.env.RESEND_FROM_EMAIL ||
+    (process.env.NODE_ENV === "production" ? null : "CompeteHive <onboarding@resend.dev>");
+  if (!fromAddress) {
+    return { status: "FAILED", error: "RESEND_FROM_EMAIL yapılandırılmamış" };
+  }
+
+  try {
+    const { error: sendError } = await resend.emails.send({
+      from: fromAddress,
+      to: user.email,
+      subject: digestSubject(digest),
+      html: renderDailyDigestHtml(digest),
+    });
+    if (sendError) {
+      logger.error({ userId: user.id, error: sendError }, "Daily digest email failed");
+      return {
+        status: "FAILED",
+        error: sendError.message || sendError.name || String(sendError),
+      };
+    }
+    return { status: "SENT" };
+  } catch (error) {
+    logger.error({ userId: user.id, error }, "Daily digest email failed");
+    return { status: "FAILED", error: errorMessage(error) };
+  }
 }

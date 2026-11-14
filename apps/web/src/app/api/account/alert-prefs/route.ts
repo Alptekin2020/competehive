@@ -13,12 +13,13 @@ export async function GET() {
 
   const row = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { emailAlertsEnabled: true, alertThresholdPct: true },
+    select: { emailAlertsEnabled: true, alertThresholdPct: true, dailyDigestEnabled: true },
   });
 
   return NextResponse.json({
     emailAlertsEnabled: row?.emailAlertsEnabled ?? true,
     alertThresholdPct: row?.alertThresholdPct ?? 5,
+    dailyDigestEnabled: row?.dailyDigestEnabled ?? true,
   });
 }
 
@@ -35,12 +36,21 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Geçersiz istek" }, { status: 400 });
   }
 
-  const { emailAlertsEnabled, alertThresholdPct } = (body ?? {}) as {
+  const { emailAlertsEnabled, alertThresholdPct, dailyDigestEnabled } = (body ?? {}) as {
     emailAlertsEnabled?: unknown;
     alertThresholdPct?: unknown;
+    dailyDigestEnabled?: unknown;
   };
 
-  const data: { emailAlertsEnabled?: boolean; alertThresholdPct?: number } = {};
+  const data: {
+    emailAlertsEnabled?: boolean;
+    alertThresholdPct?: number;
+    dailyDigestEnabled?: boolean;
+  } = {};
+
+  if (typeof dailyDigestEnabled === "boolean") {
+    data.dailyDigestEnabled = dailyDigestEnabled;
+  }
 
   if (typeof emailAlertsEnabled === "boolean") {
     data.emailAlertsEnabled = emailAlertsEnabled;
@@ -60,7 +70,7 @@ export async function PATCH(request: Request) {
   const updated = await prisma.user.update({
     where: { id: user.id },
     data,
-    select: { emailAlertsEnabled: true, alertThresholdPct: true },
+    select: { emailAlertsEnabled: true, alertThresholdPct: true, dailyDigestEnabled: true },
   });
 
   return NextResponse.json(updated);

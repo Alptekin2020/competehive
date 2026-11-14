@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 interface AlertPrefs {
   emailAlertsEnabled: boolean;
   alertThresholdPct: number;
+  dailyDigestEnabled: boolean;
 }
 
 export default function AlertPrefsCard() {
@@ -99,6 +100,37 @@ export default function AlertPrefsCard() {
             className={
               "inline-block h-5 w-5 transform rounded-full bg-white transition " +
               (prefs.emailAlertsEnabled ? "translate-x-5" : "translate-x-0.5")
+            }
+          />
+        </button>
+      </div>
+
+      <div className="mt-5 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-white">Günlük özet e-postası</p>
+          <p className="text-xs text-dark-500">
+            Her sabah, rakibi daha ucuz olan veya fiyatı değişen ürünlerinizin özeti. Değişiklik
+            yoksa e-posta gönderilmez.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-label="Günlük özet e-postası"
+          aria-checked={prefs.dailyDigestEnabled}
+          disabled={saving || !prefs.emailAlertsEnabled}
+          onClick={() => save({ dailyDigestEnabled: !prefs.dailyDigestEnabled })}
+          className={
+            "relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition disabled:opacity-50 " +
+            (prefs.dailyDigestEnabled && prefs.emailAlertsEnabled ? "bg-hive-500" : "bg-dark-700")
+          }
+        >
+          <span
+            className={
+              "inline-block h-5 w-5 transform rounded-full bg-white transition " +
+              (prefs.dailyDigestEnabled && prefs.emailAlertsEnabled
+                ? "translate-x-5"
+                : "translate-x-0.5")
             }
           />
         </button>

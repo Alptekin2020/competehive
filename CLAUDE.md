@@ -233,6 +233,8 @@ Located in `apps/worker/src/services/notifications.ts`:
 - **Telegram**: Emoji formatting with clickable URLs via node-telegram-bot-api
 - **Webhook**: JSON POST with structured event data (product, price, change metadata)
 
+- **Daily digest** (`jobs/daily-digest.ts`, pure logic in `utils/daily-digest.ts`): one email per user per Istanbul day, sent in the 09:00–12:00 window, only when a product has a cheaper competitor or a competitor price moved in the last 24h (same quality policy as alerts). Once-per-day is a per-user Redis `SET NX` claim (`cacheClaim`); if Redis is unreachable the round is skipped. Opt-out: `users.daily_digest_enabled` (settings toggle, `/api/account/alert-prefs`); also off when `emailAlertsEnabled` is false
+
 ### Components
 
 - Reusable UI components: `apps/web/src/components/ui/` (LoadingSpinner, MarketplaceBadge)
