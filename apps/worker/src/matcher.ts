@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { logger } from "./utils/logger";
+import { directFetch } from "./utils/direct-fetch";
+import { cleanProductTitle } from "./utils/search-queries";
 import {
   MIN_MATCH_SCORE,
   compareProductCodes,
@@ -18,7 +20,13 @@ function getOpenAIClient(): OpenAI | null {
     if (!process.env.OPENAI_API_KEY) {
       return null;
     }
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // directFetch: scraping proxy'sini baypas eder (bkz. utils/direct-fetch.ts).
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      fetch: directFetch,
+      timeout: 30_000,
+      maxRetries: 2,
+    });
   }
   return openai;
 }
@@ -29,6 +37,11 @@ function getOpenAIClient(): OpenAI | null {
 // kontrolü de temizse devreye girer — gerçek çelişkiler asla geri çevrilmez.
 const MISSING_INFO_REJECTION_RE =
   /belirtilmemi|belirtilmedi|eksik bilgi|bilgi yok|bilgi verilmemi|yazmıyor|yazmiyor|not specified|unspecified|kapasite fark|hacim fark|boyut fark|miktar fark|renk fark/i;
+
+// AI'ın FİYATI ürün kimliği kanıtı sayan red kalıpları ("Farklı fiyat ve model
+// bilgisi", "fiyat aralığı farklı"). Fiyat artık prompt'a hiç verilmiyor; bu
+// regex yalnızca modelin yine de fiyattan söz ettiği durumlar için emniyet.
+const PRICE_BASED_REJECTION_RE = /fiyat/i;
 
 // ============================================
 // Types
@@ -230,16 +243,24 @@ export async function verifyProductMatch(
   }
 
   try {
-    const prompt = `Sen bir e-ticaret ürün eşleştirme uzmanısın. İki ürünün AYNI ÜRÜN olup olmadığını belirle.
+    // Pazaryeri SEO ekleri ("... Fiyatları ve Özellikleri") ürün kimliği değildir.
+    const sourceTitle = cleanProductTitle(sourceProduct.title);
+    const candidateTitle = cleanProductTitle(candidate.title);
+
+    // FİYAT BİLEREK VERİLMEZ. Bu aracın işi aynı ürünü FARKLI fiyatla satan
+    // rakibi bulmaktır; fiyatı gören model farkı "farklı ürün" kanıtı sayıyordu
+    // (prod: "iCollagen 60 Tablet — Farklı fiyat ve boyut/miktar", "Oral-B
+    // Vitality Pro — Farklı fiyat ve model bilgisi var" → aynı ürünler
+    // reddedildi, kullanıcı "rakip yok" gördü). Fiyat sağduyusu deterministik
+    // olarak kodda uygulanır: keşifte 0.3x–3x bandı, aşağıda 4x backstop'u.
+    const prompt = `Sen bir e-ticaret ürün eşleştirme uzmanısın. İki ürünün AYNI ÜRÜN olup olmadığını YALNIZCA başlıklara bakarak belirle.
 
 KAYNAK ÜRÜN:
-- Başlık: "${sourceProduct.title}"
-${sourceProduct.price ? `- Fiyat: ${sourceProduct.price} ₺` : ""}
+- Başlık: "${sourceTitle}"
 ${sourceProduct.marketplace ? `- Marketplace: ${sourceProduct.marketplace}` : ""}
 
 ADAY ÜRÜN:
-- Başlık: "${candidate.title}"
-${candidate.price ? `- Fiyat: ${candidate.price} ₺` : ""}
+- Başlık: "${candidateTitle}"
 ${candidate.marketplace ? `- Marketplace: ${candidate.marketplace}` : ""}
 
 KURALLAR:
@@ -248,13 +269,13 @@ KURALLAR:
 3. Aynı markanın farklı modelleri AYNI DEĞİLDİR (ör: iPhone 15 ≠ iPhone 15 Pro)
 4. Set/paket ürünler tekli ürünle AYNI DEĞİLDİR
 5. Yenilenmiş/refurbished ürünler orijinaliyle farklı kabul edilebilir (skor düşük)
-6. Fiyat farkı %300'den fazlaysa büyük olasılıkla farklı üründür
+6. FİYAT ÜRÜN KİMLİĞİ DEĞİLDİR: Sana fiyat verilmedi; fiyat hakkında tahmin yürütme ve "farklı fiyat", "fiyat aralığı farklı" gibi bir gerekçe ASLA yazma. Aynı ürün farklı satıcıda farklı fiyata satılır — amaç tam da bunu bulmaktır.
 7. PAKETLEME/AMBALAJ İSTİSNASI: Aday başlığında "koli", "kutu", "kutusu", "ambalaj", "ambalajı", "paket", "paketleme", "carton", "kargo poşeti", "stretch film", "bant", "etiket", "kraft" gibi paketleme/ambalaj/lojistik malzemesi sözcükleri varsa VE kaynak ürün ayakkabı, terlik, telefon, ev aleti gibi son tüketici ürünüyse: score=0 ve isMatch=false ver. "kolikutugelsin", "bojopack", "packmore", "kolicim", "kolicixx" gibi mağaza/marka adlarında "koli", "pack", "paket" geçenler ambalaj satıcısıdır — skor=0.
 8. KRİTİK MARKA TUTARLILIĞI: Eğer marka adı (Karaca, Apple, Samsung, Nike, Beko, Arzum, Sinbo vb.) HEM kaynak HEM aday başlığında AYNI şekilde geçiyorsa, brandMatch=true OLMAK ZORUNDA. "aynı marka değil" reasoning'i veremezsin marka adı iki başlıkta da varsa. Bu kuralı ihlal etmek tutarsız cevap üretmek demektir. ANCAK marka adının başlıkta geçmesi yalnız başına eşleşme demek değildir — kategori/tip eşleşmesi de zorunludur (Kural 11).
 9. SKOR-İSMATCH TUTARLILIĞI: Eğer score >= ${MIN_MATCH_SCORE} ise isMatch=true OLMAK ZORUNDA. score < ${MIN_MATCH_SCORE} ise isMatch=false OLMAK ZORUNDA. score ve isMatch çelişemez.
 10. KİTAP/MEDYA İSTİSNASI: Kaynak ürün kitap değilse ama aday başlığı "kitap", "roman", "öykü", "dergi", "nadirkitap", "idefix", "bkmkitap" içeriyorsa: score=0 ve isMatch=false.
 11. ÜRÜN TİPİ/KATEGORİ ZORUNLULUĞU: Kaynak ürünün kategorisi (terlik, ayakkabı, telefon, laptop, ütü, kahve, terlik, bardak vs.) ile aday ürünün kategorisi açıkça farklıysa (örn: "terlik" vs "kutu/ambalaj"; "telefon" vs "kılıf"; "kahve" vs "kahve makinesi"), categoryMatch=false ve score < 40 olmak ZORUNDA. Aynı marka olması yeterli değildir.
-12. FİYAT BÜYÜKLÜK SAĞDUYU: Kaynak fiyatı ${sourceProduct.price ?? "verilmedi"} ₺ ve aday fiyatı çok daha düşükse (örn: ¹/₁₀'undan az) yüksek olasılıkla farklı ürün/aksesuar/ambalajdır — score < 40 ver.
+12. KISA BAŞLIK = EKSİK BİLGİ: Aday başlığı kaynağın kısaltılmış hâliyse ("Oral-B Vitality Pro" ↔ "Oral-B Şarjlı Vitality Pro Koruma ve Temizlik Elektrikli Diş Fırçası") ve aday başlığında kaynakla ÇELİŞEN hiçbir kelime yoksa AYNI ÜRÜNDÜR. Adayda kaynakta OLMAYAN ek bir model/seri/varyant adı ("Kids", "Frozen", "Cross Action", "Plus", "Pro", "2'li", "Set") varsa farklı üründür.
 13. AYNI ÜRÜN — FARKLI SATICI/İLAN: Aynı ürün farklı pazaryerlerinde farklı kelime sırası, fazladan pazarlama sözcükleri ("orijinal", "hediyeli", "ücretsiz kargo", "outlet", "faturalı") veya küçük başlık farklarıyla listelenir. Marka + model + boyut/hacim/miktar AYNIYSA bu farklar ÖNEMSİZDİR ve ürün AYNI ÜRÜNDÜR (score >= ${MIN_MATCH_SCORE}). Rakip fiyatı kıyaslamanın amacı aynı ürünü farklı satıcıda bulmaktır; salt pazarlama veya söz dizimi farkı yüzünden eşleşmeyi reddetme. (Boyut/hacim/miktar farkı bu kuralın İSTİSNASIDIR — Kural 1 geçerli.)
 14. EKSİK BİLGİ FARK DEĞİLDİR: Aday başlığında bir özellik (kapasite, fincan sayısı, hacim, renk vb.) HİÇ YAZMIYORSA bunu fark sayma ve "potansiyel/olası farklılık" gerekçesiyle skoru DÜŞÜRME. Yalnızca iki başlıkta AÇIKÇA yazan ve ÇELİŞEN değerler farklılıktır. Örn: kaynak "4 Fincan Kapasiteli" der, aday kapasite yazmaz → fark YOK; marka+model aynıysa AYNI ÜRÜNDÜR. "Adayda belirtilmemiş", "bilgi yok", "kapasite/hacim/boyut belirtilmemiş" ifadeleri ASLA red gerekçesi OLAMAZ — bu durumda o özellik için specMatch=true kabul et. Bu kuralı ihlal eden cevap HATALIDIR ve sistem tarafından geçersiz sayılır.
 15. RENK VARYANTI = AYNI ÜRÜN: Renk adı ("Bakır" vs "Krom") ve model kodundaki renk eki (OK004 vs OK004-K, OK004-O, "-B") aynı modelin renk varyantıdır ve fiyat takibi amacıyla AYNI ÜRÜNDÜR (Kural 1'deki renk istisnası). Boyut/hacim/kapasite çelişkisi yoksa renk yüzünden reddetme.
@@ -335,7 +356,7 @@ SKOR REHBERİ:
       parsed.brandMatch === true &&
       parsed.modelMatch === true &&
       parsed.categoryMatch === true &&
-      MISSING_INFO_REJECTION_RE.test(aiReason) &&
+      (MISSING_INFO_REJECTION_RE.test(aiReason) || PRICE_BASED_REJECTION_RE.test(aiReason)) &&
       !isAccessoryListing(candidate.title, sourceProduct.title) &&
       !hasConflictingSpecs(sourceProduct.title, candidate.title) &&
       !hasConflictingCountDescriptors(sourceProduct.title, candidate.title)
@@ -347,11 +368,11 @@ SKOR REHBERİ:
           score: finalScore,
           aiReason: aiReason.slice(0, 120),
         },
-        "Kural 14 backstop: 'eksik bilgi' reddi geri çevrildi",
+        "Kural 14 backstop: 'eksik bilgi'/'fiyat' reddi geri çevrildi",
       );
       finalIsMatch = true;
       finalScore = MIN_MATCH_SCORE;
-      parsed.reason = "Marka+model aynı; eksik bilgi fark sayılmaz (Kural 14 düzeltmesi)";
+      parsed.reason = "Marka+model aynı; eksik bilgi veya fiyat farkı ürün farkı sayılmaz";
     }
 
     // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)

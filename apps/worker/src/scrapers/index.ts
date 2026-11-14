@@ -4,6 +4,7 @@ import type { Page } from "puppeteer";
 import { logger } from "../utils/logger";
 import { getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
 import { getProxyConfig } from "../utils/proxy";
+import { cleanProductTitle } from "../utils/search-queries";
 import { assertPublicHttpUrl, UnsafeUrlError } from "../utils/url-guard";
 import { isGenericStoreMarketplace } from "../shared";
 import { parseAvailability } from "../utils/availability";
@@ -32,6 +33,11 @@ export interface ScrapedProduct {
   reviewCount?: number;
   metadata?: Record<string, unknown>;
   otherSellers?: ScrapedOtherSeller[];
+  /**
+   * Sayfa sağlıklı yüklendi ama satın alınabilir bir teklif YOK (stokta yok /
+   * öne çıkan teklif yok). price 0 gelir; tarama hatası değil, stok durumudur.
+   */
+  unavailable?: boolean;
 }
 
 export interface ScraperConfig {
@@ -62,6 +68,13 @@ export class ScraperError extends Error {
     this.retryable = options.retryable ?? true;
     this.softFail = options.softFail ?? false;
   }
+}
+
+/** Sayfa sağlıklı ama satın alınabilir teklif yok — hata değil, stok durumu. */
+export const PRODUCT_UNAVAILABLE_CODE = "PRODUCT_UNAVAILABLE";
+
+export function isProductUnavailableError(error: unknown): boolean {
+  return error instanceof ScraperError && error.code === PRODUCT_UNAVAILABLE_CODE;
 }
 
 export function createUnsupportedMarketplaceError(marketplace: string): ScraperError {
@@ -305,6 +318,40 @@ export async function releasePage(page: Page): Promise<void> {
   }
 }
 
+/** Puppeteer errors caused by the page navigating while we were reading it. */
+export function isNavigationRaceError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /Execution context was destroyed|Cannot find context with specified id|detached Frame|frame got detached/i.test(
+    msg,
+  );
+}
+
+/**
+ * page.content() that survives a navigation happening mid-read. Bot-protection
+ * interstitials (Cloudflare) and geo redirects reload the page a few seconds
+ * after domcontentloaded; reading the DOM at that instant throws "Execution
+ * context was destroyed" — in prod this was the #1 reason the Trendyol
+ * Puppeteer fallback failed although the page itself was reachable.
+ */
+export async function readPageHtml(
+  page: Pick<Page, "content">,
+  options: { attempts?: number; waitMs?: number } = {},
+): Promise<string> {
+  const attempts = options.attempts ?? 4;
+  const waitMs = options.waitMs ?? 1500;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await page.content();
+    } catch (error) {
+      lastError = error;
+      if (!isNavigationRaceError(error) || attempt === attempts) throw error;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+  throw lastError;
+}
+
 /**
  * Apply proxy credentials to a freshly created page when the proxy needs auth.
  * No-op when no proxy or no credentials are configured. Must run before goto().
@@ -369,7 +416,7 @@ async function scrapeWithPuppeteer(
     // Wait a bit for JS to render product data
     await new Promise((r) => setTimeout(r, 3000));
 
-    const html = await page.content();
+    const html = await readPageHtml(page);
     const finalUrl = page.url() || null;
     const title = await page.title().catch(() => null);
     return { html, finalUrl, title };
@@ -690,6 +737,10 @@ export async function scrapeTrendyol(
         // DNS çözülmüyorsa (Railway'de public.trendyol.com ENOTFOUND) retry
         // boşuna — 2-4 sn bekleyip aynı hatayı almak yerine HTML yoluna geç.
         if (errCode === "ENOTFOUND") break;
+        // 401/403 = bot duvarı. Aynı IP'den hemen tekrar denemek sonucu
+        // değiştirmiyor (prod: her üründe 2 API + 3 HTML denemesi 403, ~15 sn
+        // boşa) — doğrudan sıradaki yönteme geç.
+        if (/HTTP 40[13]\b/.test(errMsg)) break;
         if (attempt < apiRetries) {
           await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
         }
@@ -860,6 +911,9 @@ export async function scrapeTrendyol(
       const errCode = e?.code || cause?.code || "unknown";
       const errMsg = (e?.message || cause?.message || "no-message").slice(0, 150);
       logger.warn(`Trendyol HTML fetch threw attempt=${attempt}: code=${errCode} msg="${errMsg}"`);
+      // İkinci 403'ten sonra üçüncüyü deneme: Cloudflare bu IP'yi engelliyor,
+      // bekleyip yeniden denemek yalnızca süre harcıyor — Puppeteer'a geç.
+      if (/HTTP 40[13]\b/.test(errMsg) && attempt >= 2) break;
       if (attempt < htmlRetries) {
         await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
       }
@@ -930,7 +984,7 @@ export async function scrapeTrendyol(
           timeout: config.timeout || 30000,
         });
         await new Promise((r) => setTimeout(r, 3000));
-        pageHtml = await page.content();
+        pageHtml = await readPageHtml(page);
         puppeteerFinalUrl = page.url();
 
         // Coğrafi yönlendirme uluslararası bir vitrine düşürdüyse (TL fiyat
@@ -958,7 +1012,7 @@ export async function scrapeTrendyol(
             timeout: config.timeout || 30000,
           });
           await new Promise((r) => setTimeout(r, 3000));
-          pageHtml = await page.content();
+          pageHtml = await readPageHtml(page);
           puppeteerFinalUrl = page.url();
         }
         // Hâlâ uluslararası vitrindeysek sayfayı AYRIŞTIRMA — EUR/RON vb.
@@ -1096,6 +1150,16 @@ async function scrapeWithFallback(
       );
       return product;
     }
+    if (product?.unavailable) {
+      // Sayfa düzgün yüklendi ve "satın alınamıyor" diyor: Puppeteer aynı
+      // sonucu verir. Hata saymak yerine stok durumu olarak bildir.
+      logger.info(`${marketplaceName} [${urlTail}]: ürün şu an satın alınamıyor (teklif yok)`);
+      throw new ScraperError(`${marketplaceName} ürünü şu an satın alınamıyor`, {
+        code: PRODUCT_UNAVAILABLE_CODE,
+        retryable: false,
+        softFail: true,
+      });
+    }
     htmlFailSummary = challenge
       ? `challenge=${challenge},len=${html.length}`
       : `parse-fail,len=${html.length}`;
@@ -1104,6 +1168,7 @@ async function scrapeWithFallback(
         `parsed=${product ? `name=${!!product.name},price=${product.price}` : "null"} — trying Puppeteer`,
     );
   } catch (error) {
+    if (isProductUnavailableError(error)) throw error;
     htmlFailSummary = errorMessage(error).slice(0, 80);
     logger.warn(`${marketplaceName} HTML fetch failed: ${errorMessage(error)}, trying Puppeteer`);
   }
@@ -1133,10 +1198,18 @@ async function scrapeWithFallback(
       );
       return product;
     }
+    if (product?.unavailable) {
+      throw new ScraperError(`${marketplaceName} ürünü şu an satın alınamıyor`, {
+        code: PRODUCT_UNAVAILABLE_CODE,
+        retryable: false,
+        softFail: true,
+      });
+    }
     puppeteerFailSummary = challenge
       ? `challenge=${challenge},len=${html.length}`
       : `parse-fail,len=${html.length},finalUrl=${finalUrl?.slice(0, 80) ?? "none"}`;
   } catch (error) {
+    if (isProductUnavailableError(error)) throw error;
     puppeteerFailSummary = errorMessage(error).slice(0, 100);
     logger.warn(`${marketplaceName} Puppeteer scrape failed: ${errorMessage(error)}`);
   }
@@ -1625,7 +1698,7 @@ export async function scrapeHepsiburada(
               "Hepsiburada Puppeteer: SSR/JSON-LD markers within 10s görülmedi, mevcut HTML ile devam ediliyor",
             );
           });
-        pageHtml = await page.content();
+        pageHtml = await readPageHtml(page);
         puppeteerFinalUrl = page.url();
         puppeteerContentLength = pageHtml.length;
         puppeteerHasJsonLd = pageHtml.includes("application/ld+json");
@@ -1781,11 +1854,24 @@ export function parseAmazonTRHtml(html: string): ScrapedProduct | null {
     !availabilityText.includes("mevcut değil") &&
     !availabilityText.includes("temin edilemiyor");
 
+  const finalPrice = parsedFromLd.price || htmlPrice;
+  // Satın alma kutusu boşsa bunun bir TARAMA HATASI mı yoksa gerçekten
+  // "satılmıyor" mu olduğunu yalnızca POZİTİF işaretler ayırır (prod:
+  // B0767DNSMH günde 4 kez "parse-fail" verip ürünü hata durumuna düşürüyordu,
+  // oysa sayfa sorunsuz yükleniyordu). İşaret yoksa eski davranış korunur —
+  // Amazon şablonu değişirse tüm ürünler yanlışlıkla "stokta yok" olmasın.
+  const hasNoOfferSignal =
+    $("#outOfStock").length > 0 ||
+    $("#buybox-see-all-buying-choices").length > 0 ||
+    /mevcut değil|temin edilemiyor|stokta yok|currently unavailable/.test(availabilityText);
+  const unavailable = !(finalPrice > 0) && Boolean(htmlName) && hasNoOfferSignal;
+
   const result: ScrapedProduct = {
     name: parsedFromLd.name || htmlName,
-    price: parsedFromLd.price || htmlPrice,
+    price: finalPrice,
     currency: parsedFromLd.currency || "TRY",
-    inStock: parsedFromLd.inStock ?? inStock,
+    inStock: unavailable ? false : (parsedFromLd.inStock ?? inStock),
+    ...(unavailable ? { unavailable: true } : {}),
     sellerName: parsedFromLd.sellerName || sellerName,
     imageUrl: parsedFromLd.imageUrl || imageUrl || undefined,
   };
@@ -2440,7 +2526,24 @@ async function scrapeIndependentStore(
 // SCRAPER FACTORY
 // ============================================
 
-export function getScraper(marketplace: string) {
+type ScraperFn = (url: string, config?: ScraperConfig) => Promise<ScrapedProduct>;
+
+/**
+ * Pazaryerine uygun scraper'ı döner. Dönen ürün adı pazaryeri SEO eklerinden
+ * ("… Fiyatları ve Özellikleri") arındırılır: ad hem ekranda görünür hem rakip
+ * aramasının ve AI eşleştirmesinin girdisidir.
+ */
+export function getScraper(marketplace: string): ScraperFn {
+  const scraper = selectScraper(marketplace);
+  return async (url, config) => {
+    const product = await scraper(url, config);
+    return typeof product.name === "string" && product.name
+      ? { ...product, name: cleanProductTitle(product.name) }
+      : product;
+  };
+}
+
+function selectScraper(marketplace: string): ScraperFn {
   if (isGenericStoreMarketplace(marketplace)) {
     // Bağımsız mağaza siteleri (satıcının kendi sitesi / bilinmeyen alan adı).
     return scrapeIndependentStore;

@@ -14,10 +14,58 @@ import { extractProductCodes } from "./competitor-quality";
 
 const RAW_TITLE_MAX_WORDS = 6;
 
+// Kısaltılmış sorgunun sonunda asılı kalan bağlaç/edat ve noktalama: "Oral-B
+// Şarjlı Vitality Pro Koruma ve" ya da "Artema Maestro A42146 Pull-Out Eviye
+// Bataryası," gibi sorgular Google Shopping'de gereksiz yere daralıyor.
+const DANGLING_TAIL_WORDS = new Set(["ve", "ile", "icin", "veya", "ya", "da", "de", "and", "with"]);
+
+function trimDanglingTail(words: string[]): string[] {
+  const out = [...words];
+  while (out.length > 1) {
+    const last = out[out.length - 1];
+    const bare = last.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+    if (bare.length === 0 || DANGLING_TAIL_WORDS.has(foldToken(bare))) {
+      out.pop();
+      continue;
+    }
+    // Sondaki virgül/tire/iki nokta kelimeden ayıklanır ("Bataryası," → "Bataryası").
+    out[out.length - 1] = last.replace(/[,;:\-–—|/]+$/u, "");
+    break;
+  }
+  return out;
+}
+
 export function truncateRawTitleForSearch(title: string): string {
   const words = title.trim().split(/\s+/);
-  if (words.length <= RAW_TITLE_MAX_WORDS + 1) return title.trim();
-  return words.slice(0, RAW_TITLE_MAX_WORDS).join(" ");
+  if (words.length <= RAW_TITLE_MAX_WORDS + 1) return trimDanglingTail(words).join(" ");
+  return trimDanglingTail(words.slice(0, RAW_TITLE_MAX_WORDS)).join(" ");
+}
+
+// Pazaryerlerinin sayfa başlığına eklediği SEO kalıpları. Ürün adına karışınca
+// hem arama sorgusunu hem AI eşleştirmesini bozuyor (prod: Hepsiburada "Oral-B
+// … Diş Fırçası Lila Fiyatları ve Özellikleri").
+const TITLE_SEO_SUFFIX_RE =
+  /\s*(?:[-–—|:]\s*)?(?:fiyat[ıi]?(?:lar[ıi])?(?:\s*(?:,|ve)\s*(?:özellikleri|yorumlar[ıi]|modelleri|taksit\s+seçenekleri))*|özellikleri\s+ve\s+fiyat[ıi]?|en\s+uygun\s+fiyat(?:lar)?(?:la)?|sat[ıi]n\s+al)\s*$/iu;
+const TITLE_MARKETPLACE_SUFFIX_RE =
+  /\s*[-–—|]\s*(?:trendyol|hepsiburada(?:\.com)?|amazon(?:\.com\.tr)?|n11(?:\.com)?|pazarama|teknosa|vatan\s+bilgisayar|mediamarkt|pttavm|ptt\s+avm|çiçeksepeti|ciceksepeti)\s*$/iu;
+
+/**
+ * Ürün başlığından pazaryeri SEO eklerini ayıklar. Her şey silinirse (başlık
+ * yalnızca ekten ibaretse) orijinali döndürür.
+ */
+export function cleanProductTitle(title: string): string {
+  const original = (title || "").trim();
+  let cleaned = original;
+  for (let i = 0; i < 3; i++) {
+    const next = cleaned
+      .replace(TITLE_MARKETPLACE_SUFFIX_RE, "")
+      .replace(TITLE_SEO_SUFFIX_RE, "")
+      .trim();
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+  cleaned = cleaned.replace(/[\s,;:\-–—|]+$/u, "").trim();
+  return cleaned.length >= 3 ? cleaned : original;
 }
 
 /**
@@ -202,7 +250,7 @@ export function buildSearchQueries(
   fallbackTitle: string,
   metadata: unknown,
 ): string[] {
-  const liveName = (productName || fallbackTitle || "").trim();
+  const liveName = cleanProductTitle(productName || fallbackTitle || "");
   // Pazarlama/lojistik gürültüsü ayıklanmış ad: hem birincil sorgunun 6 kelimelik
   // bütçesi marka/model'e harcanır hem de marka çıkarımı gürültüye takılmaz.
   const cleanName = stripSearchNoise(liveName);
@@ -245,6 +293,15 @@ export function buildSearchQueries(
   for (const kw of extractSearchKeywords(metadata)) {
     const shares = liveTokens.size === 0 || meaningfulTokens(kw).some((t) => liveTokens.has(t));
     if (shares) push(kw);
+  }
+
+  // 3) Yedek geniş sorgu: model kodu ve AI keyword'ü olmayan ürünlerde tek bir
+  //    6 kelimelik sorgu kalıyordu (prod: Oral-B, Siveno, icollagen — birincil
+  //    arama tutmayınca deneyecek ikinci sorgu yoktu). Adın ilk 4 kelimesi
+  //    (marka + ürün ailesi) daha geniş bir ikinci şans verir.
+  if (queries.length < 2) {
+    const words = cleanName.split(/\s+/).filter(Boolean);
+    if (words.length > 4) push(words.slice(0, 4).join(" "));
   }
 
   return queries.slice(0, 3);

@@ -4,10 +4,10 @@ import { prisma } from "../db";
 import { searchProduct, extractRetailer, parsePrice } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { buildSearchQueries } from "../utils/search-queries";
-import { getScraper } from "../scrapers";
+import { getScraper, isProductUnavailableError } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { maybeEnqueueAlerts } from "./processor";
-import { urlMatchKey } from "../utils/url-match";
+import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 
 interface RefreshUrlJobData {
@@ -196,7 +196,18 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       // PriceHistory'nin son kaydı kullanıcıya "son başarılı güncelleme"
       // olarak gösterilir — sahte satır, bayat fiyatı taze gibi gösterir ve
       // grafikte gerçek olmayan veri noktaları oluşturur.
-      console.error(`⚠️ Source scrape hatası: ${productUrl}`, sourceError);
+      if (isProductUnavailableError(sourceError)) {
+        // Sayfa sağlıklı, ürün satın alınamıyor: hata değil stok durumu. Son
+        // bilinen fiyat korunur; Serper'dan "fiyat kurtarma" da denenmez.
+        await prisma.trackedProduct.updateMany({
+          where: { id: { in: siblingIds } },
+          data: { status: "OUT_OF_STOCK", lastScrapedAt: now },
+        });
+        sourcePriceResolved = true;
+        console.log(`ℹ️ Ürün şu an satın alınamıyor (stokta yok sayıldı): ${productUrl}`);
+      } else {
+        console.error(`⚠️ Source scrape hatası: ${productUrl}`, sourceError);
+      }
     }
 
     // 5. Tüm siblings'in bilinen competitor URL'lerini topla (URL → [competitor records])
@@ -212,14 +223,18 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
 
     for (const sibling of siblings) {
       for (const c of sibling.competitors) {
-        const list = competitorByUrl.get(c.competitorUrl) ?? [];
+        // Anahtar: izleme parametrelerinden arındırılmış URL. Google Shopping
+        // bağlantılara her aramada farklı izleme parametresi ekleyebiliyor; ham
+        // URL karşılaştırması kayıtlı rakibin fiyat güncellemesini kaçırıyordu.
+        const urlKey = competitorUrlKey(c.competitorUrl);
+        const list = competitorByUrl.get(urlKey) ?? [];
         list.push({
           id: c.id,
           trackedProductId: sibling.id,
           competitorUrl: c.competitorUrl,
           competitorName: c.competitorName,
         });
-        competitorByUrl.set(c.competitorUrl, list);
+        competitorByUrl.set(urlKey, list);
       }
     }
 
@@ -326,7 +341,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     }> = [];
 
     for (const result of serperResults) {
-      const matchingCompetitors = competitorByUrl.get(result.link);
+      const matchingCompetitors = competitorByUrl.get(competitorUrlKey(result.link));
       if (!matchingCompetitors || matchingCompetitors.length === 0) continue;
 
       const price = parsePrice(result.price);
