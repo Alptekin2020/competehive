@@ -17,6 +17,10 @@
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { runCompetitorDiscovery } from "./competitor-processor";
+import { getDiscoveryLastRuns, pickDueForDiscovery } from "../utils/discovery-schedule";
+
+// Tek turda saat kontrolü yapılacak en fazla ürün (Redis okuma sayısını sınırlar).
+const MAX_DISCOVERY_CANDIDATES = 500;
 
 // Bu süreden daha eski "tamamlanmış" ürünler yeniden taranır. Görüntüleme
 // tarafının 72 saatlik bayatlık eşiğinin altında tutuyoruz ki rakipler "Eski"ye
@@ -61,22 +65,28 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
   const maxRunMs = options.maxRunMs ?? 8 * 60 * 1000;
   const now = options.now ?? new Date();
   const startedAt = Date.now();
-  const cutoff = new Date(now.getTime() - refreshAfterHours * 60 * 60 * 1000);
-
-  // En uzun süredir taranmamış (veya hiç taranmamış) ürünler önce. Plan kapısı:
-  // süresi dolmuş ücretli planların ürünleri için Serper maliyeti üretme.
-  const products = await prisma.trackedProduct.findMany({
+  // Keşfin KENDİ saati (Redis): refreshCompletedAt'i 6 saatlik fiyat turu da
+  // yazdığı için ona bakmak keşfi aç bırakıyordu (bkz. utils/discovery-schedule).
+  // Plan kapısı: süresi dolmuş ücretli planların ürünleri için Serper maliyeti üretme.
+  const activeProducts = await prisma.trackedProduct.findMany({
     where: {
       status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
       user: {
         OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: now } }],
       },
-      OR: [{ refreshCompletedAt: null }, { refreshCompletedAt: { lt: cutoff } }],
     },
     orderBy: { refreshCompletedAt: { sort: "asc", nulls: "first" } },
-    take: batchSize,
+    take: MAX_DISCOVERY_CANDIDATES,
     select: { id: true, productName: true, productUrl: true },
   });
+  const lastRuns = await getDiscoveryLastRuns(activeProducts.map((p) => p.id));
+  const products = pickDueForDiscovery(
+    activeProducts,
+    lastRuns,
+    now.getTime(),
+    batchSize,
+    refreshAfterHours * 60 * 60 * 1000,
+  );
 
   const stats: CompetitorRefreshStats = {
     candidates: products.length,
