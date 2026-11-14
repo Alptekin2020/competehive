@@ -21,6 +21,7 @@ const NAV_ITEMS = [
 // Yalnızca yöneticilere gösterilir (/api/user/features → isAdmin).
 const ADMIN_NAV_ITEMS = [
   { href: "/dashboard/admin/store-checks", label: "Site Talepleri", icon: "globe" },
+  { href: "/dashboard/admin/payments", label: "Ödeme Ayarları", icon: "card" },
 ];
 
 function NavIcon({ name, className }: { name: string; className?: string }) {
@@ -148,6 +149,21 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
           <circle cx="12" cy="12" r="10" />
           <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+      );
+    case "card":
+      return (
+        <svg
+          className={c}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="2" y="5" width="20" height="14" rx="2" />
+          <line x1="2" y1="10" x2="22" y2="10" />
         </svg>
       );
     default:

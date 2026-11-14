@@ -10,6 +10,7 @@ import {
   parseWhopTimestamp,
   verifyWhopSignature,
 } from "@/lib/whop-webhook";
+import { recordWebhookReceipt } from "@/lib/whop-webhook-log";
 
 export const runtime = "nodejs";
 
@@ -188,6 +189,9 @@ export async function POST(request: Request) {
         " hasSig=" +
         Boolean(sigHeader),
     );
+    // Yalnızca başlıkları tam ama imzası tutmayan istekler secret uyuşmazlığı
+    // sinyalidir; başlıksız bot/tarama istekleri (missing-input) kaydedilmez.
+    if (scheme === "no-match") await recordWebhookReceipt("fail");
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
@@ -208,6 +212,7 @@ export async function POST(request: Request) {
   const type = event.type || "";
   const data = event.data || {};
   console.log("[whop] verified type=" + type + " scheme=" + scheme);
+  await recordWebhookReceipt("ok", type);
 
   if (await isDuplicateEvent(event.id)) {
     console.log("[whop] duplicate delivery skipped event=" + String(event.id) + " type=" + type);
