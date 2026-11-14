@@ -20,6 +20,7 @@ import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { buildSearchQueries } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
+import { markDiscoveryRun } from "../utils/discovery-schedule";
 import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 
 export { buildZeroReason };
@@ -193,6 +194,8 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     if (queries.length === 0) {
       console.warn(`⚠️ Geçerli arama sorgusu üretilemedi: ${productId}`);
+      // Aranacak bir şey yok: her turda yeniden denenip sırayı tıkamasın.
+      await markDiscoveryRun(productId);
       await updateTrackedProductRefresh(productId, {
         refreshStatus: "completed",
         refreshCompletedAt: new Date(),
@@ -560,6 +563,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       });
       return { found: 0, searchFailed: true };
     }
+
+    // Arama gerçekten yapıldı (servis hatası değil): keşif saatini ilerlet.
+    await markDiscoveryRun(productId);
 
     if (seenUrls.size === 0) {
       console.log(`⚠️ Sonuç bulunamadı: ${title}`);
