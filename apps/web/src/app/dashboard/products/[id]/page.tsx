@@ -11,6 +11,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -32,6 +33,18 @@ import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
+import { computeNextCheckAt, formatNextCheck, type PriceEvent } from "@/lib/product-insights";
+
+// Grafik olay işaretlerinin rengi ve kısa etiketi.
+const EVENT_STYLE: Record<PriceEvent["kind"], { color: string; short: string }> = {
+  "own-price-change": { color: "#F59E0B", short: "Siz" },
+  "competitor-added": { color: "#60A5FA", short: "Yeni rakip" },
+  "competitor-out-of-stock": { color: "#F472B6", short: "Stok bitti" },
+};
+
+function chartDayLabel(value: string): string {
+  return new Date(value).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
+}
 
 interface PriceHistoryEntry {
   id: string;
@@ -58,6 +71,9 @@ interface CompetitorEntry {
   lastScrapedAt: string | null;
   matchScore: number | null;
   matchReason: string | null;
+  createdAt?: string;
+  // Son taramadaki stok durumu (bilinmiyorsa null).
+  inStock?: boolean | null;
 }
 
 interface ProductData {
@@ -75,6 +91,8 @@ interface ProductData {
   refreshCompletedAt: string | null;
   refreshError: string | null;
   lastScrapedAt: string | null;
+  scrapeInterval?: number;
+  events?: PriceEvent[];
   priceHistory: PriceHistoryEntry[];
   competitors: CompetitorEntry[];
 }
@@ -217,10 +235,10 @@ function MatchScoreBadge({ score }: { score: number | null }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}
-      title={`Eşleşme güveni: %${score}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${colorClass}`}
+      title={`Bu ilanın sizin ürününüzle aynı ürün olma ihtimali: %${score}. %${MIN_MATCH_SCORE} altındaki rakipler hesaplara girmez.`}
     >
-      <span className="text-[10px]">🎯</span>%{score}
+      Eşleşme %{score}
     </span>
   );
 }
@@ -652,6 +670,21 @@ export default function ProductDetailPage() {
     ? priceHistory.filter((entry) => new Date(entry.scrapedAt) >= rangeStart)
     : priceHistory;
   const chartData = prepareChartData(filteredHistory);
+  // Grafikte görünen günlere düşen olaylar; aynı güne düşenler tek çizgide toplanır.
+  const chartDays = new Set(chartData.map((point) => point.date));
+  const visibleEvents = (product.events ?? []).filter(
+    (event) =>
+      (!rangeStart || new Date(event.at) >= rangeStart) && chartDays.has(chartDayLabel(event.at)),
+  );
+  const eventMarkers = [
+    ...new Map(visibleEvents.map((event) => [chartDayLabel(event.at), event])).values(),
+  ];
+  const nextCheckAt = computeNextCheckAt(
+    product.lastScrapedAt,
+    product.scrapeInterval,
+    product.status,
+    now,
+  );
   // Satıcı bazlı çizgiler yalnızca rakipler içindir; kendi fiyat "Benim Fiyatım" çizgisidir.
   const retailers = [
     ...new Set(filteredHistory.filter((h) => !h.isOwn).map((h) => competitorSeriesName(h))),
@@ -1170,6 +1203,9 @@ export default function ProductDetailPage() {
               >
                 {qualityLabel}
               </span>
+              <span className="block mt-2 text-xs text-gray-400">
+                Sonraki kontrol: {formatNextCheck(nextCheckAt, now)}
+              </span>
             </li>
           </ul>
         </div>
@@ -1487,6 +1523,21 @@ export default function ProductDetailPage() {
                         connectNulls
                       />
                     ))}
+                    {eventMarkers.map((event) => (
+                      <ReferenceLine
+                        key={`${event.kind}-${event.at}`}
+                        x={chartDayLabel(event.at)}
+                        stroke={EVENT_STYLE[event.kind].color}
+                        strokeDasharray="3 3"
+                        strokeOpacity={0.7}
+                        label={{
+                          value: EVENT_STYLE[event.kind].short,
+                          position: "insideTopLeft",
+                          fill: EVENT_STYLE[event.kind].color,
+                          fontSize: 10,
+                        }}
+                      />
+                    ))}
                     <Line
                       type="monotone"
                       dataKey="ownPriceLine"
@@ -1519,6 +1570,32 @@ export default function ProductDetailPage() {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+              {visibleEvents.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-[#1F1F23]">
+                  <h3 className="text-sm font-semibold text-white mb-2">Bu dönemde neler oldu?</h3>
+                  <ul className="space-y-1.5">
+                    {[...visibleEvents]
+                      .reverse()
+                      .slice(0, 8)
+                      .map((event) => (
+                        <li
+                          key={`${event.kind}-${event.at}-${event.label}`}
+                          className="flex items-center gap-2.5 text-xs"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="h-2 w-2 rounded-full shrink-0"
+                            style={{ backgroundColor: EVENT_STYLE[event.kind].color }}
+                          />
+                          <span className="text-gray-400 w-12 shrink-0">
+                            {chartDayLabel(event.at)}
+                          </span>
+                          <span className="text-gray-200">{event.label}</span>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1679,6 +1756,14 @@ export default function ProductDetailPage() {
                             );
                           })()}
                           <MatchScoreBadge score={competitor.matchScore} />
+                          {competitor.inStock === false && (
+                            <span
+                              className="text-[11px] text-pink-300 bg-pink-500/10 border border-pink-500/25 px-1.5 py-0.5 rounded"
+                              title="Son taramada bu rakibin stoğu yoktu — talep size kayabilir"
+                            >
+                              Stok yok
+                            </span>
+                          )}
                           {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
                             "out-of-band",
                           ) && (
@@ -1715,11 +1800,25 @@ export default function ProductDetailPage() {
                         </a>
                         {competitor.matchReason && (
                           <p
-                            className="text-xs text-gray-600 mt-0.5 truncate"
+                            className="text-xs text-gray-500 mt-0.5 truncate"
                             title={competitor.matchReason}
                           >
                             {competitor.matchReason}
                           </p>
+                        )}
+                        {/* Eşleşmesi kesin olmayan rakiplerde kullanıcı hatalı
+                            eşleşmeyi tek tıkla ayıklayabilsin. */}
+                        {(competitor.matchScore === null || competitor.matchScore < 90) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCompetitorDeleteError(null);
+                              setCompetitorDeleteId(competitor.id);
+                            }}
+                            className="mt-1 text-xs font-medium text-gray-400 hover:text-rose-300 underline underline-offset-2 decoration-dotted transition"
+                          >
+                            Bu aynı ürün değil
+                          </button>
                         )}
                       </div>
                       <div className="text-right flex-shrink-0">
@@ -1809,8 +1908,8 @@ export default function ProductDetailPage() {
                           setCompetitorDeleteId(competitor.id);
                         }}
                         className="p-1.5 text-gray-600 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition flex-shrink-0"
-                        title="Bu rakibi listeden kaldır (yanlış eşleşme için)"
-                        aria-label="Rakibi kaldır"
+                        title="Bu aynı ürün değil — rakibi listeden kaldır"
+                        aria-label="Bu aynı ürün değil, rakibi kaldır"
                       >
                         <svg
                           className="w-3.5 h-3.5"

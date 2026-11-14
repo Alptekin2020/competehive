@@ -1,14 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StatCardSkeleton } from "@/components/Skeleton";
 import EmptyState from "@/components/EmptyState";
-import { PlanUsageCard } from "@/components/PlanUsageCard";
 import PriceTrend from "@/components/PriceTrend";
-import { getMarketplaceInfo } from "@competehive/shared";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import MaintenanceNotice from "@/components/MaintenanceNotice";
+import DetailedReports from "@/components/dashboard/DetailedReports";
+import {
+  MarketPositionCard,
+  OnboardingGuide,
+  OpportunityList,
+  TodoCards,
+  type GuideStep,
+  type TodoItem,
+} from "@/components/dashboard/OverviewCards";
+import {
+  computeProductInsight,
+  findOpportunity,
+  formatTimeAgo,
+  toInsightInput,
+  type ApiProductLike,
+  type MarketPosition,
+  type Opportunity,
+} from "@/lib/product-insights";
 
 interface Stats {
   trackedProducts: number;
@@ -28,122 +44,49 @@ interface Mover {
   updatedAt: string;
 }
 
-interface DashboardProduct {
-  id: string;
-  product_name: string;
+interface DashboardProduct extends ApiProductLike {
   marketplace: string;
-  current_price: string | null;
-  last_scraped_at: string | null;
-  // Son BAŞARILI tarama — tazelik rozetleri bunu kullanır (last_scraped_at
-  // başarısız denemede de ilerlediği için bayat veriyi taze gösterebilir).
-  last_success_at?: string | null;
-  status?: string;
   competitorCount?: number;
-  competitors?: { current_price: string | null }[];
-  trend?: {
-    priceChange: number | null;
-  } | null;
 }
 
-type ReportingRange = "today" | "7d" | "30d";
+const MAX_OPPORTUNITIES = 5;
 
-interface ReportingSnapshot {
-  priceChangesDetected: number;
-  productsWithMovement: number;
-  staleProducts: number;
-  competitorPressureSignals: number;
-}
-
-interface ReportingData {
-  periods: {
-    today: ReportingSnapshot;
-    "7d": ReportingSnapshot;
-    "30d": ReportingSnapshot;
+function StatIcon({ name }: { name: "box" | "pulse" | "trophy" | "inbox" }) {
+  const paths: Record<typeof name, React.ReactNode> = {
+    box: (
+      <>
+        <path d="M21 16V8l-9-5-9 5v8l9 5z" />
+        <path d="M3.3 7L12 12l8.7-5M12 22V12" />
+      </>
+    ),
+    pulse: <polyline points="3 12 7 12 10 5 14 19 17 12 21 12" />,
+    trophy: (
+      <>
+        <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0z" />
+        <path d="M17 6h3a3 3 0 01-3 4M7 6H4a3 3 0 003 4" />
+      </>
+    ),
+    inbox: (
+      <>
+        <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+        <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+      </>
+    ),
   };
-  executive: {
-    mostMoving: Array<{
-      productId: string;
-      productName: string;
-      marketplace: string;
-      movementCount: number;
-      absoluteMovePct: number;
-    }>;
-    mostPressure: Array<{
-      productId: string;
-      productName: string;
-      marketplace: string;
-      cheaperCount: number;
-      gapPct: number;
-    }>;
-    dataIssues: Array<{
-      productId: string;
-      productName: string;
-      marketplace: string;
-      stale: boolean;
-      missingPrice: boolean;
-      hasError: boolean;
-    }>;
-    mostAlerts: Array<{
-      productId: string;
-      productName: string;
-      marketplace: string;
-      alertCount: number;
-    }>;
-  };
-  filters: {
-    marketplaces: string[];
-    tags: Array<{ id: string; name: string; color: string }>;
-  };
-}
-
-const STALE_HOURS = 24;
-
-function formatRelativeTime(date: Date) {
-  const now = Date.now();
-  const diffMs = now - date.getTime();
-
-  if (Number.isNaN(diffMs) || diffMs < 0) return null;
-
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-
-  if (diffMs < minute) return "az önce";
-
-  const minutes = Math.floor(diffMs / minute);
-  if (minutes < 60) return `${minutes} dk önce`;
-
-  const hours = Math.floor(diffMs / hour);
-  if (hours < 24) return `${hours} sa önce`;
-
-  const days = Math.floor(diffMs / day);
-  return `${days} gün önce`;
-}
-
-function isStale(lastScrapedAt: string | null): boolean {
-  if (!lastScrapedAt) return true;
-  const ts = new Date(lastScrapedAt).getTime();
-  if (Number.isNaN(ts)) return true;
-  return Date.now() - ts > STALE_HOURS * 60 * 60 * 1000;
-}
-
-function priceAgeBadge(lastScrapedAt: string | null): { className: string; label: string } | null {
-  if (!lastScrapedAt) return null;
-  const ts = new Date(lastScrapedAt).getTime();
-  if (Number.isNaN(ts)) return null;
-  const diffMs = Date.now() - ts;
-  if (diffMs < 24 * 60 * 60 * 1000) return null;
-  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
-  if (diffMs <= 72 * 60 * 60 * 1000) {
-    return {
-      className: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-      label: `Güncellenmedi: ${days} gün önce`,
-    };
-  }
-  return {
-    className: "text-red-400 bg-red-500/10 border-red-500/30",
-    label: `Eski veri: ${days} gün önce`,
-  };
+  return (
+    <svg
+      aria-hidden="true"
+      className="w-5 h-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {paths[name]}
+    </svg>
+  );
 }
 
 export default function DashboardPage() {
@@ -151,29 +94,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [movers, setMovers] = useState<Mover[]>([]);
   const [products, setProducts] = useState<DashboardProduct[]>([]);
-  const [reporting, setReporting] = useState<ReportingData | null>(null);
-  const [reportingLoading, setReportingLoading] = useState(true);
-  const [reportingRange, setReportingRange] = useState<ReportingRange>("7d");
-  const [selectedMarketplace, setSelectedMarketplace] = useState("ALL");
-  const [selectedTagId, setSelectedTagId] = useState("ALL");
-
-  const fetchReporting = useCallback(async () => {
-    setReportingLoading(true);
-    const params = new URLSearchParams({
-      range: reportingRange,
-      marketplace: selectedMarketplace,
-      tagId: selectedTagId,
-    });
-    try {
-      const response = await fetch(`/api/dashboard/reporting?${params}`);
-      const data = await response.json();
-      if (!data.error) setReporting(data);
-    } catch {
-      // no-op
-    } finally {
-      setReportingLoading(false);
-    }
-  }, [reportingRange, selectedMarketplace, selectedTagId]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  // Rapor verisi yalnızca bölüm açıldığında çekilir.
+  const [reportsOpen, setReportsOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/dashboard/stats")
@@ -181,7 +104,7 @@ export default function DashboardPage() {
       .then((data) => {
         if (!data.error) setStats(data);
       })
-      .catch(console.error)
+      .catch((error) => console.error("Dashboard stats fetch failed", error))
       .finally(() => setLoading(false));
 
     fetch("/api/dashboard/movers")
@@ -189,244 +112,228 @@ export default function DashboardPage() {
       .then((data) => {
         if (data.movers) setMovers(data.movers);
       })
-      .catch(() => {});
+      .catch((error) => console.error("Dashboard movers fetch failed", error));
 
     fetch("/api/products")
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data.products)) setProducts(data.products);
       })
-      .catch(() => {});
+      .catch((error) => console.error("Dashboard products fetch failed", error))
+      .finally(() => setProductsLoaded(true));
   }, []);
 
-  useEffect(() => {
-    fetchReporting();
-  }, [fetchReporting]);
-
-  const latestMoverUpdate = useMemo(() => {
-    if (!movers.length) return null;
-
-    const timestamps = movers
-      .map((mover) => new Date(mover.updatedAt))
-      .filter((date) => !Number.isNaN(date.getTime()));
-
-    if (!timestamps.length) return null;
-
-    const latest = new Date(Math.max(...timestamps.map((date) => date.getTime())));
-    const relative = formatRelativeTime(latest);
-
-    if (!relative) return null;
-
-    return {
-      relative,
-      exact: latest.toLocaleString("tr-TR", {
-        dateStyle: "short",
-        timeStyle: "short",
-      }),
+  // Her ürün için pazar konumu, tazelik, marj ve fırsat — tek geçişte.
+  const analysis = useMemo(() => {
+    const now = new Date();
+    const counts: Record<MarketPosition, number> = {
+      cheapest: 0,
+      middle: 0,
+      "most-expensive": 0,
+      "no-data": 0,
     };
-  }, [movers]);
+    let cheaperCompetitor = 0;
+    let stale = 0;
+    let noCompetitor = 0;
+    let loss = 0;
+    let lastSuccess: Date | null = null;
+    const opportunities: Opportunity[] = [];
 
-  const actionGroups = useMemo(() => {
-    const withMeta = products.map((product) => {
-      const competitorCount = product.competitorCount ?? product.competitors?.length ?? 0;
-      const hasPriceChange = Boolean(product.trend && product.trend.priceChange);
-      const hasCriticalIssue = product.status === "ERROR" || !product.current_price;
-      return {
-        ...product,
-        competitorCount,
-        isStale: isStale(product.last_success_at ?? null),
-        hasPriceChange,
-        hasCriticalIssue,
-      };
-    });
+    for (const product of products) {
+      const input = toInsightInput(product);
+      const insight = computeProductInsight(input, now);
+      counts[insight.position] += 1;
+      if (insight.cheaperCount > 0) cheaperCompetitor += 1;
+      if (insight.isStale && !insight.neverScraped && product.status !== "PAUSED") stale += 1;
+      if ((product.competitorCount ?? product.competitors?.length ?? 0) === 0) noCompetitor += 1;
+      if (insight.margin?.band === "loss") loss += 1;
+      if (product.last_success_at) {
+        const at = new Date(product.last_success_at);
+        if (!lastSuccess || at > lastSuccess) lastSuccess = at;
+      }
+      const op = findOpportunity(input, insight);
+      if (op) opportunities.push(op);
+    }
 
-    return [
+    opportunities.sort((a, b) => b.weight - a.weight);
+    return {
+      counts,
+      cheaperCompetitor,
+      stale,
+      noCompetitor,
+      loss,
+      lastSuccess,
+      opportunities: opportunities.slice(0, MAX_OPPORTUNITIES),
+      hasCompetitors: products.some((p) => (p.competitorCount ?? p.competitors?.length ?? 0) > 0),
+    };
+  }, [products]);
+
+  const todos = useMemo<TodoItem[]>(() => {
+    const items: TodoItem[] = [
       {
-        key: "rakipsiz",
-        title: "Rakipsiz ürünler",
-        subtitle: "Yeni rakip taraması başlatın",
-        items: withMeta.filter((product) => product.competitorCount === 0).slice(0, 4),
+        key: "loss",
+        count: analysis.loss,
+        title: "Zararına satılan ürün",
+        description: "Satış fiyatı girdiğiniz maliyetin altında kalıyor.",
+        cta: "Ürünleri gör",
+        href: "/dashboard/products?filter=LOSS",
+        tone: "rose",
+      },
+      {
+        key: "cheaper",
+        count: analysis.cheaperCompetitor,
+        title: "Rakip sizden ucuz",
+        description: "En az bir rakip fiyatınızın altında satıyor.",
+        cta: "Ürünleri gör",
+        href: "/dashboard/products?filter=CHEAPER_COMPETITOR",
+        tone: "orange",
       },
       {
         key: "stale",
-        title: "Verisi eski ürünler",
-        subtitle: `Son ${STALE_HOURS} saatte güncellenmeyenler`,
-        items: withMeta.filter((product) => product.isStale).slice(0, 4),
+        count: analysis.stale,
+        title: "Verisi eski ürün",
+        description: "Son 24 saatte fiyatı güncellenemedi.",
+        cta: "Yenile",
+        href: "/dashboard/products?filter=STALE",
+        tone: "amber",
       },
       {
-        key: "changes",
-        title: "Yeni fiyat değişimi",
-        subtitle: "Hızlı aksiyon için son hareketler",
-        items: withMeta.filter((product) => product.hasPriceChange).slice(0, 4),
-      },
-      {
-        key: "issues",
-        title: "Eksik / hatalı veri",
-        subtitle: "İnceleme gerektiren kayıtlar",
-        items: withMeta.filter((product) => product.hasCriticalIssue).slice(0, 4),
+        key: "no-competitor",
+        count: analysis.noCompetitor,
+        title: "Rakibi olmayan ürün",
+        description: "Rakip eklerseniz fiyat önerisi alırsınız.",
+        cta: "Rakip bul",
+        href: "/dashboard/products?filter=NO_COMPETITOR",
+        tone: "blue",
       },
     ];
-  }, [products]);
+    return items.filter((item) => item.count > 0);
+  }, [analysis]);
 
-  const onboardingChecklist = useMemo(() => {
-    const hasFirstProduct = (stats?.trackedProducts ?? 0) > 0;
-    const hasCompetitorScan = products.some(
-      (product) => (product.competitorCount ?? product.competitors?.length ?? 0) > 0,
-    );
-    const hasFirstAlert = (stats?.activeAlerts ?? 0) > 0;
-    const reviewedNotifications = (stats?.unreadNotifications ?? 0) === 0;
-    const hasPriceMovement =
-      movers.length > 0 ||
-      products.some((product) => Boolean(product.trend && product.trend.priceChange));
-
-    return [
+  const guideSteps = useMemo<GuideStep[]>(
+    () => [
       {
-        key: "first-product",
-        title: "İlk ürünü ekle",
-        description: "Takibin başlangıcı için en az 1 ürün ekleyin.",
-        done: hasFirstProduct,
-        href: "/dashboard/products",
+        key: "add",
+        title: "Ürün ekle",
+        description: "Pazaryeri veya kendi sitenizdeki ürün linkini yapıştırın.",
+        done: (stats?.trackedProducts ?? 0) > 0,
+        href: "/dashboard/products?add=1",
         cta: "Ürün ekle",
       },
       {
-        key: "scan-competitors",
-        title: "Rakipleri tara",
-        description: "En az bir ürün için rakip verisi çekin.",
-        done: hasCompetitorScan,
+        key: "competitors",
+        title: "Rakipleri gör",
+        description: "Rakipler otomatik bulunur; ürün detayından kontrol edin.",
+        done: analysis.hasCompetitors,
         href: "/dashboard/products",
-        cta: "Rakipleri gör",
+        cta: "Ürünlere git",
       },
       {
-        key: "first-alert",
-        title: "İlk uyarıyı oluştur",
-        description: "Kritik hareketleri kaçırmamak için alarm kurun.",
-        done: hasFirstAlert,
+        key: "alert",
+        title: "Uyarı kur",
+        description: "Rakip ucuzlayınca e-posta veya Telegram ile haber alın.",
+        done: (stats?.activeAlerts ?? 0) > 0,
         href: "/dashboard/alerts",
         cta: "Uyarı kur",
       },
-      {
-        key: "review-notifications",
-        title: "Bildirimleri gözden geçir",
-        description: "Gelenleri okuyup akışı temiz tutun.",
-        done: reviewedNotifications,
-        href: "/dashboard/notifications",
-        cta: "Bildirimleri aç",
-      },
-      {
-        key: "first-price-move",
-        title: "İlk fiyat hareketini incele",
-        description: "Trendleri inceleyip ilk aksiyonunuzu belirleyin.",
-        done: hasPriceMovement,
-        href: "/dashboard/products",
-        cta: "Fiyat hareketleri",
-      },
-    ];
-  }, [
-    movers.length,
-    products,
-    stats?.activeAlerts,
-    stats?.trackedProducts,
-    stats?.unreadNotifications,
-  ]);
-
-  const completedChecklistCount = onboardingChecklist.filter((step) => step.done).length;
-  const showOnboardingChecklist =
-    !loading &&
-    stats &&
-    (completedChecklistCount < onboardingChecklist.length || stats.trackedProducts < 3);
+    ],
+    [analysis.hasCompetitors, stats?.activeAlerts, stats?.trackedProducts],
+  );
 
   const statCards = [
     {
-      label: "Takip Edilen Ürünler",
+      label: "Takip edilen ürün",
       value: stats?.trackedProducts ?? 0,
-      sub: "Operasyondaki toplam ürün",
+      sub: "Toplam ürününüz",
       href: "/dashboard/products",
+      icon: "box" as const,
+      iconClass: "bg-amber-500/10 text-amber-400",
     },
     {
-      label: "24 Saatte Değişen",
+      label: "24 saatte değişen",
       value: stats?.priceChanges24h ?? 0,
       sub: "Fiyatı hareket eden ürün",
-      href: "/dashboard/products",
+      href: "/dashboard/products?filter=CHANGED",
+      icon: "pulse" as const,
+      iconClass: "bg-blue-500/10 text-blue-300",
     },
     {
-      label: "Aktif Uyarılar",
-      value: stats?.activeAlerts ?? 0,
-      sub: "Takip edilen alarm kuralı",
-      href: "/dashboard/alerts",
+      label: "En ucuz olduğunuz",
+      value: analysis.counts.cheapest,
+      sub: "Rakiplerin altında satan ürün",
+      href: "/dashboard/products?filter=CHEAPEST",
+      icon: "trophy" as const,
+      iconClass: "bg-emerald-500/10 text-emerald-300",
     },
     {
-      label: "Okunmamış Bildirim",
+      label: "Okunmamış bildirim",
       value: stats?.unreadNotifications ?? 0,
-      sub: "Operasyon akışında bekleyen",
+      sub: `${stats?.activeAlerts ?? 0} aktif uyarı kuralı`,
       href: "/dashboard/notifications",
+      icon: "inbox" as const,
+      iconClass: "bg-rose-500/10 text-rose-300",
     },
   ];
 
-  const periodCards: Array<{ key: "today" | "7d" | "30d"; label: string; helper: string }> = [
-    { key: "today", label: "Bugün", helper: "Son 24 saat" },
-    { key: "7d", label: "Son 7 Gün", helper: "Haftalık görünüm" },
-    { key: "30d", label: "Son 30 Gün", helper: "Aylık eğilim" },
-  ];
+  const hasProducts = (stats?.trackedProducts ?? 0) > 0;
+  const subtitle = !productsLoaded
+    ? "Ürünleriniz yükleniyor..."
+    : todos.length > 0
+      ? `Bugün ${todos.length} konu ilginizi bekliyor.`
+      : hasProducts
+        ? "Bugün ilginizi bekleyen bir konu yok."
+        : "Rakiplerinizi takip etmeye ilk ürününüzle başlayın.";
 
   return (
-    <div>
+    <div className="space-y-6 sm:space-y-8">
       <MaintenanceNotice />
-      <div className="mb-5 sm:mb-7">
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
-          Genel Bakış
-        </h1>
-        <p className="text-gray-500 text-xs sm:text-sm">
-          Bugün müdahale gerektiren ürünleri hızlıca bulun ve aksiyon alın.
-        </p>
-      </div>
 
-      <div className="mb-6">
-        <PlanUsageCard />
-      </div>
-
-      <div className="mb-6 sm:mb-8 bg-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
-          <div>
-            <p className="text-[11px] sm:text-xs text-gray-500 uppercase tracking-wide">
-              Sistem durumu
-            </p>
-            <div className="flex items-center gap-2 mt-1.5">
-              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]" />
-              <p className="text-sm sm:text-base text-emerald-300 font-medium">İzleme aktif</p>
-            </div>
-          </div>
-
-          <div className="sm:text-right">
-            <p className="text-[11px] sm:text-xs text-gray-500 uppercase tracking-wide">
-              Veri güncelliği
-            </p>
-            {latestMoverUpdate ? (
-              <>
-                <p className="text-sm sm:text-base text-white font-medium mt-1">
-                  Son hareket: {latestMoverUpdate.relative}
-                </p>
-                <p
-                  className="text-[11px] sm:text-xs text-gray-500 mt-0.5"
-                  title={latestMoverUpdate.exact}
-                >
-                  Panele yansıyan son güncelleme zamanı
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm sm:text-base text-white font-medium mt-1">
-                  Yeni hareketler bekleniyor
-                </p>
-                <p className="text-[11px] sm:text-xs text-gray-500 mt-0.5">
-                  Yeni fiyat değişimleri geldikçe güncellenir
-                </p>
-              </>
+      <header className="flex flex-wrap items-center gap-4">
+        <div className="flex-1 min-w-[240px]">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1">
+            Genel Bakış
+          </h1>
+          <p className="text-gray-400 text-sm">
+            {subtitle}
+            {analysis.lastSuccess && (
+              <span className="text-gray-500">
+                {" "}
+                Son fiyat güncellemesi {formatTimeAgo(analysis.lastSuccess)}.
+              </span>
             )}
-          </div>
+          </p>
         </div>
-      </div>
+        <Link
+          href="/dashboard/products?add=1"
+          className="inline-flex items-center gap-2 h-11 px-5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-sm font-bold transition"
+        >
+          <svg
+            aria-hidden="true"
+            className="w-4 h-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Ürün ekle
+        </Link>
+      </header>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+      {!loading && stats && <OnboardingGuide steps={guideSteps} />}
+
+      {hasProducts && productsLoaded && (
+        <section aria-labelledby="todo-h" className="space-y-3">
+          <h2 id="todo-h" className="text-white font-semibold text-base sm:text-lg">
+            Bugün yapmanız gerekenler
+          </h2>
+          <TodoCards items={todos} />
+        </section>
+      )}
+
+      <section aria-label="Özet" className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {loading ? (
           <>
             <StatCardSkeleton />
@@ -435,458 +342,133 @@ export default function DashboardPage() {
             <StatCardSkeleton />
           </>
         ) : (
-          statCards.map((stat, i) => (
-            <Link key={i} href={stat.href} className="block group">
-              <div className="bg-gradient-to-b from-[#141418] to-[#111113] border border-[#1F1F23] rounded-xl sm:rounded-2xl p-4 sm:p-5 transition duration-200 hover:border-amber-500/40 hover:-translate-y-0.5">
-                <div className="text-gray-500 text-[11px] sm:text-xs uppercase tracking-wide">
-                  {stat.label}
-                </div>
-                <div className="text-2xl sm:text-3xl font-semibold text-white mt-2 leading-none">
-                  {stat.value}
-                </div>
-                <div className="text-gray-500 text-[11px] sm:text-xs mt-2 group-hover:text-gray-400 transition">
-                  {stat.sub}
-                </div>
+          statCards.map((stat) => (
+            <Link
+              key={stat.label}
+              href={stat.href}
+              className="group rounded-2xl border border-[#1F1F23] bg-[#111113] p-4 sm:p-5 transition hover:border-amber-500/40"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-gray-400 text-xs sm:text-sm">{stat.label}</span>
+                <span
+                  className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center ${stat.iconClass}`}
+                >
+                  <StatIcon name={stat.icon} />
+                </span>
               </div>
+              <div className="text-2xl sm:text-3xl font-bold text-white mt-1 leading-none">
+                {stat.value}
+              </div>
+              <div className="text-gray-500 text-xs mt-2">{stat.sub}</div>
             </Link>
           ))
         )}
-      </div>
-
-      <section className="mb-6 sm:mb-8 rounded-2xl border border-[#1F1F23] bg-[#111113] p-4 sm:p-5">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-gray-500">Raporlama</p>
-            <h2 className="text-white font-semibold mt-1">Kısa dönem performans özeti</h2>
-            <p className="text-xs text-gray-500 mt-1">
-              Bugün, son 7 gün ve son 30 gün için güvenli veri türetimleri.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={selectedMarketplace}
-              onChange={(e) => setSelectedMarketplace(e.target.value)}
-              className="bg-[#151519] border border-[#2A2A2F] rounded-lg px-3 py-2 text-xs text-white"
-            >
-              <option value="ALL">Tüm marketplace</option>
-              {reporting?.filters.marketplaces?.map((marketplace) => (
-                <option key={marketplace} value={marketplace}>
-                  {getMarketplaceInfo(marketplace).name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedTagId}
-              onChange={(e) => setSelectedTagId(e.target.value)}
-              className="bg-[#151519] border border-[#2A2A2F] rounded-lg px-3 py-2 text-xs text-white"
-            >
-              <option value="ALL">Tüm etiketler</option>
-              {reporting?.filters.tags?.map((tag) => (
-                <option key={tag.id} value={tag.id}>
-                  {tag.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
-          {periodCards.map((period) => {
-            const metrics = reporting?.periods?.[period.key];
-            return (
-              <div
-                key={period.key}
-                className="rounded-xl border border-[#1F1F23] bg-[#141418] p-3.5 sm:p-4"
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="text-white text-sm font-medium">{period.label}</h3>
-                  <span className="text-[10px] text-gray-500">{period.helper}</span>
-                </div>
-
-                {reportingLoading ? (
-                  <p className="text-xs text-gray-600 mt-4">Özet yükleniyor...</p>
-                ) : !metrics ? (
-                  <p className="text-xs text-gray-600 mt-4">Bu kapsam için veri yok.</p>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 mt-3">
-                    <div className="rounded-lg border border-[#24242A] bg-[#16161A] px-2.5 py-2">
-                      <p className="text-[10px] text-gray-500">Fiyat değişimi</p>
-                      <p className="text-white text-sm font-semibold mt-1">
-                        {metrics.priceChangesDetected}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-[#24242A] bg-[#16161A] px-2.5 py-2">
-                      <p className="text-[10px] text-gray-500">Hareket eden ürün</p>
-                      <p className="text-white text-sm font-semibold mt-1">
-                        {metrics.productsWithMovement}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-[#24242A] bg-[#16161A] px-2.5 py-2">
-                      <p className="text-[10px] text-gray-500">Verisi eski</p>
-                      <p className="text-white text-sm font-semibold mt-1">
-                        {metrics.staleProducts}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-[#24242A] bg-[#16161A] px-2.5 py-2">
-                      <p className="text-[10px] text-gray-500">Rakip baskısı</p>
-                      <p className="text-white text-sm font-semibold mt-1">
-                        {metrics.competitorPressureSignals}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
       </section>
-
-      <section className="mb-6 sm:mb-8 rounded-2xl border border-[#1F1F23] bg-[#111113] p-4 sm:p-5">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-gray-500">Yönetici Özeti</p>
-            <h2 className="text-white font-semibold mt-1">Haftalık toplantı için hızlı özet</h2>
-          </div>
-          <div className="inline-flex rounded-lg border border-[#2A2A2F] overflow-hidden w-fit">
-            {[
-              { key: "today", label: "Bugün" },
-              { key: "7d", label: "7 Gün" },
-              { key: "30d", label: "30 Gün" },
-            ].map((item) => (
-              <button
-                key={item.key}
-                onClick={() => setReportingRange(item.key as ReportingRange)}
-                className={`px-3 py-1.5 text-xs ${reportingRange === item.key ? "bg-amber-500/15 text-amber-400" : "bg-[#151519] text-gray-400 hover:text-white"}`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {[
-            {
-              title: "En çok hareket eden ürünler",
-              items:
-                reporting?.executive.mostMoving.map((item) => ({
-                  id: item.productId,
-                  name: item.productName,
-                  marketplace: item.marketplace,
-                  metric: `${item.movementCount} hareket`,
-                })) ?? [],
-            },
-            {
-              title: "En fazla rakip baskısı olan ürünler",
-              items:
-                reporting?.executive.mostPressure.map((item) => ({
-                  id: item.productId,
-                  name: item.productName,
-                  marketplace: item.marketplace,
-                  metric: `${item.cheaperCount} daha ucuz rakip`,
-                })) ?? [],
-            },
-            {
-              title: "Veri problemi olan ürünler",
-              items:
-                reporting?.executive.dataIssues.map((item) => ({
-                  id: item.productId,
-                  name: item.productName,
-                  marketplace: item.marketplace,
-                  metric: [item.stale ? "veri eski" : null, item.hasError ? "hata" : null]
-                    .filter(Boolean)
-                    .join(" · "),
-                })) ?? [],
-            },
-            {
-              title: "En çok alarm üreten ürünler",
-              items:
-                reporting?.executive.mostAlerts.map((item) => ({
-                  id: item.productId,
-                  name: item.productName,
-                  marketplace: item.marketplace,
-                  metric: `${item.alertCount} alarm`,
-                })) ?? [],
-            },
-          ].map((block) => (
-            <div
-              key={block.title}
-              className="rounded-xl border border-[#1F1F23] bg-[#141418] p-3.5"
-            >
-              <h3 className="text-sm font-medium text-white">{block.title}</h3>
-              {reportingLoading ? (
-                <p className="text-xs text-gray-600 mt-3">Özet hazırlanıyor...</p>
-              ) : block.items.length === 0 ? (
-                <p className="text-xs text-gray-600 mt-3">Seçilen filtrelerde sinyal bulunamadı.</p>
-              ) : (
-                <div className="space-y-2 mt-3">
-                  {block.items.map((item) => (
-                    <Link
-                      key={item.id}
-                      href={`/dashboard/products/${item.id}`}
-                      className="flex items-center justify-between rounded-lg px-2.5 py-2 hover:bg-[#1A1A1E]"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs text-white truncate">{item.name}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">
-                          {getMarketplaceInfo(item.marketplace).name}
-                        </p>
-                      </div>
-                      <span className="text-[11px] text-amber-300">{item.metric || "İncele"}</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {showOnboardingChecklist && (
-        <section className="mb-6 sm:mb-8 rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/8 to-transparent p-4 sm:p-5">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4 mb-4">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-amber-300/80">
-                Başlangıç Kontrol Listesi
-              </p>
-              <h2 className="text-white font-semibold mt-1">İlk değeri dakikalar içinde görün</h2>
-              <p className="text-xs sm:text-sm text-gray-400 mt-1">
-                Temel kurulumu tamamladığınızda fiyat hareketlerini ve kritik riskleri çok daha net
-                görürsünüz.
-              </p>
-            </div>
-            <span className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-full px-2.5 py-1 w-fit">
-              {completedChecklistCount}/{onboardingChecklist.length} tamamlandı
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-            {onboardingChecklist.map((step) => (
-              <div
-                key={step.key}
-                className={`rounded-xl border px-3.5 py-3 flex items-start justify-between gap-3 ${
-                  step.done
-                    ? "border-emerald-500/20 bg-emerald-500/5"
-                    : "border-[#26262B] bg-[#151519]"
-                }`}
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
-                        step.done
-                          ? "bg-emerald-500/20 text-emerald-300"
-                          : "bg-[#1E1E23] text-gray-500"
-                      }`}
-                    >
-                      {step.done ? "✓" : "•"}
-                    </span>
-                    <p
-                      className={`text-sm font-medium ${step.done ? "text-emerald-200" : "text-white"}`}
-                    >
-                      {step.title}
-                    </p>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">{step.description}</p>
-                </div>
-                {!step.done && (
-                  <Link
-                    href={step.href}
-                    className="text-xs text-amber-400 hover:text-amber-300 transition whitespace-nowrap"
-                  >
-                    {step.cta} →
-                  </Link>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       {!loading && stats && stats.trackedProducts === 0 && (
         <EmptyState
           title="İlk ürününüzü takibe alın"
-          description="Trendyol veya Hepsiburada ürün linkini yapıştırarak rakip fiyatlarını takip etmeye başlayın."
-          actionLabel="Ürün Ekle"
-          actionHref="/dashboard/products"
+          description="Trendyol, Hepsiburada veya kendi sitenizdeki ürün linkini yapıştırarak rakip fiyatlarını takip etmeye başlayın."
+          actionLabel="Ürün ekle"
+          actionHref="/dashboard/products?add=1"
         />
       )}
 
-      {!loading && stats && stats.trackedProducts > 0 && (
-        <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Hızlı Erişim</h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Link
-              href="/dashboard/products"
-              className="flex items-center gap-3 p-4 rounded-xl border border-[#1F1F23] hover:border-amber-500/30 transition group"
-            >
-              <div className="h-10 w-10 rounded-lg bg-[#1A1A1E] border border-[#2A2A2F] flex items-center justify-center text-gray-300">
-                Ü
-              </div>
-              <div>
-                <p className="text-white font-medium group-hover:text-amber-400 transition">
-                  Ürünlerim
-                </p>
-                <p className="text-gray-500 text-sm">{stats.trackedProducts} ürün takip ediliyor</p>
-              </div>
-            </Link>
-            <Link
-              href="/dashboard/products"
-              className="flex items-center gap-3 p-4 rounded-xl border border-[#1F1F23] hover:border-amber-500/30 transition group"
-            >
-              <div className="h-10 w-10 rounded-lg bg-[#1A1A1E] border border-[#2A2A2F] flex items-center justify-center text-amber-400">
-                +
-              </div>
-              <div>
-                <p className="text-white font-medium group-hover:text-amber-400 transition">
-                  Yeni Ürün Ekle
-                </p>
-                <p className="text-gray-500 text-sm">Rakip fiyatlarını keşfet</p>
-              </div>
-            </Link>
-          </div>
+      {hasProducts && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <MarketPositionCard counts={analysis.counts} />
+          <OpportunityList items={analysis.opportunities} />
         </div>
-      )}
-
-      {products.length > 0 && (
-        <section className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-6 mt-4 sm:mt-6">
-          <div className="flex items-end justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-base sm:text-lg font-semibold text-white">
-                Aksiyon Gerektiren Ürünler
-              </h2>
-              <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                Önceliklendirilmiş listelerle hızlı müdahale edin.
-              </p>
-            </div>
-            <Link
-              href="/dashboard/products"
-              className="text-xs sm:text-sm text-amber-500 hover:text-amber-400 transition"
-            >
-              Tüm ürünleri aç →
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {actionGroups.map((group) => (
-              <div
-                key={group.key}
-                className="rounded-xl border border-[#1F1F23] bg-[#141418] p-3 sm:p-4"
-              >
-                <div className="mb-3">
-                  <h3 className="text-sm font-medium text-white">{group.title}</h3>
-                  <p className="text-[11px] text-gray-500 mt-1">{group.subtitle}</p>
-                </div>
-
-                {group.items.length === 0 ? (
-                  <p className="text-xs text-gray-600">
-                    Şu anda bu kategori için aksiyon gerektiren ürün bulunmuyor.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {group.items.map((item) => (
-                      <Link
-                        key={item.id}
-                        href={`/dashboard/products/${item.id}`}
-                        className="flex items-center justify-between gap-3 rounded-lg px-2.5 py-2 hover:bg-[#1A1A1E] transition"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs sm:text-sm text-white truncate">
-                            {item.product_name || "İsimsiz Ürün"}
-                          </p>
-                          <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
-                            <MarketplaceBadge marketplace={item.marketplace} />
-                            <span>
-                              {item.competitorCount ?? item.competitors?.length ?? 0} rakip
-                            </span>
-                          </div>
-                        </div>
-                        {(() => {
-                          const freshness = item.last_success_at ?? null;
-                          const ageBadge = priceAgeBadge(freshness);
-                          if (ageBadge) {
-                            return (
-                              <span
-                                className={`text-[11px] px-2 py-0.5 rounded-md border whitespace-nowrap ${ageBadge.className}`}
-                              >
-                                {ageBadge.label}
-                              </span>
-                            );
-                          }
-                          return (
-                            <span className="text-xs text-gray-400 whitespace-nowrap">
-                              {freshness
-                                ? (formatRelativeTime(new Date(freshness)) ?? "-")
-                                : "güncel değil"}
-                            </span>
-                          );
-                        })()}
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
       )}
 
       {movers.length > 0 && (
-        <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-6 mt-4 sm:mt-6">
-          <h2 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">
-            Son 24 Saat Fiyat Hareketleri
-          </h2>
-          <div className="space-y-3">
-            {movers.map((mover, i) => (
-              <Link
-                key={mover.productId}
-                href={`/dashboard/products/${mover.productId}`}
-                className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl hover:bg-[#1A1A1E] transition group"
-              >
-                <span className="text-gray-600 text-xs sm:text-sm font-mono w-4 sm:w-5 text-center">
-                  {i + 1}
-                </span>
-
-                <div className="w-8 h-8 sm:w-9 sm:h-9 bg-[#1F1F23] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
-                  {mover.productImage ? (
-                    <img
-                      src={mover.productImage}
-                      alt=""
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                  ) : (
-                    <span className="text-xs text-gray-500">Ü</span>
-                  )}
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-xs sm:text-sm truncate group-hover:text-amber-400 transition">
-                    {mover.productName}
-                  </p>
-                  <span className="hidden sm:inline-block">
-                    <MarketplaceBadge marketplace={mover.marketplace} />
-                  </span>
-                </div>
-
-                <div className="text-right shrink-0">
-                  <p className="text-white text-xs sm:text-sm font-semibold">
-                    ₺
-                    {mover.currentPrice.toLocaleString("tr-TR", {
-                      minimumFractionDigits: 2,
-                    })}
-                  </p>
-                  <PriceTrend
-                    priceChange={mover.priceChange}
-                    priceChangePct={mover.priceChangePct}
-                    size="sm"
-                  />
-                </div>
-              </Link>
-            ))}
+        <section
+          aria-labelledby="movers-h"
+          className="rounded-2xl border border-[#1F1F23] bg-[#111113] p-4 sm:p-6"
+        >
+          <div className="flex items-baseline justify-between gap-3 mb-2">
+            <h2 id="movers-h" className="text-white font-semibold text-base sm:text-lg">
+              Son fiyat hareketleri
+            </h2>
+            <Link
+              href="/dashboard/products?filter=CHANGED"
+              className="text-sm font-semibold text-amber-400 hover:text-amber-300"
+            >
+              Tümü
+            </Link>
           </div>
-        </div>
+          <ul className="divide-y divide-[#1F1F23]">
+            {movers.map((mover) => (
+              <li key={mover.productId}>
+                <Link
+                  href={`/dashboard/products/${mover.productId}`}
+                  className="flex items-center gap-3 py-3 group"
+                >
+                  <div className="w-10 h-10 bg-[#1F1F23] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+                    {mover.productImage ? (
+                      <img src={mover.productImage} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-xs font-semibold text-gray-400">
+                        {mover.productName.slice(0, 2).toLocaleUpperCase("tr-TR")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm truncate group-hover:text-amber-400 transition">
+                      {mover.productName}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                      <MarketplaceBadge marketplace={mover.marketplace} />
+                      <span>{formatTimeAgo(mover.updatedAt)}</span>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-white text-sm font-semibold">
+                      ₺{mover.currentPrice.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}
+                    </p>
+                    <PriceTrend
+                      priceChange={mover.priceChange}
+                      priceChangePct={mover.priceChangePct}
+                      size="sm"
+                    />
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {hasProducts && (
+        <details
+          className="group rounded-2xl border border-[#1F1F23] bg-[#111113] p-4 sm:p-6"
+          onToggle={(e) => setReportsOpen(e.currentTarget.open)}
+        >
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-white font-semibold text-base sm:text-lg">Detaylı raporlar</h2>
+              <p className="text-sm text-gray-400 mt-1">
+                Dönemsel özet ve haftalık toplantı için yönetici özeti.
+              </p>
+            </div>
+            <svg
+              aria-hidden="true"
+              className="w-5 h-5 text-gray-400 transition group-open:rotate-180"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </summary>
+          {reportsOpen && (
+            <div className="mt-5">
+              <DetailedReports />
+            </div>
+          )}
+        </details>
       )}
     </div>
   );

@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 import path from "path";
 
 export default defineConfig({
+  // tsconfig "jsx: preserve" (Next.js) — bileşen testleri için JSX'i oxc dönüştürsün.
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     globals: true,
     environment: "jsdom",

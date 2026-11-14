@@ -62,6 +62,12 @@ export async function GET() {
             competitorUrl: true,
             matchScore: true,
             lastScrapedAt: true,
+            // Son taramadaki stok durumu — "Rakibin stoğu bitti" fırsatı için.
+            competitorPrices: {
+              orderBy: { scrapedAt: "desc" },
+              take: 1,
+              select: { inStock: true },
+            },
           },
         },
         priceHistory: {
@@ -127,6 +133,7 @@ export async function GET() {
         current_price: p.currentPrice,
         cost: p.cost,
         last_scraped_at: p.lastScrapedAt,
+        scrape_interval: p.scrapeInterval,
         // Son BAŞARILI fiyat güncellemesi: PriceHistory yalnızca başarılı
         // taramada yazılır. lastScrapedAt ise "son deneme"dir (başarısız
         // taramada da ilerler) — tazelik rozetleri bu alanı kullanmalı.
@@ -153,6 +160,7 @@ export async function GET() {
           competitor_url: c.competitorUrl,
           match_score: c.matchScore,
           last_scraped_at: c.lastScrapedAt,
+          in_stock: c.competitorPrices[0]?.inStock ?? null,
         })),
       };
     });

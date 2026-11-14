@@ -8,15 +8,44 @@ import NotificationDropdown from "@/components/NotificationDropdown";
 import SessionExpiryGuard from "@/components/SessionExpiryGuard";
 import StaleBundleGuard from "@/components/StaleBundleGuard";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Genel Bakış", icon: "home" },
+// Yan menü gruplar hâlinde: ne takip ediyorum / nasıl haberdar oluyorum / hesabım.
+const NAV_GROUPS = [
+  {
+    title: "Takip",
+    items: [
+      { href: "/dashboard", label: "Genel Bakış", icon: "home" },
+      { href: "/dashboard/products", label: "Ürünler", icon: "box" },
+      { href: "/dashboard/analytics", label: "Analitik", icon: "chart" },
+    ],
+  },
+  {
+    title: "Bildirimler",
+    items: [
+      { href: "/dashboard/alerts", label: "Uyarı kuralları", icon: "bell" },
+      { href: "/dashboard/notifications", label: "Gelen kutusu", icon: "inbox" },
+    ],
+  },
+  {
+    title: "Hesap",
+    items: [
+      { href: "/dashboard/settings", label: "Ayarlar", icon: "settings" },
+      { href: "/dashboard/yardim", label: "Yardım", icon: "help" },
+    ],
+  },
+];
+
+// Telefonda ekranın altındaki sekme çubuğu: en sık kullanılan dört sayfa + menü.
+const MOBILE_TABS = [
+  { href: "/dashboard", label: "Özet", icon: "home" },
   { href: "/dashboard/products", label: "Ürünler", icon: "box" },
   { href: "/dashboard/alerts", label: "Uyarılar", icon: "bell" },
-  { href: "/dashboard/notifications", label: "Bildirimler", icon: "inbox" },
-  { href: "/dashboard/analytics", label: "Analitik", icon: "chart" },
-  { href: "/dashboard/settings", label: "Ayarlar", icon: "settings" },
-  { href: "/dashboard/yardim", label: "Yardım", icon: "help" },
+  { href: "/dashboard/notifications", label: "Bildirim", icon: "inbox" },
 ];
+
+function isActivePath(pathname: string, href: string): boolean {
+  if (href === "/dashboard") return pathname === "/dashboard";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 // Yalnızca yöneticilere gösterilir (/api/user/features → isAdmin).
 const ADMIN_NAV_ITEMS = [
@@ -166,6 +195,21 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
           <line x1="2" y1="10" x2="22" y2="10" />
         </svg>
       );
+    case "menu":
+      return (
+        <svg
+          className={c}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        >
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <line x1="3" y1="18" x2="21" y2="18" />
+        </svg>
+      );
     default:
       return null;
   }
@@ -211,25 +255,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Nav */}
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            {[...NAV_ITEMS, ...(sidebarPlan?.isAdmin ? ADMIN_NAV_ITEMS : [])].map((item) => {
-              const active = pathname === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
-                    active
-                      ? "bg-hive-500/10 text-hive-500"
-                      : "text-dark-400 hover:text-white hover:bg-dark-900"
-                  }`}
-                >
-                  <NavIcon name={item.icon} />
-                  {item.label}
-                </Link>
-              );
-            })}
+          <nav aria-label="Ana menü" className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+            {[
+              ...NAV_GROUPS,
+              ...(sidebarPlan?.isAdmin ? [{ title: "Yönetim", items: ADMIN_NAV_ITEMS }] : []),
+            ].map((group) => (
+              <div key={group.title}>
+                <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-dark-400">
+                  {group.title}
+                </p>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const active = isActivePath(pathname, item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={() => setSidebarOpen(false)}
+                        aria-current={active ? "page" : undefined}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
+                          active
+                            ? "bg-hive-500/10 text-hive-500"
+                            : "text-dark-300 hover:text-white hover:bg-dark-900"
+                        }`}
+                      >
+                        <NavIcon name={item.icon} />
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
 
           {/* Plan Badge */}
@@ -323,8 +380,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Content */}
         <main className="flex-1 p-4 sm:p-6">{children}</main>
-        {/* Footer */}
-        <footer className="border-t border-dark-800 px-4 sm:px-6 py-4">
+        {/* Footer — pb-24: telefonda alttaki sekme çubuğu son satırın üstüne binmesin. */}
+        <footer className="border-t border-dark-800 px-4 sm:px-6 py-4 pb-24 lg:pb-4">
           <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-dark-500">
             <Link href="/privacy" className="hover:text-dark-300 transition">
               Gizlilik
@@ -348,6 +405,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </nav>
         </footer>
       </div>
+
+      {/* Telefonda alt sekme çubuğu */}
+      <nav
+        aria-label="Hızlı menü"
+        className="lg:hidden fixed inset-x-0 bottom-0 z-20 border-t border-dark-800 bg-dark-950/95 backdrop-blur-xl safe-bottom"
+      >
+        <div className="grid grid-cols-5">
+          {MOBILE_TABS.map((tab) => {
+            const active = isActivePath(pathname, tab.href);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                aria-current={active ? "page" : undefined}
+                className={`flex flex-col items-center justify-center gap-1 py-2.5 min-h-[56px] text-[11px] font-medium transition ${
+                  active ? "text-hive-500" : "text-dark-400 hover:text-white"
+                }`}
+              >
+                <NavIcon name={tab.icon} className="w-5 h-5" />
+                {tab.label}
+              </Link>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="flex flex-col items-center justify-center gap-1 py-2.5 min-h-[56px] text-[11px] font-medium text-dark-400 hover:text-white transition"
+          >
+            <NavIcon name="menu" className="w-5 h-5" />
+            Menü
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
