@@ -71,6 +71,16 @@ export const alertQueue = new Queue("alerts", {
   },
 });
 
+// Web'in find-competitors / scrape-competitor işlerini koyduğu kuyruk. Worker
+// da (6 saatlik URL turu) bayat rakipler için scrape-competitor işi ekler.
+export const competitorQueue = new Queue("competitors", {
+  connection,
+  defaultJobOptions: {
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 1000 },
+  },
+});
+
 // ============================================
 // SHARED ALERT TRIGGER
 // ============================================

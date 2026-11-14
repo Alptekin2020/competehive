@@ -9,6 +9,13 @@ import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { maybeEnqueueAlerts } from "./processor";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
+import {
+  detectCompetitorMove,
+  pickStaleCompetitorsForDirectScrape,
+  type CompetitorMove,
+  type KnownCompetitorSnapshot,
+} from "../utils/stale-competitors";
+import { competitorQueue } from "./processor";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -213,12 +220,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     // 5. Tüm siblings'in bilinen competitor URL'lerini topla (URL → [competitor records])
     const competitorByUrl = new Map<
       string,
-      Array<{
-        id: string;
-        trackedProductId: string;
-        competitorUrl: string;
-        competitorName: string | null;
-      }>
+      Array<KnownCompetitorSnapshot & { trackedProductId: string; competitorUrl: string }>
     >();
 
     for (const sibling of siblings) {
@@ -233,6 +235,10 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           trackedProductId: sibling.id,
           competitorUrl: c.competitorUrl,
           competitorName: c.competitorName,
+          currentPrice: c.currentPrice != null ? Number(c.currentPrice) : null,
+          matchScore: c.matchScore,
+          marketplace: c.marketplace,
+          lastScrapedAt: c.lastScrapedAt,
         });
         competitorByUrl.set(urlKey, list);
       }
@@ -340,12 +346,19 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       scrapedAt: Date;
     }> = [];
 
+    // Bu turda fiyatı güncellenen rakipler ve sibling başına rakip hareketleri.
+    const updatedCompetitorIds = new Set<string>();
+    const competitorMovesBySibling = new Map<string, CompetitorMove[]>();
+
     for (const result of serperResults) {
       const matchingCompetitors = competitorByUrl.get(competitorUrlKey(result.link));
       if (!matchingCompetitors || matchingCompetitors.length === 0) continue;
 
       const price = parsePrice(result.price);
       if (!price || price <= 0) continue;
+      // Aynı URL'in Serper'da ikinci kez görünmesi (farklı sorgu) hareketi
+      // çift saymasın / ilk fiyatın üstüne yazmasın.
+      if (matchingCompetitors.every((c) => updatedCompetitorIds.has(c.id))) continue;
 
       const retailer = extractRetailer(result.link);
       const matchingIds = matchingCompetitors.map((c) => c.id);
@@ -363,6 +376,13 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
         });
 
         for (const c of matchingCompetitors) {
+          updatedCompetitorIds.add(c.id);
+          const move = detectCompetitorMove(c, price, result.title);
+          if (move) {
+            const moves = competitorMovesBySibling.get(c.trackedProductId) ?? [];
+            moves.push(move);
+            competitorMovesBySibling.set(c.trackedProductId, moves);
+          }
           competitorPriceSnapshots.push({
             competitorId: c.id,
             price,
@@ -401,6 +421,33 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       }
     }
 
+    // 7.5. Google'ın bu turda döndürmediği bilinen rakipler: bayatlamaya
+    // başlayanları (24 saat+) worker'ın doğrudan scraper zincirine ver. Bu işler
+    // kendi fiyat geçmişini yazar ve hareket varsa kendi uyarısını kuyruğa alır.
+    const staleTargets = pickStaleCompetitorsForDirectScrape(
+      [...competitorByUrl.values()].flat(),
+      updatedCompetitorIds,
+      now,
+    );
+    const hourBucket = Math.floor(now.getTime() / (60 * 60 * 1000));
+    let directScrapesQueued = 0;
+    for (const target of staleTargets) {
+      try {
+        await competitorQueue.add(
+          "scrape-competitor",
+          { competitorId: target.id },
+          {
+            // Aynı saat içinde tekrar kuyruğa alınmasın; bir sonraki tur yeniden dener.
+            jobId: `stale-competitor-${target.id}-${hourBucket}`,
+            attempts: 1,
+          },
+        );
+        directScrapesQueued++;
+      } catch (err) {
+        console.error(`Bayat rakip tarama kuyruğa alınamadı (${target.id}):`, err);
+      }
+    }
+
     // Faz 2: tüm fiyat/competitor güncellemeleri bitti — her sibling için
     // refresh ÖNCESİ saklı fiyata karşı değişiklik oluştuysa alert kuyruğa al.
     try {
@@ -418,6 +465,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           currentPrice: Number(fs.currentPrice),
           previousInStock: prev.inStock,
           inStock: fs.status !== "OUT_OF_STOCK",
+          competitorMoves: competitorMovesBySibling.get(fs.id) ?? [],
         });
       }
     } catch (alertError) {
@@ -436,13 +484,14 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     );
 
     console.log(
-      `✅ URL refresh tamamlandı: ${productUrl} — ${siblings.length} sibling, ${competitorByUrl.size} unique competitor URL, ${updatedCount} update`,
+      `✅ URL refresh tamamlandı: ${productUrl} — ${siblings.length} sibling, ${competitorByUrl.size} unique competitor URL, ${updatedCount} update, ${competitorMovesBySibling.size} ürün için rakip hareketi, ${directScrapesQueued} bayat rakip doğrudan taramaya`,
     );
 
     return {
       processedSiblings: siblings.length,
       knownCompetitorUrls: competitorByUrl.size,
       updatedCount,
+      directScrapesQueued,
     };
   } catch (error) {
     // Tüm siblings "failed"
