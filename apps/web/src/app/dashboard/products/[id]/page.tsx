@@ -71,6 +71,8 @@ interface CompetitorEntry {
   lastScrapedAt: string | null;
   matchScore: number | null;
   matchReason: string | null;
+  // "pending" = AI emin olamadı, onayınızı bekliyor; "confirmed" = siz onayladınız.
+  review?: "pending" | "confirmed" | null;
   createdAt?: string;
   // Son taramadaki stok durumu (bilinmiyorsa null).
   inStock?: boolean | null;
@@ -285,6 +287,7 @@ export default function ProductDetailPage() {
   const [addCompetitorLoading, setAddCompetitorLoading] = useState(false);
   const [addCompetitorError, setAddCompetitorError] = useState<string | null>(null);
   const [competitorDeleteId, setCompetitorDeleteId] = useState<string | null>(null);
+  const [competitorConfirmId, setCompetitorConfirmId] = useState<string | null>(null);
   const [competitorDeleteLoading, setCompetitorDeleteLoading] = useState(false);
   const [competitorDeleteError, setCompetitorDeleteError] = useState<string | null>(null);
   const [costInput, setCostInput] = useState("");
@@ -527,6 +530,47 @@ export default function ProductDetailPage() {
       setAddCompetitorError("Bağlantı hatası — lütfen tekrar deneyin.");
     } finally {
       setAddCompetitorLoading(false);
+    }
+  };
+
+  // "Bu aynı ürün" onayı: AI'ın emin olamadığı eşleşmeyi kullanıcı doğrular;
+  // skor 100 olur ve rakip pozisyon/öneri/alarm hesaplarına girer.
+  const handleConfirmCompetitor = async (competitorId: string) => {
+    if (!product || competitorConfirmId) return;
+    setCompetitorConfirmId(competitorId);
+    try {
+      const res = await fetch(`/api/products/${product.id}/competitors/${competitorId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "confirm" }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setCompareStatus(data?.error || "Onay kaydedilemedi. Lütfen tekrar deneyin.");
+        return;
+      }
+      setCompareStatus("Rakip onaylandı — artık hesaplara ve uyarılara dahil.");
+      setProduct((prev) =>
+        prev
+          ? {
+              ...prev,
+              competitors: (prev.competitors || []).map((c) =>
+                c.id === competitorId
+                  ? {
+                      ...c,
+                      matchScore: data?.competitor?.matchScore ?? 100,
+                      matchReason: data?.competitor?.matchReason ?? c.matchReason,
+                      review: "confirmed" as const,
+                    }
+                  : c,
+              ),
+            }
+          : prev,
+      );
+    } catch {
+      setCompareStatus("Bağlantı hatası — lütfen tekrar deneyin.");
+    } finally {
+      setCompetitorConfirmId(null);
     }
   };
 
@@ -848,6 +892,8 @@ export default function ProductDetailPage() {
           : qualityRatio >= 0.5
             ? "Temkinli değerlendir"
             : "Düşük güven";
+
+  const pendingReviewCount = competitors.filter((c) => c.review === "pending").length;
 
   const filteredCompetitors = competitors
     .filter((competitor) => {
@@ -1698,6 +1744,27 @@ export default function ProductDetailPage() {
                     ))}
                 </div>
               </div>
+              {pendingReviewCount > 0 && (
+                <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+                  <p className="text-sm font-medium text-amber-200">
+                    {pendingReviewCount} olası eşleşme onayınızı bekliyor
+                  </p>
+                  <p className="text-xs text-amber-200/70 mt-0.5">
+                    Yapay zekâ bu ilanların aynı ürün olduğundan emin olamadı. Siz ürününüzü daha
+                    iyi tanırsınız: &quot;Bu aynı ürün&quot; derseniz fiyat karşılaştırmasına ve
+                    uyarılara dahil edilir, &quot;değil&quot; derseniz bir daha gösterilmez.
+                  </p>
+                  {competitorFilter !== "suspicious" && (
+                    <button
+                      type="button"
+                      onClick={() => setCompetitorFilter("suspicious")}
+                      className="mt-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-2"
+                    >
+                      Onay bekleyenleri göster
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="space-y-3">
                 {filteredCompetitors.length === 0 && (
                   <div className="rounded-lg border border-dashed border-[#2A2A2F] p-5 text-center">
@@ -1756,6 +1823,22 @@ export default function ProductDetailPage() {
                             );
                           })()}
                           <MatchScoreBadge score={competitor.matchScore} />
+                          {competitor.review === "pending" && (
+                            <span
+                              className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded"
+                              title="Yapay zekâ emin olamadı. Siz onaylayana kadar hesaplara ve uyarılara dahil edilmez."
+                            >
+                              Onayınızı bekliyor
+                            </span>
+                          )}
+                          {competitor.review === "confirmed" && (
+                            <span
+                              className="text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded"
+                              title="Bu eşleşmeyi siz onayladınız"
+                            >
+                              Sizin onayınız
+                            </span>
+                          )}
                           {competitor.inStock === false && (
                             <span
                               className="text-[11px] text-pink-300 bg-pink-500/10 border border-pink-500/25 px-1.5 py-0.5 rounded"
@@ -1808,18 +1891,33 @@ export default function ProductDetailPage() {
                         )}
                         {/* Eşleşmesi kesin olmayan rakiplerde kullanıcı hatalı
                             eşleşmeyi tek tıkla ayıklayabilsin. */}
-                        {(competitor.matchScore === null || competitor.matchScore < 90) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCompetitorDeleteError(null);
-                              setCompetitorDeleteId(competitor.id);
-                            }}
-                            className="mt-1 text-xs font-medium text-gray-400 hover:text-rose-300 underline underline-offset-2 decoration-dotted transition"
-                          >
-                            Bu aynı ürün değil
-                          </button>
-                        )}
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {competitor.matchScore !== null &&
+                            competitor.matchScore < MIN_MATCH_SCORE && (
+                              <button
+                                type="button"
+                                disabled={competitorConfirmId !== null}
+                                onClick={() => handleConfirmCompetitor(competitor.id)}
+                                className="text-xs font-semibold text-emerald-300 hover:text-emerald-200 underline underline-offset-2 transition disabled:opacity-50"
+                              >
+                                {competitorConfirmId === competitor.id
+                                  ? "Kaydediliyor…"
+                                  : "Bu aynı ürün"}
+                              </button>
+                            )}
+                          {(competitor.matchScore === null || competitor.matchScore < 90) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCompetitorDeleteError(null);
+                                setCompetitorDeleteId(competitor.id);
+                              }}
+                              className="text-xs font-medium text-gray-400 hover:text-rose-300 underline underline-offset-2 decoration-dotted transition"
+                            >
+                              Bu aynı ürün değil
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="text-right flex-shrink-0">
                         {cPrice ? (
@@ -1993,8 +2091,8 @@ export default function ProductDetailPage() {
             <h2 className="text-lg font-bold text-white mb-2">Rakibi Kaldır</h2>
             <p className="text-dark-500 text-sm mb-3">
               Bu rakip ve fiyat geçmişi listeden silinecek. Yanlış eşleşmeleri kaldırmak piyasa
-              pozisyonu ve fiyat önerisi hesaplarını temiz tutar. Otomatik tarama aynı ürünü ileride
-              yeniden bulabilir.
+              pozisyonu ve fiyat önerisi hesaplarını temiz tutar. Otomatik tarama bu ilanı bir daha
+              rakip olarak getirmez.
             </p>
             {competitorDeleteError && (
               <p className="text-sm text-red-300 mb-4">{competitorDeleteError}</p>

@@ -206,6 +206,7 @@ Located in `apps/worker/src/scrapers/`:
 - A competitor only enters decision calculations (market position, price suggestion, COMPETITOR_CHEAPER alert) if it passes: valid price, `matchScore` null-or-≥ `MIN_MATCH_SCORE`, price within 0.3x–3x band of own price, scraped within 72h
 - `isPackagingListing()` deterministically rejects packaging/logistics listings (koli, ambalaj, …) before any AI call
 - Automated pipelines must always persist a `matchScore` — null score is reserved for manual/legacy rows
+- User-reviewed matching (`apps/worker/src/utils/match-review.ts`, web mirror `apps/web/src/lib/match-review.ts` — keep in sync): AI rejections scoring 50–69 are stored as pending candidates (`matchAttributes.review = "pending"`, max 5 new per round / 8 pending per product). They stay out of decisions, price history and alerts until the user confirms (`PATCH /api/products/[id]/competitors/[competitorId]` → score 100, `review = "confirmed"`; the worker never downgrades a confirmed row). Deleting a competitor writes its URL to `trackedProduct.metadata.rejectedCompetitorUrls`, and discovery skips those URLs
 - Worker boot runs `cleanupJunkCompetitors()` to purge obvious legacy junk (packaging names, extreme price deviation on unscored rows)
 
 ### Price History (own vs competitor rows)

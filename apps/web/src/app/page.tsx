@@ -591,7 +591,7 @@ export default async function Home() {
               },
               {
                 q: "Rakipleri nasıl buluyorsunuz, yanlış ürünle kıyaslamaz mısınız?",
-                a: "Her rakip adayı yapay zekâ ile ürününüzle karşılaştırılır ve 0-100 eşleşme skoru alır. Aksesuar, farklı model, ambalaj gibi alakasız sonuçlar otomatik elenir; düşük güvenli kayıtlar listede görünse bile fiyat kararı hesaplarına girmez.",
+                a: 'Her rakip adayı yapay zekâ ile ürününüzle karşılaştırılır ve 0-100 eşleşme skoru alır. Aksesuar, farklı model, ambalaj gibi alakasız sonuçlar otomatik elenir; düşük güvenli kayıtlar listede görünse bile fiyat kararı hesaplarına girmez. Yapay zekânın emin olamadığı ilanlar size sorulur: tek tıkla "Bu aynı ürün" ya da "değil" dersiniz, reddettiğiniz ilan bir daha karşınıza çıkmaz.',
               },
               {
                 q: "Fiyatlar ne sıklıkta güncellenir?",

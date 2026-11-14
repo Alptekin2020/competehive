@@ -1,3 +1,4 @@
+import { readMatchReview } from "@/lib/match-review";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
@@ -69,6 +70,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
             lastScrapedAt: true,
             matchScore: true,
             matchReason: true,
+            matchAttributes: true,
             createdAt: true,
           },
         },
@@ -203,6 +205,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           lastScrapedAt: Date | null;
           matchScore: number | null;
           matchReason: string | null;
+          matchAttributes: unknown;
           createdAt: Date;
         }) => ({
           id: competitor.id,
@@ -213,6 +216,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           lastScrapedAt: competitor.lastScrapedAt,
           matchScore: competitor.matchScore,
           matchReason: competitor.matchReason,
+          // "pending" = AI emin olamadı, kullanıcı onayı bekliyor; "confirmed" = kullanıcı onayladı.
+          review: readMatchReview(competitor.matchAttributes),
           createdAt: competitor.createdAt,
           inStock: latestStock.get(competitor.id)?.inStock ?? null,
         }),
