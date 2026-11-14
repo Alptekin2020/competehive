@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
-import { formatTRY, formatPctTR, foldForSearch } from "@/lib/format";
+import { formatTRY, foldForSearch } from "@/lib/format";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { assessCompetitorList, computeMargin } from "@competehive/shared";
 import { CardSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
@@ -16,6 +15,13 @@ import PriceTrend from "@/components/PriceTrend";
 import TagFilterBar from "@/components/TagFilterBar";
 import TagManagerModal from "@/components/TagManagerModal";
 import ProductTagSelector from "@/components/ProductTagSelector";
+import { PositionChip, PricePositionBar } from "@/components/insights/PricePosition";
+import {
+  computeProductInsight,
+  formatNextCheck,
+  formatTimeAgo,
+  toInsightInput,
+} from "@/lib/product-insights";
 
 interface PlanFeaturesData {
   plan: string;
@@ -46,6 +52,7 @@ interface CompetitorItem {
   competitor_url: string;
   match_score?: number | null;
   last_scraped_at?: string | null;
+  in_stock?: boolean | null;
 }
 
 interface TrendData {
@@ -63,6 +70,7 @@ interface ProductItem {
   current_price: string | null;
   cost?: string | null;
   last_scraped_at: string | null;
+  scrape_interval?: number | null;
   // Son BAŞARILI tarama — tazelik rozetleri bunu kullanır (last_scraped_at
   // başarısız denemede de ilerlediği için bayat veriyi taze gösterebilir).
   last_success_at?: string | null;
@@ -79,6 +87,7 @@ type QuickFilter =
   | "ALL"
   | "NO_COMPETITOR"
   | "CHEAPER_COMPETITOR"
+  | "CHEAPEST"
   | "LOSS"
   | "STALE"
   | "CHANGED"
@@ -92,6 +101,21 @@ type SortOption =
   | "biggest_drop"
   | "gap_desc";
 type ViewMode = "cards" | "table";
+
+const QUICK_FILTER_KEYS: QuickFilter[] = [
+  "ALL",
+  "NO_COMPETITOR",
+  "CHEAPER_COMPETITOR",
+  "CHEAPEST",
+  "LOSS",
+  "STALE",
+  "CHANGED",
+  "ACTIVE",
+];
+
+function parseQuickFilter(value: string | null): QuickFilter {
+  return QUICK_FILTER_KEYS.includes(value as QuickFilter) ? (value as QuickFilter) : "ALL";
+}
 
 const STALE_HOURS = 24;
 
@@ -121,7 +145,8 @@ function ProductsPageInner() {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
+  // Genel Bakış'taki "Ürün ekle" düğmesi ?add=1 ile gelir.
+  const [showModal, setShowModal] = useState(() => searchParams.get("add") === "1");
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [url, setUrl] = useState("");
   const [formLoading, setFormLoading] = useState(false);
@@ -130,7 +155,10 @@ function ProductsPageInner() {
   const [showTagManager, setShowTagManager] = useState(false);
   const [planFeatures, setPlanFeatures] = useState<PlanFeaturesData | null>(null);
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get("search") ?? "");
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
+  // Genel Bakış kartları ?filter=CHEAPER_COMPETITOR gibi bir hızlı filtreyle gelir.
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(() =>
+    parseQuickFilter(searchParams.get("filter")),
+  );
   const [sortBy, setSortBy] = useState<SortOption>("updated_desc");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [addedBanner, setAddedBanner] = useState<{ first: boolean } | null>(null);
@@ -240,38 +268,28 @@ function ProductsPageInner() {
     // foldForSearch: "SIRT" / "sirt" / "sırt" aynı ürünü bulsun (düz toLowerCase
     // Türkçe I/ı ayrımını çözemez).
     const normalizedQuery = foldForSearch(searchQuery.trim());
+    const now = new Date();
 
     const withMeta = products
       .filter((p) => (selectedTagId ? p.tags?.some((pt) => pt.tag?.id === selectedTagId) : true))
       .map((p) => {
         const myPrice = p.current_price ? Number(p.current_price) : null;
         const competitorCount = p.competitorCount ?? p.competitors?.length ?? 0;
-        // "En düşük rakip" yalnızca kalite politikasından (skor, fiyat bandı,
-        // bayatlık, akran-medyan aykırılığı) geçen rakiplerden hesaplanır —
-        // detay sayfasıyla tutarlı.
-        const competitorInputs = (p.competitors ?? []).map((c) => ({
-          price: c.current_price ? Number(c.current_price) : null,
-          matchScore: c.match_score ?? null,
-          lastScrapedAt: c.last_scraped_at ?? null,
-        }));
-        const competitorAssessmentsList = assessCompetitorList(competitorInputs, {
-          ownPrice: myPrice,
-        });
-        const competitorPrices = competitorInputs
-          .filter((_, i) => competitorAssessmentsList[i].usable)
-          .map((c) => Number(c.price))
-          .filter((price): price is number => Number.isFinite(price));
-        const minCompetitorPrice = competitorPrices.length ? Math.min(...competitorPrices) : null;
+        // Pazar konumu, marj ve tazelik tek yerden (lib/product-insights):
+        // "En düşük rakip" yalnızca kalite politikasından geçen rakiplerden
+        // hesaplanır — detay sayfası ve Genel Bakış ile tutarlı.
+        const insight = computeProductInsight(toInsightInput(p), now);
+        const minCompetitorPrice = insight.cheapestCompetitorPrice;
         const stale = isStale(p.last_success_at ?? null);
         // Hiç başarılı scrape olmamış (yeni eklenmiş/veri alınamamış) ürün
         // "eski veri" değildir — 5 saniyelik ürüne "Veri Eski" rozeti absürttü.
         const neverScraped = !p.last_success_at;
         const priceChange = p.trend?.priceChange ?? null;
-        // Maliyet girilmişse marj — katalog genelinde kâr sağlığı tek bakışta.
-        const margin = computeMargin(myPrice, p.cost ?? null);
+        const margin = insight.margin;
 
         return {
           product: p,
+          insight,
           myPrice,
           competitorCount,
           minCompetitorPrice,
@@ -293,19 +311,18 @@ function ProductsPageInner() {
           )
         );
       })
-      .filter(
-        ({ product, competitorCount, stale, priceChange, myPrice, minCompetitorPrice, margin }) => {
-          if (quickFilter === "NO_COMPETITOR") return competitorCount === 0;
-          if (quickFilter === "CHEAPER_COMPETITOR")
-            return myPrice !== null && minCompetitorPrice !== null && myPrice > minCompetitorPrice;
-          if (quickFilter === "LOSS")
-            return margin !== null && (margin.band === "loss" || margin.band === "thin");
-          if (quickFilter === "STALE") return stale;
-          if (quickFilter === "CHANGED") return Boolean(priceChange);
-          if (quickFilter === "ACTIVE") return product.status === "ACTIVE";
-          return true;
-        },
-      );
+      .filter(({ product, insight, competitorCount, stale, priceChange, margin }) => {
+        if (quickFilter === "NO_COMPETITOR") return competitorCount === 0;
+        if (quickFilter === "CHEAPER_COMPETITOR") return insight.cheaperCount > 0;
+        if (quickFilter === "CHEAPEST")
+          return insight.position === "cheapest" && insight.validCompetitorCount > 0;
+        if (quickFilter === "LOSS")
+          return margin !== null && (margin.band === "loss" || margin.band === "thin");
+        if (quickFilter === "STALE") return stale;
+        if (quickFilter === "CHANGED") return Boolean(priceChange);
+        if (quickFilter === "ACTIVE") return product.status === "ACTIVE";
+        return true;
+      });
 
     return withMeta.sort((a, b) => {
       if (sortBy === "updated_desc") {
@@ -345,11 +362,12 @@ function ProductsPageInner() {
 
   const quickFilters: { key: QuickFilter; label: string }[] = [
     { key: "ALL", label: "Tümü" },
-    { key: "CHEAPER_COMPETITOR", label: "Rakip Daha Ucuz" },
-    { key: "LOSS", label: "Zarar / İnce Marj" },
+    { key: "CHEAPER_COMPETITOR", label: "Rakip daha ucuz" },
+    { key: "CHEAPEST", label: "En ucuz sizsiniz" },
+    { key: "LOSS", label: "Zarar / ince marj" },
     { key: "NO_COMPETITOR", label: "Rakipsiz" },
-    { key: "STALE", label: "Veri Eski" },
-    { key: "CHANGED", label: "Fiyat Değişti" },
+    { key: "STALE", label: "Verisi eski" },
+    { key: "CHANGED", label: "Fiyat değişti" },
     { key: "ACTIVE", label: "Aktif" },
   ];
 
@@ -676,13 +694,11 @@ function ProductsPageInner() {
       )}
 
       {!loading && !error && products.length > 0 && viewMode === "cards" && (
-        // grid-cols-1 = minmax(0, 1fr): örtük "auto" sütunda kartlar içerik
-        // genişliğinin altına inemiyor, telefonda sayfa yatay taşıyordu.
-        <div className="grid grid-cols-1 gap-4">
+        <>
           {filteredProducts.length === 0 && (
             <div className="rounded-2xl border border-[#1F1F23] bg-[#111113] p-8 text-center">
               <h3 className="text-white font-semibold">Bu görünümde ürün bulunamadı</h3>
-              <p className="text-gray-500 text-sm mt-2">
+              <p className="text-gray-400 text-sm mt-2">
                 Arama veya filtreleri sadeleştirin. Özellikle “Rakipsiz” filtresiyle ürün detayına
                 geçip rakip taraması başlatabilirsiniz.
               </p>
@@ -700,246 +716,204 @@ function ProductsPageInner() {
               </button>
             </div>
           )}
-          {filteredProducts.map(
-            ({
-              product,
-              myPrice,
-              competitorCount,
-              minCompetitorPrice,
-              stale,
-              neverScraped,
-              margin,
-            }) => {
-              // Tarama servisi hata aldıysa bunu "Rakip yok" gibi göstermek
-              // yanıltıcıdır — kullanıcı gerçek sebebi (ör. arama servisi
-              // erişilemedi) görmeli ki yanlış teşhise gitmesin. Yeni eklenmiş
-              // üründe keşif hâlâ arkada koşarken de "Rakip yok" yerine
-              // "Rakipler taranıyor" gösterilir — ölü kart izlenimi vermesin.
-              const searchFailed = competitorCount === 0 && product.refresh_status === "failed";
-              const scanningLikely =
-                competitorCount === 0 &&
-                !searchFailed &&
-                (product.refresh_status === "pending" ||
-                  product.refresh_status === "processing" ||
-                  // 15 dk'lık sezgisel yalnızca durum BİLİNMİYORKEN devrededir;
-                  // tarama "completed" olduysa sonuç bellidir (0 rakip) ve chip
-                  // dakikalarca dönmeye devam etmemelidir.
-                  (product.refresh_status !== "completed" &&
-                    product.last_scraped_at !== null &&
-                    Date.now() - new Date(product.last_scraped_at).getTime() < 15 * 60 * 1000));
-              const pricePositionHint = searchFailed
-                ? "Tarama hatası"
-                : scanningLikely
-                  ? "Rakipler taranıyor"
-                  : competitorCount === 0
-                    ? "Rakip yok"
-                    : myPrice === null || minCompetitorPrice === null
-                      ? "Karşılaştırma yok"
-                      : myPrice <= minCompetitorPrice
-                        ? "Piyasanın altında"
-                        : "Rakipten pahalı";
+          {/* minmax(0,1fr): kartlar içerik genişliğinin altına inebilsin,
+              telefonda sayfa yatay taşmasın. */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
+            {filteredProducts.map(
+              ({ product, insight, myPrice, competitorCount, stale, neverScraped, margin }) => {
+                // Tarama servisi hata aldıysa bunu "Rakip yok" gibi göstermek
+                // yanıltıcıdır — kullanıcı gerçek sebebi görmeli. Yeni eklenmiş
+                // üründe keşif hâlâ arkada koşarken "Rakipler taranıyor" gösterilir.
+                const searchFailed = competitorCount === 0 && product.refresh_status === "failed";
+                const scanningLikely =
+                  competitorCount === 0 &&
+                  !searchFailed &&
+                  (product.refresh_status === "pending" ||
+                    product.refresh_status === "processing" ||
+                    // 15 dk'lık sezgisel yalnızca durum BİLİNMİYORKEN devrededir.
+                    (product.refresh_status !== "completed" &&
+                      product.last_scraped_at !== null &&
+                      Date.now() - new Date(product.last_scraped_at).getTime() < 15 * 60 * 1000));
+                const nextCheck = formatNextCheck(insight.nextCheckAt);
 
-              return (
-                <Link
-                  key={product.id}
-                  href={`/dashboard/products/${product.id}`}
-                  className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4 hover:border-amber-500/30 transition group"
-                >
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1F1F23] rounded-lg sm:rounded-xl flex items-center justify-center overflow-hidden shrink-0">
-                    {product.product_image ? (
-                      <img
-                        src={product.product_image}
-                        alt=""
-                        className="w-full h-full object-cover rounded-xl"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <span className="text-gray-500 text-xs font-medium">ÜRN</span>
-                    )}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-white font-medium text-sm truncate group-hover:text-amber-400 transition">
-                        {product.product_name || "İsimsiz Ürün"}
-                      </h3>
-                      <div className="text-right shrink-0 sm:hidden">
-                        <div className="text-white font-semibold text-sm">{formatTRY(myPrice)}</div>
+                return (
+                  <Link
+                    key={product.id}
+                    href={`/dashboard/products/${product.id}`}
+                    className="group bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 flex flex-col gap-4 hover:border-amber-500/40 transition min-w-0"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-14 h-14 bg-[#1F1F23] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+                        {product.product_image ? (
+                          <img
+                            src={product.product_image}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span className="text-gray-400 text-sm font-semibold">
+                            {(product.product_name || "Ü").slice(0, 2).toLocaleUpperCase("tr-TR")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-white font-semibold text-sm leading-snug line-clamp-2 group-hover:text-amber-400 transition">
+                          {product.product_name || "İsimsiz Ürün"}
+                        </h3>
+                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                          <MarketplaceBadge
+                            marketplace={product.marketplace}
+                            overrideName={storeBadgeName(product.marketplace, product.product_url)}
+                          />
+                          {product.tags?.map((pt) => {
+                            const tag = pt.tag;
+                            if (!tag) return null;
+                            return (
+                              <span
+                                key={tag.id}
+                                className="text-[11px] font-medium px-1.5 py-0.5 rounded"
+                                style={{ backgroundColor: `${tag.color}15`, color: tag.color }}
+                              >
+                                {tag.name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex items-center shrink-0 -mr-1">
+                        <ProductTagSelector
+                          productId={product.id}
+                          currentTagIds={
+                            product.tags
+                              ?.map((pt) => pt.tag?.id)
+                              .filter((id): id is string => Boolean(id)) || []
+                          }
+                          onUpdated={fetchProducts}
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeleteConfirmProductId(product.id);
+                          }}
+                          className="p-2 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
+                          title="Ürünü sil"
+                          aria-label="Ürünü sil"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            className="w-4 h-4"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
-                      <MarketplaceBadge
-                        marketplace={product.marketplace}
-                        overrideName={storeBadgeName(product.marketplace, product.product_url)}
-                      />
-                      <span className="text-gray-500">{competitorCount} rakip</span>
-                      {stale &&
-                        (neverScraped ? (
-                          <span className="px-2 py-0.5 rounded-full border border-[#323239] bg-[#1A1A1E] text-gray-400">
-                            Veri bekleniyor
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300">
-                            Veri Eski
-                          </span>
-                        ))}
-                      {product.last_success_at && (
-                        <span className="text-gray-600 hidden sm:inline">
-                          · {timeAgo(product.last_success_at)}
+                    <div className="flex items-end justify-between gap-3">
+                      <div>
+                        <p className="text-xs text-gray-400">Sizin fiyatınız</p>
+                        <p className="text-2xl font-bold text-white tracking-tight">
+                          {myPrice ? formatTRY(myPrice) : "—"}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        {product.trend?.priceChange ? (
+                          <PriceTrend
+                            priceChange={product.trend.priceChange}
+                            priceChangePct={product.trend.priceChangePct}
+                            size="sm"
+                          />
+                        ) : null}
+                        {margin && (
+                          <p
+                            className={`text-xs font-semibold mt-1 ${
+                              margin.band === "loss"
+                                ? "text-rose-300"
+                                : margin.band === "thin"
+                                  ? "text-amber-300"
+                                  : "text-emerald-300"
+                            }`}
+                            title="Birim kâr ve kâr marjı — maliyet ürün detayından girilir"
+                          >
+                            {margin.band === "loss"
+                              ? `Zarar ${formatTRY(Math.abs(margin.profit))}`
+                              : `Kâr ${formatTRY(margin.profit)}`}{" "}
+                            (%{Math.abs(margin.marginPct).toFixed(0)})
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <PricePositionBar insight={insight} />
+
+                    <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[#1F1F23] text-xs">
+                      {searchFailed ? (
+                        <span
+                          className="px-2.5 py-1 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10 font-semibold"
+                          title={
+                            product.refresh_error ||
+                            "Rakip araması hata aldı — ürün detayından yeniden deneyin"
+                          }
+                        >
+                          Tarama hatası
                         </span>
+                      ) : scanningLikely ? (
+                        <span className="px-2.5 py-1 rounded-full border border-blue-500/25 text-blue-300 bg-blue-500/10 font-semibold">
+                          Rakipler taranıyor
+                        </span>
+                      ) : competitorCount === 0 ? (
+                        <span className="px-2.5 py-1 rounded-full border border-[#2A2A2F] text-gray-300 bg-[#1A1A1E] font-semibold">
+                          Rakip yok
+                        </span>
+                      ) : (
+                        <PositionChip insight={insight} />
                       )}
-                      <span
-                        className={`px-2 py-0.5 rounded-full border ${pricePositionHint === "Piyasanın altında" ? "border-emerald-500/20 text-emerald-300 bg-emerald-500/10" : pricePositionHint === "Rakipten pahalı" ? "border-red-500/20 text-red-300 bg-red-500/10" : pricePositionHint === "Tarama hatası" ? "border-rose-500/30 text-rose-300 bg-rose-500/10" : pricePositionHint === "Rakipler taranıyor" ? "border-blue-500/25 text-blue-300 bg-blue-500/10" : "border-[#323239] text-gray-400 bg-[#1A1A1E]"}`}
-                        title={
-                          pricePositionHint === "Tarama hatası"
-                            ? product.refresh_error ||
-                              "Rakip araması hata aldı — ürün detayından yeniden deneyin"
-                            : pricePositionHint === "Rakipler taranıyor"
-                              ? "Rakip keşfi arka planda sürüyor — sonuçlar birkaç dakika içinde görünür"
-                              : undefined
-                        }
-                      >
-                        {pricePositionHint}
-                      </span>
                       {product.status === "ERROR" && (
-                        <span className="px-2 py-0.5 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10">
+                        <span className="px-2 py-1 rounded-full border border-rose-500/30 text-rose-300 bg-rose-500/10">
                           Hata
                         </span>
                       )}
                       {product.status === "OUT_OF_STOCK" && (
-                        <span className="px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
-                          Stok Yok
+                        <span className="px-2 py-1 rounded-full border border-orange-500/30 text-orange-300 bg-orange-500/10">
+                          Stok yok
                         </span>
                       )}
                       {product.status === "PAUSED" && (
-                        <span className="px-2 py-0.5 rounded-full border border-[#323239] text-gray-400 bg-[#1A1A1E]">
+                        <span className="px-2 py-1 rounded-full border border-[#323239] text-gray-400 bg-[#1A1A1E]">
                           Duraklatıldı
                         </span>
                       )}
-                      {minCompetitorPrice !== null && (
-                        <span
-                          className="text-gray-500"
-                          title="Karara uygun (güvenilir eşleşme, fiyat bandında, taze) rakipler içindeki en düşük fiyat"
-                        >
-                          En düşük rakip: {formatTRY(minCompetitorPrice)}
-                          {myPrice !== null && myPrice > minCompetitorPrice && (
-                            <span className="text-red-300">
-                              {" "}
-                              (
-                              {formatPctTR(
-                                ((myPrice - minCompetitorPrice) / minCompetitorPrice) * 100,
-                              )}{" "}
-                              pahalısınız)
-                            </span>
-                          )}
+                      {stale && !neverScraped && (
+                        <span className="px-2 py-1 rounded-full border border-amber-500/25 bg-amber-500/10 text-amber-300">
+                          Verisi eski
                         </span>
                       )}
-                      {margin && (
-                        <span
-                          className={`px-2 py-0.5 rounded-full border ${
-                            margin.band === "loss"
-                              ? "border-rose-500/30 text-rose-300 bg-rose-500/10"
-                              : margin.band === "thin"
-                                ? "border-amber-500/25 text-amber-300 bg-amber-500/10"
-                                : "border-emerald-500/20 text-emerald-300 bg-emerald-500/10"
-                          }`}
-                          title="Kâr marjı — maliyet ürün detayından girilir"
-                        >
-                          {margin.band === "loss" ? "Zarar" : "Marj"} %{margin.marginPct.toFixed(0)}
-                        </span>
-                      )}
-                      {product.tags?.map((pt) => {
-                        const tag = pt.tag;
-                        if (!tag) return null;
-                        return (
-                          <span
-                            key={tag.id}
-                            className="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                            style={{ backgroundColor: `${tag.color}15`, color: tag.color }}
-                          >
-                            {tag.name}
-                          </span>
-                        );
-                      })}
+                      <span className="ml-auto text-gray-400">{competitorCount} rakip</span>
                     </div>
-                  </div>
-
-                  <div className="text-right shrink-0 hidden sm:block">
-                    <div className="text-white font-semibold">
-                      {myPrice ? formatTRY(myPrice) : "—"}
-                    </div>
-                    <div className="mt-1">
-                      {product.trend ? (
-                        <PriceTrend
-                          priceChange={product.trend.priceChange}
-                          priceChangePct={product.trend.priceChangePct}
-                          size="sm"
-                        />
-                      ) : (
-                        <span className="text-xs text-gray-600">
-                          {product.status === "ACTIVE"
-                            ? "Aktif"
-                            : product.status === "ERROR"
-                              ? "Hata"
-                              : "Bekliyor"}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <ProductTagSelector
-                    productId={product.id}
-                    currentTagIds={
-                      product.tags
-                        ?.map((pt) => pt.tag?.id)
-                        .filter((id): id is string => Boolean(id)) || []
-                    }
-                    onUpdated={fetchProducts}
-                  />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setDeleteConfirmProductId(product.id);
-                    }}
-                    className="p-2 text-gray-500 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition"
-                    title="Ürünü sil"
-                    aria-label="Ürünü sil"
-                  >
-                    <svg
-                      className="w-4 h-4"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                    </svg>
-                  </button>
-
-                  <svg
-                    className="w-5 h-5 text-gray-600 group-hover:text-amber-500 transition shrink-0 hidden sm:block"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                </Link>
-              );
-            },
-          )}
-        </div>
+                    <p className="-mt-2 text-[11px] text-gray-500">
+                      {neverScraped
+                        ? "İlk fiyat bekleniyor"
+                        : `Son kontrol ${formatTimeAgo(product.last_success_at)}`}
+                      {product.status !== "PAUSED" && ` · Sonraki kontrol ${nextCheck}`}
+                    </p>
+                  </Link>
+                );
+              },
+            )}
+          </div>
+        </>
       )}
 
       {!loading && !error && products.length > 0 && viewMode === "table" && (

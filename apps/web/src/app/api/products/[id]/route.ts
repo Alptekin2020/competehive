@@ -5,6 +5,7 @@ import { apiSuccess, unauthorized, notFound, badRequest, serverError } from "@/l
 import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
 import { classifyOwnPriceHistory } from "@/lib/price-history";
+import { buildPriceEvents } from "@/lib/product-insights";
 import { getMarketplaceInfo, getRetailerInfoFromDomain } from "@competehive/shared";
 
 // Ürün URL'sinin pazaryeri görünen adı ("Trendyol", "Amazon TR"). Worker kendi
@@ -56,6 +57,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         refreshCompletedAt: true,
         refreshError: true,
         lastScrapedAt: true,
+        scrapeInterval: true,
         competitors: {
           orderBy: { currentPrice: "asc" },
           select: {
@@ -67,6 +69,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
             lastScrapedAt: true,
             matchScore: true,
             matchReason: true,
+            createdAt: true,
           },
         },
         priceHistory: {
@@ -103,7 +106,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
               competitorId: { in: competitorIds },
               scrapedAt: { gte: historyWindowStart },
             },
-            select: { price: true, scrapedAt: true },
+            select: { competitorId: true, price: true, scrapedAt: true, inStock: true },
           })
         : [];
     const ownFlags = classifyOwnPriceHistory(product.priceHistory, {
@@ -113,6 +116,35 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         getMarketplaceInfo(product.marketplace).name,
         ownRetailerNameFromUrl(product.productUrl),
       ],
+    });
+
+    // Rakip başına son stok durumu (en yeni competitor_prices satırı).
+    const latestStock = new Map<string, { at: number; inStock: boolean }>();
+    for (const point of competitorPoints) {
+      const at = point.scrapedAt.getTime();
+      const prev = latestStock.get(point.competitorId);
+      if (!prev || at > prev.at)
+        latestStock.set(point.competitorId, { at, inStock: point.inStock });
+    }
+
+    // Grafik üzerindeki olay işaretleri: kendi fiyat değişimi, yeni rakip,
+    // rakip stoğunun bitmesi.
+    const events = buildPriceEvents({
+      windowStart: historyWindowStart,
+      ownHistory: product.priceHistory
+        .filter((_, index) => ownFlags[index])
+        .map((entry) => ({
+          scrapedAt: entry.scrapedAt,
+          price: Number(entry.price),
+          priceChange: entry.priceChange !== null ? Number(entry.priceChange) : null,
+          priceChangePct: entry.priceChangePct !== null ? Number(entry.priceChangePct) : null,
+        })),
+      competitors: product.competitors.map((competitor) => ({
+        id: competitor.id,
+        name: competitor.competitorName,
+        createdAt: competitor.createdAt,
+      })),
+      competitorStock: competitorPoints,
     });
 
     const responseProduct = {
@@ -130,6 +162,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       refreshCompletedAt: product.refreshCompletedAt,
       refreshError: product.refreshError,
       lastScrapedAt: product.lastScrapedAt,
+      scrapeInterval: product.scrapeInterval,
+      events,
       priceHistory: product.priceHistory.map(
         (
           entry: {
@@ -169,6 +203,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           lastScrapedAt: Date | null;
           matchScore: number | null;
           matchReason: string | null;
+          createdAt: Date;
         }) => ({
           id: competitor.id,
           competitorUrl: competitor.competitorUrl,
@@ -178,6 +213,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           lastScrapedAt: competitor.lastScrapedAt,
           matchScore: competitor.matchScore,
           matchReason: competitor.matchReason,
+          createdAt: competitor.createdAt,
+          inStock: latestStock.get(competitor.id)?.inStock ?? null,
         }),
       ),
     };

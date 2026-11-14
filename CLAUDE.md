@@ -244,22 +244,23 @@ Located in `apps/web/src/app/dashboard/`:
 
 Located in `apps/web/src/lib/`:
 
-| File                    | Purpose                                           |
-| ----------------------- | ------------------------------------------------- |
-| `prisma.ts`             | Prisma client singleton (global reference in dev) |
-| `current-user.ts`       | Clerk → DB user resolution with upsert            |
-| `api-response.ts`       | Standardized API response helpers                 |
-| `validation.ts`         | Zod schemas for API input validation              |
-| `redis.ts`              | Redis client singleton (ioredis)                  |
-| `logger.ts`             | Pino logger instance                              |
-| `rate-limit.ts`         | Rate limiting utility                             |
-| `scraper.ts`            | Web-side scraping utilities                       |
-| `marketplace-search.ts` | Marketplace search logic                          |
-| `marketplaces.ts`       | Marketplace helpers                               |
-| `ai-analyzer.ts`        | AI-powered product analysis                       |
-| `format.ts`             | tr-TR formatters, `parseTrNumber`, search folding |
-| `price-history.ts`      | Own vs competitor price-history classification    |
-| `provisional-name.ts`   | Provisional product name from the URL slug        |
+| File                    | Purpose                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `prisma.ts`             | Prisma client singleton (global reference in dev)        |
+| `current-user.ts`       | Clerk → DB user resolution with upsert                   |
+| `api-response.ts`       | Standardized API response helpers                        |
+| `validation.ts`         | Zod schemas for API input validation                     |
+| `redis.ts`              | Redis client singleton (ioredis)                         |
+| `logger.ts`             | Pino logger instance                                     |
+| `rate-limit.ts`         | Rate limiting utility                                    |
+| `scraper.ts`            | Web-side scraping utilities                              |
+| `marketplace-search.ts` | Marketplace search logic                                 |
+| `marketplaces.ts`       | Marketplace helpers                                      |
+| `ai-analyzer.ts`        | AI-powered product analysis                              |
+| `format.ts`             | tr-TR formatters, `parseTrNumber`, search folding        |
+| `price-history.ts`      | Own vs competitor price-history classification           |
+| `provisional-name.ts`   | Provisional product name from the URL slug               |
+| `product-insights.ts`   | Market position, opportunities, next check, chart events |
 
 ## Environment Variables
 
