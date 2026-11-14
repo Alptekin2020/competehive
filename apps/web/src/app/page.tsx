@@ -503,7 +503,7 @@ export default async function Home() {
               {
                 plan: "Başlangıç",
                 price: "₺299",
-                features: ["50 ürün", "Günde 1 tarama", "2 marketplace", "Telegram + E-posta"],
+                features: ["50 ürün", "6 saatte 1 tarama", "2 marketplace", "Telegram + E-posta"],
                 hl: true,
               },
               {
@@ -511,7 +511,7 @@ export default async function Home() {
                 price: "₺799",
                 features: [
                   "500 ürün",
-                  "12 saatte 1 tarama",
+                  "6 saatte 1 tarama",
                   "Tüm marketplace",
                   "Analitik dashboard",
                 ],
@@ -595,7 +595,7 @@ export default async function Home() {
               },
               {
                 q: "Fiyatlar ne sıklıkta güncellenir?",
-                a: "Planınıza göre 6-24 saatte bir otomatik taranır; dilediğiniz an tek tıkla elle yenileyebilirsiniz. Rakip fiyatları ayrıca arka planda sürekli tazelenir.",
+                a: "Ücretli planlarda 6 saatte bir, ücretsiz planda günde bir otomatik taranır; dilediğiniz an tek tıkla elle yenileyebilirsiniz.",
               },
               {
                 q: "Bildirim kurmak zor mu? Her ürün için ayrı ayar mı gerekiyor?",
