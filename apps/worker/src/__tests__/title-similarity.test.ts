@@ -3,6 +3,9 @@ import { verifyProductMatch } from "../matcher";
 import {
   compareTitles,
   hasConflictingQuantities,
+  hasMultipackSignal,
+  hasPackOrSpecConflict,
+  urlSlugText,
   hasDifferentProductCodes,
   isNearIdenticalTitle,
   isStrongTitleOverlap,
@@ -153,5 +156,51 @@ describe("verifyProductMatch — near-identical titles skip the AI", () => {
       { title: "Kahve Dünyası Tambol Çilekli Milföy Dolgulu 100 gr", price: 1200 },
     );
     expect(result.score).toBeLessThan(70);
+  });
+});
+
+// 15 Kasım 2026 prod vakası: kısaltılmış arama başlığı paket bilgisini gizledi,
+// N11'deki 6'lı paket (455,80 ₺) tekli ürünün (159,90 ₺) rakibi olarak yazıldı.
+describe("multipack guards (Tambol prod false positive)", () => {
+  const N11_PAGE_TITLE =
+    "Kahve Dünyası Tambol Çilekli Milföy Dolgulu Sütlü Çikolata 100 Gr X 6 Adet";
+  const PTT_URL =
+    "https://www.pttavm.com/kahve-dunyasi-tambol-cilekli-milfoy-dolgulu-sutlu-cikolata-100-g-7-li-paket-p-1546025547";
+
+  it("detects a multipack when the source states no quantity", () => {
+    expect(hasMultipackSignal(TAMBOL, N11_PAGE_TITLE)).toBe(true);
+    expect(hasMultipackSignal(TAMBOL, "Tambol 100 G (7'li Paket)")).toBe(true);
+    expect(hasMultipackSignal(TAMBOL, "Tambol 6x100 gr")).toBe(true);
+    expect(hasMultipackSignal(TAMBOL, "Kahve Dünyası Tambol Çilekli 100 gr 1 Adet")).toBe(false);
+    expect(hasMultipackSignal(ICOLLAGEN, "icollagen 60 Tablet")).toBe(false);
+  });
+
+  it("never accepts the full multipack title as near-identical", () => {
+    expect(isNearIdenticalTitle(TAMBOL, N11_PAGE_TITLE)).toBe(false);
+  });
+
+  it("reads the pack size from the URL path", () => {
+    expect(urlSlugText(PTT_URL)).toContain("7 li paket");
+    expect(hasPackOrSpecConflict(TAMBOL, urlSlugText(PTT_URL))).toBe(true);
+    expect(urlSlugText("not a url")).toBe("");
+  });
+
+  it("does not auto-accept a truncated title whose URL shows a multipack", async () => {
+    const result = await verifyProductMatch(
+      { title: TAMBOL, price: 159.9 },
+      { title: "Kahve Dünyası Tambol Çilekli Milföy Dolgulu Sütlü Çikolata", url: PTT_URL },
+    );
+    expect(result.score).toBeLessThan(70);
+  });
+
+  it("still accepts the single pack when the URL shows no conflict", async () => {
+    const result = await verifyProductMatch(
+      { title: TAMBOL, price: 159.9 },
+      {
+        title: "Kahve Dünyası Tambol Çilekli Milföy Dolgulu Sütlü Çikolata 100 gr",
+        url: "https://www.trendyol.com/kahve-dunyasi/tambol-cilekli-milfoy-dolgulu-100-gr-p-812345678",
+      },
+    );
+    expect(result.isMatch).toBe(true);
   });
 });

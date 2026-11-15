@@ -15,6 +15,7 @@ import { getScraper } from "../scrapers";
 import { extractRetailer } from "../serper";
 import { MIN_MATCH_SCORE, withinPriceBand } from "../utils/competitor-quality";
 import { readMatchReview } from "../utils/match-review";
+import { hasPackOrSpecConflict } from "../utils/title-similarity";
 import { alertQueue } from "./processor";
 
 export interface CompetitorScrapeJobData {
@@ -37,7 +38,7 @@ export async function processCompetitorScrapeJob(
       currentPrice: true,
       matchScore: true,
       matchAttributes: true,
-      trackedProduct: { select: { currentPrice: true, status: true } },
+      trackedProduct: { select: { currentPrice: true, status: true, productName: true } },
     },
   });
   if (!competitor) {
@@ -79,6 +80,26 @@ export async function processCompetitorScrapeJob(
     throw new Error(
       `Competitor scrape returned no price: ${competitor.competitorUrl.slice(0, 80)}`,
     );
+  }
+
+  // Sayfanın gerçek başlığı, keşifte görülen kısaltılmış arama başlığının
+  // gizlediği paket/ölçü farkını gösterebilir (prod 15 Kasım: "…100 Gr X 6
+  // Adet" ilanı tekli ürünün rakibi olarak yazıldı). Keşfin fiyatsız bıraktığı
+  // otomatik satırda böyle bir çelişki varsa fiyat yazılmaz ve satır silinir.
+  const ownName = competitor.trackedProduct?.productName ?? "";
+  if (
+    isAutomated &&
+    neverPriced &&
+    ownName &&
+    scraped.name &&
+    hasPackOrSpecConflict(ownName, scraped.name)
+  ) {
+    logger.warn(
+      { competitorId, scrapedName: scraped.name.slice(0, 120) },
+      "Competitor page title shows a different pack or size — ignored",
+    );
+    await dropIfUnpriced("pack-or-size-mismatch");
+    return { success: false };
   }
 
   // Fiyat makullük kapısı (otomatik satırlar): keşif turundaki 0.3x–3x bandının
