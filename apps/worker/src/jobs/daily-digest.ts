@@ -28,6 +28,27 @@ const CLAIM_TTL_SECONDS = 36 * 60 * 60;
 // (10 dakikalık kontrol her turda aynı satırı basmasın).
 let lastIdleLogDateKey: string | null = null;
 
+// 15 Kasım 2026: dört kullanıcının günlük kilidi alındı ama ne gönderim ne
+// hata logu oluştu — tur bir await'te asılı kalmış, 10 dakikalık her kontrol
+// sıradaki kullanıcının kilidini alıp aynı yerde takılmıştı. Her adım süre
+// sınırına bağlanır; aşılırsa hangi adımın takıldığı loglanır ve tur devam eder.
+const STEP_TIMEOUT_MS = 90_000;
+
+async function withStepTimeout<T>(step: string, work: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Daily digest step timed out: ${step}`)),
+      STEP_TIMEOUT_MS,
+    );
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadDigestProducts(userId: string, now: Date): Promise<DigestProductInput[]> {
   const products = await prisma.trackedProduct.findMany({
     where: { userId, status: "ACTIVE" },
@@ -123,12 +144,16 @@ export async function runDailyDigestIfDue(now: Date = new Date()): Promise<void>
         continue;
       }
 
-      const digest = buildDigest(await loadDigestProducts(user.id, now), now);
+      logger.info({ dateKey, userId: user.id }, "Daily digest building for user");
+      const digest = buildDigest(
+        await withStepTimeout("load-products", loadDigestProducts(user.id, now)),
+        now,
+      );
       if (digest.actionableProductCount === 0) {
         quiet++;
         continue;
       }
-      const outcome = await sendDailyDigestEmail(user, digest);
+      const outcome = await withStepTimeout("send-email", sendDailyDigestEmail(user, digest));
       if (outcome.status === "SENT") sent++;
       else failed++;
     } catch (err) {
