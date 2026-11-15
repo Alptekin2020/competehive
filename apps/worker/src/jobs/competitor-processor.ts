@@ -32,6 +32,8 @@ import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 
 export { buildZeroReason };
 import { alertQueue, competitorQueue } from "./processor";
+import { resolveDirectListings } from "./direct-listing";
+import { readGoogleKey } from "../utils/direct-listing";
 import type { CompetitorPriceMove } from "./alert-rules";
 import { MAX_DIRECT_SCRAPES_PER_ROUND, shouldSearchMarketplacePages } from "../utils/second-source";
 import {
@@ -297,6 +299,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // geldiğinde "yeni rakip" sanılıp hem tekrar AI'a gidiyor hem listede
     // mükerrer satır oluşturuyordu.
     const knownByUrl = new Map(knownCompetitors.map((c) => [competitorUrlKey(c.competitorUrl), c]));
+    // Gerçek ürün sayfasına taşınmış rakipler, Google'ın aynı ürün kartı
+    // yeniden geldiğinde de tanınmalı — aksi halde her turda mükerrer satır açılır.
+    for (const c of knownCompetitors) {
+      const googleKey = readGoogleKey(c.matchAttributes);
+      if (googleKey && !knownByUrl.has(googleKey)) knownByUrl.set(googleKey, c);
+    }
 
     // Bu turda tespit edilen anlamlı-olabilecek rakip fiyat hareketleri —
     // tur sonunda tek bir alert job'ına eklenir (COMPETITOR_PRICE_CHANGE).
@@ -932,6 +940,19 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         previousInStock: null,
         competitorMoves,
       });
+    }
+
+    // Google ürün kartına bağlı rakipleri satıcının gerçek ürün sayfasına taşı
+    // (ürün başına tur başına sınırlı arama). Hatası turu bozmaz.
+    try {
+      const direct = await resolveDirectListings(productId, title, now);
+      if (direct.searched > 0) {
+        console.log(
+          `🔗 Gerçek ürün sayfası araması: ${direct.searched} arandı, ${direct.linked} bağlandı, ${direct.merged} mükerrer birleştirildi`,
+        );
+      }
+    } catch (err) {
+      console.error(`Gerçek ürün sayfası araması hatası (${productId}):`, err);
     }
 
     // Tamamlandı — 0 kayıtta kullanıcıya YALNIZCA anlamlı, baskın sebebi yaz
