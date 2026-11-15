@@ -24,7 +24,7 @@ import {
   sharesStrongProductCode,
   withinPriceBand,
 } from "../utils/competitor-quality";
-import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
+import { competitorUrlKey, isSameListing, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { buildSearchQueries, cleanProductTitle } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
@@ -312,7 +312,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     const processResults = async (batch: SerperShoppingResult[]) => {
       for (const result of batch) {
-        if (ownUrlKey && urlMatchKey(result.link) === ownUrlKey) {
+        if (
+          (ownUrlKey && urlMatchKey(result.link) === ownUrlKey) ||
+          isSameListing(result.link, product.productUrl || url || "")
+        ) {
           // KENDİ İLANIMIZ — rakip olarak yazılmaz. Ürünün kendi fiyatı hâlâ
           // yoksa buradan KURTARILIR: Trendyol, Railway IP'lerini 403'lediği
           // için scraper fiyatı hiç alamayabiliyor (Philips Airfryer prod

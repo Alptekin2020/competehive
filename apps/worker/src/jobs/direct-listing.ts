@@ -21,7 +21,7 @@ import {
 import { logger } from "../utils/logger";
 import { readMatchReview } from "../utils/match-review";
 import { cleanProductTitle } from "../utils/search-queries";
-import { competitorUrlKey } from "../utils/url-match";
+import { competitorUrlKey, isSameListing } from "../utils/url-match";
 import { competitorQueue } from "./processor";
 
 export interface DirectListingOutcome {
@@ -45,6 +45,12 @@ export async function resolveDirectListings(
   const outcome: DirectListingOutcome = { searched: 0, linked: 0, merged: 0 };
   const cleanedOwnTitle = cleanProductTitle(ownTitle);
   if (cleanedOwnTitle.length < 3) return outcome;
+
+  const product = await prisma.trackedProduct.findUnique({
+    where: { id: productId },
+    select: { productUrl: true },
+  });
+  const ownUrl = product?.productUrl ?? "";
 
   const competitors = await prisma.competitor.findMany({
     where: { trackedProductId: productId },
@@ -91,7 +97,10 @@ export async function resolveDirectListings(
       const picked = pickDirectListing(
         cleanedOwnTitle,
         competitorTitle,
-        results.map((r) => ({ title: cleanProductTitle(r.title), link: r.link })),
+        results
+          // Kendi ilanımız rakip olamaz (slug farklı olsa bile aynı ürün id'si).
+          .filter((r) => !isSameListing(r.link, ownUrl))
+          .map((r) => ({ title: cleanProductTitle(r.title), link: r.link })),
       );
 
       if (!picked) {

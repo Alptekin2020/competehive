@@ -14,6 +14,44 @@ export function urlMatchKey(url: string | null | undefined): string {
   }
 }
 
+/**
+ * Marketplace listing identity: the product id inside the URL, so two links to
+ * the same listing match even when their slugs differ (Trendyol keeps serving
+ * `…-50ml-p-684477925` and `…-50-ml-p-684477925` for one product). Falls back
+ * to host + path. Seller params are ignored on purpose: the listing page shows
+ * one buy-box price, so a link to our own listing is our own price.
+ */
+export function listingIdentity(url: string | null | undefined): string {
+  if (typeof url !== "string" || url.length === 0) return "";
+  try {
+    const parsed = new URL(url);
+    const host = parsed.host.toLowerCase().replace(/^www\./, "");
+    const path = parsed.pathname;
+    if (host.endsWith("trendyol.com")) {
+      const m = path.match(/-p-(\d+)(?:\/|$)/);
+      if (m) return `trendyol:${m[1]}`;
+    } else if (host.endsWith("hepsiburada.com")) {
+      const m = path.match(/-p(?:m)?-([a-z0-9]+)(?:\/|$)/i);
+      if (m) return `hepsiburada:${m[1].toUpperCase()}`;
+    } else if (host.endsWith("amazon.com.tr")) {
+      const m = path.match(/\/(?:dp|gp\/product)\/([a-z0-9]{10})(?:[/?]|$)/i);
+      if (m) return `amazon:${m[1].toUpperCase()}`;
+    } else if (host.endsWith("n11.com")) {
+      const m = path.match(/^\/urun\/.*-(\d+)(?:\/|$)/);
+      if (m) return `n11:${m[1]}`;
+    }
+    return urlMatchKey(url);
+  } catch {
+    return urlMatchKey(url);
+  }
+}
+
+/** True when both URLs point to the same marketplace listing. */
+export function isSameListing(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ka = listingIdentity(a);
+  return ka.length > 0 && ka === listingIdentity(b);
+}
+
 // Query parameters that never change WHICH listing a URL points to. Google
 // Shopping appends a fresh `srsltid` to merchant links on every search, and
 // marketplaces add campaign/tracking noise — comparing raw URLs then treats the
