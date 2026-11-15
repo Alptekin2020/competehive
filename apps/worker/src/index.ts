@@ -11,6 +11,7 @@ import {
   backfillCompetitorMarketplaces,
   cleanupJunkCompetitors,
   purgeRecoveryBugCompetitors,
+  purgeTitleAcceptMismatches,
 } from "./jobs/competitor-cleanup";
 import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
@@ -217,6 +218,7 @@ async function start() {
   try {
     await cleanupJunkCompetitors();
     await purgeRecoveryBugCompetitors();
+    await purgeTitleAcceptMismatches();
   } catch (err) {
     logger.error({ err }, "Junk-competitor cleanup failed — continuing");
   }

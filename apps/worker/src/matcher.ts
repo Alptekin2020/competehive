@@ -12,7 +12,12 @@ import {
   sharesStrongProductCode,
   withinPriceBand,
 } from "./utils/competitor-quality";
-import { isNearIdenticalTitle, isStrongTitleOverlap } from "./utils/title-similarity";
+import {
+  hasPackOrSpecConflict,
+  isNearIdenticalTitle,
+  isStrongTitleOverlap,
+  urlSlugText,
+} from "./utils/title-similarity";
 
 let openai: OpenAI | null = null;
 
@@ -252,7 +257,11 @@ export async function verifyProductMatch(
     typeof candidate.price !== "number" ||
     candidate.price <= 0 ||
     withinPriceBand(sourceProduct.price, candidate.price);
-  if (priceInBand && isNearIdenticalTitle(cleanedSource, cleanedCandidate)) {
+  // Arama sonucu başlıkları kısaltılmış gelebilir; paket bilgisi çoğu zaman URL
+  // yolunda durur ("…100-g-7-li-paket"). URL çelişki gösteriyorsa deterministik
+  // kabul yapılmaz, karar AI'a kalır.
+  const urlConflict = hasPackOrSpecConflict(cleanedSource, urlSlugText(candidate.url));
+  if (!urlConflict && priceInBand && isNearIdenticalTitle(cleanedSource, cleanedCandidate)) {
     return {
       isMatch: true,
       score: 88,
@@ -415,6 +424,7 @@ SKOR REHBERİ:
       finalScore >= 50 &&
       parsed.categoryMatch !== false &&
       priceInBand &&
+      !urlConflict &&
       isStrongTitleOverlap(cleanedSource, cleanedCandidate)
     ) {
       logger.info(

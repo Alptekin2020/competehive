@@ -192,13 +192,22 @@ export function compareTitles(sourceTitle: string, candidateTitle: string): Titl
 }
 
 // Paket içi adet / çoklu paket: "60 adet", "60'lı", "60 Tablet", "2 Adet".
-const QUANTITY_RE = /(\d+)\s*'?\s*(?:adet|li|lu|tablet|kapsul|sase|servis|x)\b/g;
+const QUANTITY_RE = /(\d+)\s*['’]?\s*(?:adet|li|lu|tablet|kapsul|sase|servis)\b/g;
+// "X 6 Adet", "6 x 100 gr", "6x100": çarpanlı çoklu paket yazımı.
+const MULTIPLIER_RES = [/\bx\s*(\d+)\b/g, /\b(\d+)\s*x\s*\d/g];
 
 function quantities(title: string): Set<number> {
   const set = new Set<number>();
-  for (const m of fold(title).matchAll(QUANTITY_RE)) {
+  const folded = fold(title);
+  for (const m of folded.matchAll(QUANTITY_RE)) {
     const n = parseInt(m[1], 10);
     if (Number.isFinite(n) && n > 0) set.add(n);
+  }
+  for (const re of MULTIPLIER_RES) {
+    for (const m of folded.matchAll(re)) {
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n) && n > 0) set.add(n);
+    }
   }
   return set;
 }
@@ -215,6 +224,45 @@ export function hasConflictingQuantities(a: string, b: string): boolean {
   if (qa.size !== qb.size) return true;
   for (const v of qa) if (!qb.has(v)) return true;
   return false;
+}
+
+/**
+ * Aday çoklu paket gibi görünüyor ama kaynak hiç adet yazmıyor: "100 gr" ↔
+ * "100 Gr X 6 Adet", "100 G (7'li Paket)". Prod (15 Kasım): arama sonucundaki
+ * kısaltılmış başlık paket bilgisini gizledi, 6'lı paket 88 puanla tekli ürünün
+ * rakibi oldu. Tek taraflı bilgi normalde çelişki değildir; ama fazladan adet
+ * bilgisi fiyatı katlayan bir farktır, bu yüzden deterministik kabulü engeller.
+ */
+export function hasMultipackSignal(sourceText: string, candidateText: string): boolean {
+  if (quantities(sourceText).size > 0) return false;
+  for (const n of quantities(candidateText)) if (n >= 2) return true;
+  return false;
+}
+
+/** URL yolunu sözcüklere çevirir: "/urun-100-g-7-li-paket-p-123" → "urun 100 g 7 li paket p 123". */
+export function urlSlugText(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    return decodeURIComponent(new URL(url).pathname)
+      .replace(/[-_/+.]+/g, " ")
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Paket adedi ya da ölçü (ml, gr, GB, fincan…) çelişkisi. Model kodu
+ * karşılaştırması içermez: URL yolundaki ilan numaraları kod sanılmasın diye
+ * URL metni ve taranan sayfa başlığı bu dar denetimden geçer.
+ */
+export function hasPackOrSpecConflict(sourceText: string, candidateText: string): boolean {
+  return (
+    hasConflictingSpecs(sourceText, candidateText) ||
+    hasConflictingCountDescriptors(sourceText, candidateText) ||
+    hasConflictingQuantities(sourceText, candidateText) ||
+    hasMultipackSignal(sourceText, candidateText)
+  );
 }
 
 /**
@@ -235,6 +283,7 @@ export function hasTitleConflict(sourceTitle: string, candidateTitle: string): b
     hasConflictingSpecs(sourceTitle, candidateTitle) ||
     hasConflictingCountDescriptors(sourceTitle, candidateTitle) ||
     hasConflictingQuantities(sourceTitle, candidateTitle) ||
+    hasMultipackSignal(sourceTitle, candidateTitle) ||
     hasDifferentProductCodes(sourceTitle, candidateTitle) ||
     compareProductCodes(sourceTitle, candidateTitle) === "config-variant"
   );

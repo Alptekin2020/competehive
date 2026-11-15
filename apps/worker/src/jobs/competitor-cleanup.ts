@@ -20,6 +20,7 @@
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { MIN_MATCH_SCORE, isPackagingListing } from "../utils/competitor-quality";
+import { hasPackOrSpecConflict, urlSlugText } from "../utils/title-similarity";
 
 // Silme bandı — görüntüleme bandından bilinçli olarak daha geniş.
 export const PURGE_BAND_MIN_RATIO = 0.2;
@@ -219,6 +220,60 @@ export async function purgeRecoveryBugCompetitors(): Promise<number> {
   }
   await prisma.competitor.deleteMany({ where: { id: { in: ids } } });
   logger.info({ purged: ids.length }, "Recovery-bug competitors purged (one-off)");
+  return ids.length;
+}
+
+// ============================================
+// Deterministik başlık kabulünün yanlış pozitifleri
+// ============================================
+//
+// 15 Kasım 2026: "neredeyse aynı başlık" kabulü, arama sonucundaki kısaltılmış
+// başlık yüzünden çoklu paket ilanlarını (N11 "…100 Gr X 6 Adet") tekli ürünün
+// rakibi olarak kaydetti. Bu kabulle yazılmış satırlar URL yolu ve kayıtlı
+// adla yeniden denetlenir; paket/ölçü çelişkisi olanlar grafik ikizleriyle
+// birlikte silinir. Idempotent: çelişkisiz satırlara dokunmaz.
+
+const TITLE_ACCEPT_REASON_PREFIXES = ["Başlıklar neredeyse aynı", "Başlıklar büyük oranda aynı"];
+
+export async function purgeTitleAcceptMismatches(): Promise<number> {
+  const rows = await prisma.competitor.findMany({
+    where: { OR: TITLE_ACCEPT_REASON_PREFIXES.map((p) => ({ matchReason: { startsWith: p } })) },
+    select: {
+      id: true,
+      trackedProductId: true,
+      competitorName: true,
+      competitorUrl: true,
+      matchAttributes: true,
+      trackedProduct: { select: { productName: true } },
+      competitorPrices: { select: { price: true, scrapedAt: true } },
+    },
+  });
+  const doomed = rows.filter((r) => {
+    const review = (r.matchAttributes as Record<string, unknown> | null)?.review;
+    if (review === "confirmed") return false;
+    const own = r.trackedProduct?.productName ?? "";
+    if (!own) return false;
+    return (
+      hasPackOrSpecConflict(own, r.competitorName ?? "") ||
+      hasPackOrSpecConflict(own, urlSlugText(r.competitorUrl))
+    );
+  });
+  const ids = doomed.map((r) => r.id);
+  if (ids.length === 0) return 0;
+
+  const twins = doomed.flatMap((r) =>
+    r.competitorPrices.map((cp) => ({
+      trackedProductId: r.trackedProductId,
+      scrapedAt: cp.scrapedAt,
+      price: cp.price,
+      previousPrice: null,
+    })),
+  );
+  if (twins.length > 0) {
+    await prisma.priceHistory.deleteMany({ where: { OR: twins } });
+  }
+  await prisma.competitor.deleteMany({ where: { id: { in: ids } } });
+  logger.info({ purged: ids.length }, "Title-accept pack/size mismatches purged");
   return ids.length;
 }
 
