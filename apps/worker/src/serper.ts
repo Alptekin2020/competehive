@@ -405,12 +405,18 @@ export function isMarketplaceProductUrl(link: string): boolean {
   if (host === "amazon.com.tr") return /\/(dp|gp\/product)\/[a-z0-9]{10}(\/|$)/.test(path);
   if (host === "pazarama.com") return /-p-[a-z0-9]+\/?$/.test(path);
   if (host === "pttavm.com") return /-p-\d+\/?$/.test(path);
+  if (host === "teknosa.com") return /-p-\d+\/?$/.test(path);
+  if (host === "vatanbilgisayar.com") return /^\/[^/]+\.html$/.test(path);
+  if (host === "mediamarkt.com.tr") return /^\/tr\/product\/[^/]+\.html$/.test(path);
   return false;
 }
 
-export function buildMarketplaceSearchQuery(query: string): string {
-  const sites = MARKETPLACE_SEARCH_DOMAINS.map((d) => `site:${d}`).join(" OR ");
-  return `${query.trim()} (${sites})`;
+export function buildMarketplaceSearchQuery(
+  query: string,
+  domains: readonly string[] = MARKETPLACE_SEARCH_DOMAINS,
+): string {
+  const sites = domains.map((d) => `site:${d}`).join(" OR ");
+  return domains.length === 1 ? `${query.trim()} ${sites}` : `${query.trim()} (${sites})`;
 }
 
 interface SerperOrganicResult {
@@ -452,8 +458,11 @@ export function mapOrganicToShoppingResults(
   return out;
 }
 
-export async function searchMarketplacePages(query: string): Promise<SerperShoppingResult[]> {
-  const fullQuery = buildMarketplaceSearchQuery(query);
+export async function searchMarketplacePages(
+  query: string,
+  domains: readonly string[] = MARKETPLACE_SEARCH_DOMAINS,
+): Promise<SerperShoppingResult[]> {
+  const fullQuery = buildMarketplaceSearchQuery(query, domains);
   // Shopping önbelleğiyle çakışmaması için ayrı anahtar öneki.
   const cacheKey = `web:${fullQuery}`;
   const cached = await getCachedSerperResults(cacheKey);

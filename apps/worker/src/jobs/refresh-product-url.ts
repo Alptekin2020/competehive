@@ -23,6 +23,8 @@ import {
   type KnownCompetitorSnapshot,
 } from "../utils/stale-competitors";
 import { competitorQueue } from "./processor";
+import { resolveDirectListings } from "./direct-listing";
+import { readGoogleKey } from "../utils/direct-listing";
 import { readCompetitorSeller, readMatchReview, withCompetitorSeller } from "../utils/match-review";
 
 interface RefreshUrlJobData {
@@ -259,6 +261,14 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           matchAttributes: c.matchAttributes,
         });
         competitorByUrl.set(urlKey, list);
+        // Gerçek ürün sayfasına taşınmış rakip, Google'ın ürün kartı anahtarıyla
+        // da bulunur: fiyatı bu turda Google sonucundan güncellenmeye devam eder.
+        const googleKey = readGoogleKey(c.matchAttributes);
+        if (googleKey && googleKey !== urlKey) {
+          const aliasList = competitorByUrl.get(googleKey) ?? [];
+          aliasList.push(list[list.length - 1]);
+          competitorByUrl.set(googleKey, aliasList);
+        }
       }
     }
 
@@ -473,7 +483,8 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     // başlayanları (24 saat+) worker'ın doğrudan scraper zincirine ver. Bu işler
     // kendi fiyat geçmişini yazar ve hareket varsa kendi uyarısını kuyruğa alır.
     const staleTargets = pickStaleCompetitorsForDirectScrape(
-      [...competitorByUrl.values()].flat(),
+      // Takma anahtarlar aynı kaydı iki kez listeler; kimliğe göre tekilleştir.
+      [...new Map([...competitorByUrl.values()].flat().map((c) => [c.id, c])).values()],
       updatedCompetitorIds,
       now,
     );
@@ -493,6 +504,21 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
         directScrapesQueued++;
       } catch (err) {
         console.error(`Bayat rakip tarama kuyruğa alınamadı (${target.id}):`, err);
+      }
+    }
+
+    // 7.6. Google ürün kartına bağlı rakipleri satıcının gerçek ürün sayfasına
+    // taşı (ürün başına tur başına sınırlı arama). Hatası turu bozmaz.
+    for (const sibling of siblings) {
+      try {
+        const direct = await resolveDirectListings(sibling.id, sibling.productName, now);
+        if (direct.searched > 0) {
+          console.log(
+            `🔗 Gerçek ürün sayfası araması (${sibling.id}): ${direct.searched} arandı, ${direct.linked} bağlandı, ${direct.merged} mükerrer birleştirildi`,
+          );
+        }
+      } catch (err) {
+        console.error(`Gerçek ürün sayfası araması hatası (${sibling.id}):`, err);
       }
     }
 

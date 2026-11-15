@@ -169,6 +169,13 @@ export interface TitleSimilarity {
   hasVariantExtra: boolean;
   /** Yalnızca bir başlıkta geçen sözcükler arasında rakam içeren var mı? */
   hasNumericExtra: boolean;
+  /**
+   * İKİ başlıkta da diğerinde olmayan sözcük var mı? Bu bir "yer değiştirme"
+   * sinyalidir: aynı kalıpta tek sözcüğü farklı ilanlar çoğunlukla aroma, koku
+   * ya da çeşit varyantıdır ("Çilekli" ↔ "Fıstıklı"). Deterministik olarak
+   * renkten ayırt edilemez; bu yüzden karar AI'a bırakılır.
+   */
+  hasSwappedWords: boolean;
 }
 
 export function compareTitles(sourceTitle: string, candidateTitle: string): TitleSimilarity {
@@ -188,6 +195,7 @@ export function compareTitles(sourceTitle: string, candidateTitle: string): Titl
     hasVariantExtra:
       extras.some((t) => VARIANT_TOKENS.has(t)) || candidateExtras.some((t) => FORM_TOKENS.has(t)),
     hasNumericExtra: extras.some((t) => /\d/.test(t)),
+    hasSwappedWords: sourceExtras.length > 0 && candidateExtras.length > 0,
   };
 }
 
@@ -305,6 +313,7 @@ export function isNearIdenticalTitle(sourceTitle: string, candidateTitle: string
     sim.candidateCoverage >= 0.7 &&
     !sim.hasVariantExtra &&
     !sim.hasNumericExtra &&
+    !sim.hasSwappedWords &&
     !hasTitleConflict(sourceTitle, candidateTitle)
   );
 }
@@ -317,7 +326,9 @@ export function isNearIdenticalTitle(sourceTitle: string, candidateTitle: string
  */
 export function isStrongTitleOverlap(sourceTitle: string, candidateTitle: string): boolean {
   const sim = compareTitles(sourceTitle, candidateTitle);
-  if (!sim.brandShared || sim.hasVariantExtra) return false;
+  // Tek sözcüğü yer değiştirmiş başlıklar (aroma/çeşit varyantı) deterministik
+  // olarak yükseltilmez; AI'ın kararsız kaldığı yerde kullanıcı onayı beklenir.
+  if (!sim.brandShared || sim.hasVariantExtra || sim.hasSwappedWords) return false;
   const mostlySame =
     sim.shared >= MIN_SHARED_TOKENS && sim.sourceCoverage >= 0.8 && sim.candidateCoverage >= 0.6;
   const abbreviation =
