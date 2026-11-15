@@ -13,6 +13,9 @@
 //   2) Skoru olmayan/zayıf kayıtlarda aşırı fiyat sapması (0.2x–5x dışı) —
 //      görüntüleme bandından (0.3x–3x) bilerek daha geniş; silme geri alınamaz,
 //      bu yüzden sadece kesin vakaları kapsar.
+//   3) Ürünün KENDİ ilanına bağlanmış otomatik rakipler (aynı pazaryeri ürün
+//      id'si, slug farklı olabilir). Kullanıcının elle eklediği (skorsuz) veya
+//      onayladığı satırlar silinmez.
 // Güçlü AI skoru (>= MIN_MATCH_SCORE) olan kayıtlar fiyat sapsa bile silinmez —
 // fiyat meşru şekilde değişmiş olabilir; onları görüntüleme katmanı zaten
 // karar dışı bırakıyor.
@@ -20,23 +23,28 @@
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { MIN_MATCH_SCORE, isPackagingListing } from "../utils/competitor-quality";
+import { readMatchReview } from "../utils/match-review";
 import { hasPackOrSpecConflict, urlSlugText } from "../utils/title-similarity";
+import { isSameListing } from "../utils/url-match";
 
 // Silme bandı — görüntüleme bandından bilinçli olarak daha geniş.
 export const PURGE_BAND_MIN_RATIO = 0.2;
 export const PURGE_BAND_MAX_RATIO = 5.0;
 
-export type PurgeReason = "packaging" | "price-out-of-band" | null;
+export type PurgeReason = "packaging" | "price-out-of-band" | "own-listing" | null;
 
 export interface PurgeCandidate {
   competitorName: string | null;
   competitorPrice: number | null;
   matchScore: number | null;
+  competitorUrl?: string | null;
+  matchAttributes?: unknown;
 }
 
 export interface PurgeContext {
   productName: string;
   ownPrice: number | null;
+  productUrl?: string | null;
 }
 
 /**
@@ -52,6 +60,17 @@ export function shouldPurgeCompetitor(
     isPackagingListing(candidate.competitorName, context.productName)
   ) {
     return "packaging";
+  }
+
+  // Otomatik bir satır ürünün kendi ilanını gösteriyorsa "rakip" kendi
+  // fiyatımızdır: pozisyon ve alarmları bozar.
+  if (
+    candidate.matchScore !== null &&
+    candidate.matchScore !== undefined &&
+    readMatchReview(candidate.matchAttributes) !== "confirmed" &&
+    isSameListing(candidate.competitorUrl, context.productUrl)
+  ) {
+    return "own-listing";
   }
 
   const strongScore =
@@ -97,9 +116,11 @@ export async function cleanupJunkCompetitors(): Promise<{
     const batch: Array<{
       id: string;
       competitorName: string | null;
+      competitorUrl: string;
       currentPrice: unknown;
       matchScore: number | null;
-      trackedProduct: { productName: string; currentPrice: unknown } | null;
+      matchAttributes: unknown;
+      trackedProduct: { productName: string; currentPrice: unknown; productUrl: string } | null;
     }> = await prisma.competitor.findMany({
       take: PAGE_SIZE,
       // Keyset sayfalama (id > cursor): Prisma `cursor` sayfalaması cursor
@@ -110,10 +131,12 @@ export async function cleanupJunkCompetitors(): Promise<{
       select: {
         id: true,
         competitorName: true,
+        competitorUrl: true,
         currentPrice: true,
         matchScore: true,
+        matchAttributes: true,
         trackedProduct: {
-          select: { productName: true, currentPrice: true },
+          select: { productName: true, currentPrice: true, productUrl: true },
         },
       },
     });
@@ -130,9 +153,12 @@ export async function cleanupJunkCompetitors(): Promise<{
           competitorName: row.competitorName,
           competitorPrice: row.currentPrice != null ? Number(row.currentPrice) : null,
           matchScore: row.matchScore,
+          competitorUrl: row.competitorUrl,
+          matchAttributes: row.matchAttributes,
         },
         {
           productName: row.trackedProduct.productName,
+          productUrl: row.trackedProduct.productUrl,
           ownPrice:
             row.trackedProduct.currentPrice != null
               ? Number(row.trackedProduct.currentPrice)
