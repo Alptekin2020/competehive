@@ -12,6 +12,7 @@ import {
   sharesStrongProductCode,
   withinPriceBand,
 } from "./utils/competitor-quality";
+import { isNearIdenticalTitle, isStrongTitleOverlap } from "./utils/title-similarity";
 
 let openai: OpenAI | null = null;
 
@@ -237,6 +238,35 @@ export async function verifyProductMatch(
     }
   }
 
+  // NEREDEYSE AYNI BAŞLIK: model kodu olmayan ürünlerde (gıda, takviye,
+  // kozmetik) yukarıdaki kod yolu çalışmaz ve karar AI'a kalırdı; AI ise
+  // birebir aynı başlığı bile reddedebiliyor (prod: "Kahve Dünyası Tambol
+  // Çilekli Milföy Dolgulu 100 gr" ↔ aynı başlık → 30 puan, ürün 0 rakip).
+  // Marka ortak, sözcüklerin büyük çoğunluğu iki yönde de örtüşüyor ve hiçbir
+  // çelişki/varyant sinyali yoksa AI'a sorulmadan kabul edilir.
+  const cleanedSource = cleanProductTitle(sourceProduct.title);
+  const cleanedCandidate = cleanProductTitle(candidate.title);
+  const priceInBand =
+    typeof sourceProduct.price !== "number" ||
+    sourceProduct.price <= 0 ||
+    typeof candidate.price !== "number" ||
+    candidate.price <= 0 ||
+    withinPriceBand(sourceProduct.price, candidate.price);
+  if (priceInBand && isNearIdenticalTitle(cleanedSource, cleanedCandidate)) {
+    return {
+      isMatch: true,
+      score: 88,
+      reason: "Başlıklar neredeyse aynı (marka ve ürün adı birebir örtüşüyor)",
+      attributes: {
+        brandMatch: true,
+        modelMatch: true,
+        specMatch: true,
+        categoryMatch: true,
+        details: "Deterministik başlık örtüşmesi; spec/adet/kod çelişkisi yok",
+      },
+    };
+  }
+
   const client = getOpenAIClient();
   if (!client) {
     return fallbackMatch(sourceProduct.title, candidate.title);
@@ -244,8 +274,8 @@ export async function verifyProductMatch(
 
   try {
     // Pazaryeri SEO ekleri ("... Fiyatları ve Özellikleri") ürün kimliği değildir.
-    const sourceTitle = cleanProductTitle(sourceProduct.title);
-    const candidateTitle = cleanProductTitle(candidate.title);
+    const sourceTitle = cleanedSource;
+    const candidateTitle = cleanedCandidate;
 
     // FİYAT BİLEREK VERİLMEZ. Bu aracın işi aynı ürünü FARKLI fiyatla satan
     // rakibi bulmaktır; fiyatı gören model farkı "farklı ürün" kanıtı sayıyordu
@@ -373,6 +403,32 @@ SKOR REHBERİ:
       finalIsMatch = true;
       finalScore = MIN_MATCH_SCORE;
       parsed.reason = "Marka+model aynı; eksik bilgi veya fiyat farkı ürün farkı sayılmaz";
+    }
+
+    // GÜÇLÜ BAŞLIK ÖRTÜŞMESİ BACKSTOP'U: AI "benzer ama emin değilim" (50–69)
+    // dedi, kategori aynı ve başlıklar deterministik olarak büyük oranda
+    // örtüşüyor, çelişki yok → kabul. Prod: "icollagen 5 Tip Kolajen Ve
+    // Prebiyotik 60 Tablet" ve "icollagen Kolajen Ve Prebiyotik Tablet" 60
+    // puanda kaldı ("farklı model isimleri") ve ürün 0 rakiple bitti.
+    if (
+      !finalIsMatch &&
+      finalScore >= 50 &&
+      parsed.categoryMatch !== false &&
+      priceInBand &&
+      isStrongTitleOverlap(cleanedSource, cleanedCandidate)
+    ) {
+      logger.info(
+        {
+          source: sourceProduct.title.slice(0, 80),
+          candidate: candidate.title.slice(0, 80),
+          score: finalScore,
+          aiReason: aiReason.slice(0, 120),
+        },
+        "Title overlap backstop: uncertain AI score accepted",
+      );
+      finalIsMatch = true;
+      finalScore = 75;
+      parsed.reason = "Başlıklar büyük oranda aynı; belirgin bir fark bulunamadı";
     }
 
     // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)
