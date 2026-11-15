@@ -9,6 +9,7 @@ import {
   siteDomainForMarketplace,
   withDirectLookup,
 } from "../utils/direct-listing";
+import { isNearIdenticalTitle, isStrongTitleOverlap } from "../utils/title-similarity";
 
 const OWN = "Philips Airfryer XXL HD9650/90 Avance Collection Fritöz";
 
@@ -126,14 +127,14 @@ describe("aranabilir pazaryerleri", () => {
 });
 
 describe("aroma/çeşit varyantı deterministik kabul edilmez", () => {
-  it("tek sözcüğü farklı başlık neredeyse aynı ya da güçlü örtüşme sayılmaz", async () => {
-    const { isNearIdenticalTitle, isStrongTitleOverlap } =
-      await import("../utils/title-similarity");
+  it("tek sözcüğü farklı başlık neredeyse aynı ya da güçlü örtüşme sayılmaz", () => {
     const a = "Kahve Dünyası Tambol Çilekli Milföy Dolgulu 100 gr";
     const b = "Kahve Dünyası Tambol Fıstıklı Milföy Dolgulu 100 gr";
     expect(isNearIdenticalTitle(a, b)).toBe(false);
     expect(isStrongTitleOverlap(a, b)).toBe(false);
-    // Bir başlık diğerinin alt kümesiyse (kısaltma) kabul sürer.
-    expect(isNearIdenticalTitle(a, "Kahve Dünyası Tambol Çilekli Milföy Dolgulu")).toBe(true);
+    // Yalnızca yazım farkı olan aynı başlık kabul edilmeye devam eder.
+    expect(isNearIdenticalTitle(a, "Kahve Dünyası Tambol Çilekli Milföy Dolgulu 100 Gr")).toBe(
+      true,
+    );
   });
 });
