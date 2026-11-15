@@ -163,6 +163,35 @@ export function resolveRetailer(result: {
   };
 }
 
+const RETAILER_MARKETPLACE_KEYS: Record<string, string> = {
+  Trendyol: "TRENDYOL",
+  Hepsiburada: "HEPSIBURADA",
+  "Amazon TR": "AMAZON_TR",
+  N11: "N11",
+  Pazarama: "PAZARAMA",
+  MediaMarkt: "MEDIAMARKT",
+  Teknosa: "TEKNOSA",
+  Vatan: "VATAN",
+  Decathlon: "DECATHLON",
+  "PTT AVM": "PTTAVM",
+  Çiçeksepeti: "CICEKSEPETI",
+  Akakçe: "AKAKCE",
+  Cimri: "CIMRI",
+  Epey: "EPEY",
+  Boyner: "BOYNER",
+  Watsons: "WATSONS",
+  Kitapyurdu: "KITAPYURDU",
+  Sephora: "SEPHORA",
+  Koçtaş: "KOCTAS",
+  İtopya: "ITOPYA",
+  Gratis: "GRATIS",
+};
+
+/** Satıcı görünen adı → Prisma Marketplace enum anahtarı (bilinmiyorsa null). */
+export function marketplaceKeyForRetailer(retailerName: string): string | null {
+  return RETAILER_MARKETPLACE_KEYS[retailerName] ?? null;
+}
+
 // Marketplace adı → scraper'lı destek var mı (puppeteer fallback'i için kullanılabilir mi)
 const SCRAPER_BACKED_RETAILERS = new Set([
   "Trendyol",
