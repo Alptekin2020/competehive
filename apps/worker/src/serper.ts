@@ -3,8 +3,11 @@ import { directFetch, isTransientStatus, withRetry } from "./utils/direct-fetch"
 
 export interface SerperShoppingResult {
   title: string;
-  source: string; // KULLANMA — her zaman "google.com" döner
-  link: string; // retailer buradan parse edilir
+  // Satıcı/mağaza adı ("Trendyol", "Hepsiburada", "Evkur"…). Bağlantı Google
+  // Alışveriş sayfasına gidiyorsa gerçek siteyi yalnızca bu alan söyler
+  // (bkz. resolveRetailer). Web araması sonuçlarında "web" sabitidir.
+  source: string;
+  link: string; // doğrudan satıcı bağlantısıysa retailer buradan parse edilir
   price: string; // "₺1.299,00" formatında
   imageUrl?: string;
   position: number;
@@ -56,6 +59,108 @@ export function extractRetailer(link: string): Retailer {
     }
   }
   return { name: "Diğer", color: "#6B7280" };
+}
+
+// ============================================
+// Google Alışveriş bağlantıları → gerçek satıcı
+// ============================================
+//
+// Google Shopping sonuçlarının bir kısmı satıcının sayfasına değil Google'ın
+// kendi ürün kartına bağlanır ("google.com/search?ibp=oshop&…&prds=…"). Bu
+// bağlantıdan alan adı okununca rakip "google.com" olarak görünüyordu; oysa
+// fiyatı veren gerçek satıcı sonucun `source` alanındadır.
+
+/** Bağlantı Google'ın kendi sayfasına mı gidiyor (satıcının sitesine değil)? */
+export function isGoogleHostedLink(link: string | null | undefined): boolean {
+  if (typeof link !== "string" || link.length === 0) return false;
+  try {
+    const host = new URL(link).hostname.toLowerCase();
+    return /(^|\.)google\.[a-z.]+$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function foldRetailerText(value: string): string {
+  return value
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i")
+    .replace(/ç/g, "c")
+    .replace(/ğ/g, "g")
+    .replace(/ö/g, "o")
+    .replace(/ş/g, "s")
+    .replace(/ü/g, "u")
+    .replace(/[^a-z0-9.]+/g, " ")
+    .trim();
+}
+
+const SOURCE_PLACEHOLDER_RE = /^(google(\.com)?|google shopping|google alisveris|web|diger)?$/;
+
+/**
+ * Sonucun `source` alanındaki satıcı adını temizler. Boş, "google.com" ya da
+ * web araması sabiti ("web") gerçek bir satıcı değildir → null.
+ */
+export function cleanSellerSource(source: string | null | undefined): string | null {
+  if (typeof source !== "string") return null;
+  const trimmed = source.replace(/\s+/g, " ").trim();
+  if (trimmed.length === 0 || trimmed.length > 80) return null;
+  if (SOURCE_PLACEHOLDER_RE.test(foldRetailerText(trimmed))) return null;
+  return trimmed;
+}
+
+/** Satıcı adı bilinen bir pazaryerine mi ait? ("Amazon.com.tr - Satıcı" → Amazon TR) */
+export function retailerFromSourceName(source: string | null | undefined): Retailer | null {
+  const cleaned = cleanSellerSource(source);
+  if (!cleaned) return null;
+  const folded = foldRetailerText(cleaned);
+  const compact = folded.replace(/[ .]/g, "");
+  for (const r of RETAILER_DOMAINS) {
+    const nameFolded = foldRetailerText(r.name);
+    const nameCompact = nameFolded.replace(/[ .]/g, "");
+    // "Amazon TR" sonuçlarda "Amazon.com.tr" / "Amazon Türkiye" olarak gelir.
+    const brandCompact = r.domain.split(".")[0];
+    if (
+      folded.includes(r.domain) ||
+      folded === nameFolded ||
+      folded.startsWith(`${nameFolded} `) ||
+      compact === nameCompact ||
+      (nameCompact.length >= 6 && compact.startsWith(nameCompact)) ||
+      (brandCompact.length >= 6 && compact.startsWith(brandCompact))
+    ) {
+      return { name: r.name, color: r.color };
+    }
+  }
+  return null;
+}
+
+export interface ResolvedRetailer extends Retailer {
+  /** Bağlantı Google'ın ürün kartına gidiyor; satıcı sayfası değil, taranamaz. */
+  viaGoogle: boolean;
+  /** Google bağlantısının ardındaki gerçek satıcı adı (bilinmiyorsa null). */
+  sellerName: string | null;
+}
+
+/**
+ * Bir arama sonucunun gerçek satıcısını çözer. Doğrudan satıcı bağlantısında
+ * alan adı esastır; Google'a giden bağlantıda `source` alanı kullanılır.
+ */
+export function resolveRetailer(result: {
+  link: string;
+  source?: string | null;
+}): ResolvedRetailer {
+  const viaGoogle = isGoogleHostedLink(result.link);
+  if (!viaGoogle) {
+    const byLink = extractRetailer(result.link);
+    return { ...byLink, viaGoogle: false, sellerName: null };
+  }
+  const bySource = retailerFromSourceName(result.source);
+  if (bySource) return { ...bySource, viaGoogle: true, sellerName: bySource.name };
+  return {
+    name: "Diğer",
+    color: "#6B7280",
+    viaGoogle: true,
+    sellerName: cleanSellerSource(result.source),
+  };
 }
 
 // Marketplace adı → scraper'lı destek var mı (puppeteer fallback'i için kullanılabilir mi)

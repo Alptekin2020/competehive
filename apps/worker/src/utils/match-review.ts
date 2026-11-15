@@ -64,3 +64,34 @@ export function readRejectedUrlKeys(metadata: unknown): Set<string> {
     .filter(Boolean);
   return new Set(keys);
 }
+
+// ============================================
+// Gerçek satıcı adı (Google Alışveriş bağlantıları)
+// ============================================
+//
+// Rakip bağlantısı Google'ın ürün kartına gidiyorsa alan adı "google.com"
+// olur; fiyatı veren gerçek satıcı matchAttributes.seller alanında saklanır
+// (web aynası: readCompetitorSeller). Ayrı kolon yerine JSON alanı: şema
+// değişikliği gerektirmez, web ve worker dağıtım sırasına bağımlı olmaz.
+
+export function readCompetitorSeller(matchAttributes: unknown): string | null {
+  if (!matchAttributes || typeof matchAttributes !== "object") return null;
+  const seller = (matchAttributes as Record<string, unknown>).seller;
+  return typeof seller === "string" && seller.trim().length > 0 ? seller.trim() : null;
+}
+
+/**
+ * matchAttributes'a satıcı adını ekler (diğer alanlara dokunmaz). Satıcı yoksa
+ * girdi olduğu gibi döner — `undefined` Prisma'da "alana dokunma" demektir.
+ */
+export function withCompetitorSeller<T extends object>(
+  matchAttributes: T | null | undefined,
+  seller: string | null | undefined,
+): (T & { seller?: string }) | undefined {
+  const base =
+    matchAttributes && typeof matchAttributes === "object" && !Array.isArray(matchAttributes)
+      ? matchAttributes
+      : undefined;
+  if (!seller) return base;
+  return { ...(base ?? ({} as T)), seller };
+}

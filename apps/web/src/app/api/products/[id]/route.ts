@@ -1,4 +1,4 @@
-import { readMatchReview } from "@/lib/match-review";
+import { readCompetitorSeller, readMatchReview } from "@/lib/match-review";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
@@ -218,6 +218,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           matchReason: competitor.matchReason,
           // "pending" = AI emin olamadı, kullanıcı onayı bekliyor; "confirmed" = kullanıcı onayladı.
           review: readMatchReview(competitor.matchAttributes),
+          // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
+          seller: readCompetitorSeller(competitor.matchAttributes),
           createdAt: competitor.createdAt,
           inStock: latestStock.get(competitor.id)?.inStock ?? null,
         }),

@@ -1,7 +1,7 @@
 import { Job } from "bullmq";
 
 import { prisma } from "../db";
-import { searchProduct, extractRetailer, parsePrice } from "../serper";
+import { searchProduct, extractRetailer, parsePrice, resolveRetailer } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { buildSearchQueries } from "../utils/search-queries";
 import { getScraper, isProductUnavailableError } from "../scrapers";
@@ -364,7 +364,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       // çift saymasın / ilk fiyatın üstüne yazmasın.
       if (matchingCompetitors.every((c) => updatedCompetitorIds.has(c.id))) continue;
 
-      const retailer = extractRetailer(result.link);
+      const retailer = resolveRetailer(result);
       const matchingIds = matchingCompetitors.map((c) => c.id);
 
       try {
@@ -399,7 +399,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
             price,
             currency: "TRY",
             inStock: true,
-            sellerName: retailer.name,
+            sellerName: retailer.sellerName ?? retailer.name,
             scrapedAt: now,
           });
           updatedCount++;

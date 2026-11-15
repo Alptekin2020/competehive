@@ -17,7 +17,6 @@ import {
 import {
   MIN_MATCH_SCORE,
   THIN_MARGIN_PCT,
-  getRetailerInfoFromDomain,
   assessCompetitorList,
   computeMargin,
   priceForMargin,
@@ -29,6 +28,11 @@ import RefreshButton from "@/components/RefreshButton";
 import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import { storeDisplayName } from "@/lib/marketplaces";
 import InfoTip from "@/components/ui/InfoTip";
+import {
+  DORMANT_COMPETITOR_DAYS,
+  isDormantCompetitor,
+  resolveCompetitorSource,
+} from "@/lib/competitor-source";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -73,6 +77,8 @@ interface CompetitorEntry {
   matchReason: string | null;
   // "pending" = AI emin olamadı, onayınızı bekliyor; "confirmed" = siz onayladınız.
   review?: "pending" | "confirmed" | null;
+  // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
+  seller?: string | null;
   createdAt?: string;
   // Son taramadaki stok durumu (bilinmiyorsa null).
   inStock?: boolean | null;
@@ -278,6 +284,8 @@ export default function ProductDetailPage() {
   const [compareError, setCompareError] = useState<string | null>(null);
   const [competitorSort, setCompetitorSort] = useState<CompetitorSort>("lowest");
   const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>("all");
+  // Uzun süredir fiyatı alınamayan otomatik kayıtlar varsayılan olarak gizlenir.
+  const [showDormant, setShowDormant] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("30d");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -878,8 +886,16 @@ export default function ProductDetailPage() {
     cheapestCompetitorPrice !== null &&
     marginProtectedPrice < cheapestCompetitorPrice;
 
-  const qualityRatio = competitors.length > 0 ? validCompetitors.length / competitors.length : 0;
-  const staleRatio = competitors.length > 0 ? staleCompetitors.length / competitors.length : 0;
+  // Uykudaki (30+ gündür güncellenemeyen) otomatik kayıtlar güncel rakip
+  // sayılmaz: sayaçlar ve güven etiketi yalnızca yaşayan kayıtlara bakar.
+  const dormantCount = competitors.filter((c) => isDormantCompetitor(c)).length;
+  const currentCompetitorCount = competitors.length - dormantCount;
+  const qualityRatio =
+    currentCompetitorCount > 0 ? validCompetitors.length / currentCompetitorCount : 0;
+  const staleRatio =
+    currentCompetitorCount > 0
+      ? Math.max(0, staleCompetitors.length - dormantCount) / currentCompetitorCount
+      : 0;
   const qualityLabel =
     competitors.length === 0
       ? scanSettled
@@ -896,6 +912,7 @@ export default function ProductDetailPage() {
   const pendingReviewCount = competitors.filter((c) => c.review === "pending").length;
 
   const filteredCompetitors = competitors
+    .filter((competitor) => showDormant || !isDormantCompetitor(competitor))
     .filter((competitor) => {
       if (competitorFilter === "priced") return safePrice(competitor.currentPrice) !== null;
       if (competitorFilter === "suspicious") {
@@ -1196,7 +1213,7 @@ export default function ProductDetailPage() {
             </li>
             <li className="flex justify-between text-gray-300">
               <span>Rakip sayısı</span>
-              <span className="text-white">{competitors.length}</span>
+              <span className="text-white">{currentCompetitorCount}</span>
             </li>
             <li className="flex justify-between text-gray-300">
               <span className="inline-flex items-center gap-1.5">
@@ -1456,7 +1473,7 @@ export default function ProductDetailPage() {
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4">
           <p className="text-gray-400 text-xs mb-1">Rakip Sayısı</p>
-          <p className="text-lg font-bold text-amber-400">{competitors.length}</p>
+          <p className="text-lg font-bold text-amber-400">{currentCompetitorCount}</p>
         </div>
         <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4">
           <p className="text-gray-500 text-sm mb-1">Son Değişim</p>
@@ -1706,7 +1723,7 @@ export default function ProductDetailPage() {
                 <h2 className="text-base font-semibold text-white inline-flex items-center gap-2 flex-wrap">
                   Rakip Fiyatları
                   <span className="text-gray-500 font-normal text-sm">
-                    ({competitors.length} rakip)
+                    ({currentCompetitorCount} rakip)
                   </span>
                   <InfoTip
                     align="left"
@@ -1765,6 +1782,22 @@ export default function ProductDetailPage() {
                   )}
                 </div>
               )}
+              {dormantCount > 0 && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1F1F23] bg-[#0A0A0B] px-3 py-2">
+                  <p className="text-xs text-gray-400">
+                    {DORMANT_COMPETITOR_DAYS} günden uzun süredir fiyatı güncellenemeyen{" "}
+                    {dormantCount} eski kayıt {showDormant ? "gösteriliyor" : "gizlendi"}. Bu
+                    kayıtlar hesaplara girmez.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowDormant((v) => !v)}
+                    className="text-xs font-semibold text-gray-300 hover:text-white underline underline-offset-2"
+                  >
+                    {showDormant ? "Gizle" : "Göster"}
+                  </button>
+                </div>
+              )}
               <div className="space-y-3">
                 {filteredCompetitors.length === 0 && (
                   <div className="rounded-lg border border-dashed border-[#2A2A2F] p-5 text-center">
@@ -1805,21 +1838,26 @@ export default function ProductDetailPage() {
                             hiç görünmüyordu. */}
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {(() => {
-                            // Legacy kayıtlarda marketplace=CUSTOM kalmış olabilir;
-                            // rozet "Diğer" yerine URL'den gerçek pazaryerini türetir
-                            // (Trendyol/Hepsiburada rengiyle). Tanınmayan domain'de
-                            // domain'in kendisi "Diğer"den daha bilgilendiricidir.
-                            if (competitor.marketplace !== "CUSTOM") {
-                              return <MarketplaceBadge marketplace={competitor.marketplace} />;
-                            }
-                            const host = hostnameOf(competitor.competitorUrl);
-                            const info = host ? getRetailerInfoFromDomain(host) : null;
+                            // Rozet gerçek kaynağı gösterir: bilinen pazaryeri,
+                            // Google bağlantısında fiyatı veren satıcı, aksi halde
+                            // alan adı. "google.com" hiçbir zaman satıcı değildir.
+                            const source = resolveCompetitorSource(competitor);
                             return (
-                              <MarketplaceBadge
-                                marketplace="CUSTOM"
-                                overrideName={info?.retailerName || "Diğer"}
-                                overrideColor={info?.retailerColor}
-                              />
+                              <>
+                                <MarketplaceBadge
+                                  marketplace={source.marketplace}
+                                  overrideName={source.overrideName}
+                                  overrideColor={source.overrideColor}
+                                />
+                                {source.viaGoogle && (
+                                  <span
+                                    className="text-[11px] text-gray-400 bg-white/5 border border-[#2B2B30] px-1.5 py-0.5 rounded"
+                                    title="Bu fiyat Google Alışveriş'ten alındı; bağlantı Google'ın ürün sayfasını açar, satıcıya oradan gidebilirsiniz."
+                                  >
+                                    Google Alışveriş üzerinden
+                                  </span>
+                                )}
+                              </>
                             );
                           })()}
                           <MatchScoreBadge score={competitor.matchScore} />
@@ -1875,10 +1913,12 @@ export default function ProductDetailPage() {
                           className="text-sm text-gray-300 hover:text-white transition-colors block mt-1 line-clamp-2 break-words"
                           title={
                             competitor.competitorName?.trim() ||
+                            competitor.seller ||
                             hostnameOf(competitor.competitorUrl)
                           }
                         >
                           {competitor.competitorName?.trim() ||
+                            competitor.seller ||
                             hostnameOf(competitor.competitorUrl)}
                         </a>
                         {competitor.matchReason && (

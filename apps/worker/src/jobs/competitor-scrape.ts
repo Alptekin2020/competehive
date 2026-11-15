@@ -12,7 +12,7 @@
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { getScraper } from "../scrapers";
-import { extractRetailer } from "../serper";
+import { extractRetailer, isGoogleHostedLink } from "../serper";
 import { MIN_MATCH_SCORE, withinPriceBand } from "../utils/competitor-quality";
 import { readMatchReview } from "../utils/match-review";
 import { hasPackOrSpecConflict } from "../utils/title-similarity";
@@ -64,6 +64,13 @@ export async function processCompetitorScrapeJob(
       "Unpriced discovery competitor removed",
     );
   };
+
+  // Google'ın ürün kartı bağlantısı bir satıcı sayfası değildir: scraper'a
+  // verilirse Google'ın bot sayfasına düşer ve tur boşa harcanır.
+  if (isGoogleHostedLink(competitor.competitorUrl)) {
+    logger.info({ competitorId }, "Competitor scrape skipped: Google-hosted link is not scrapable");
+    return { success: false };
+  }
 
   const scraper = getScraper(competitor.marketplace);
   // Hata fırlarsa BullMQ job ayarlarına göre yeniden dener.

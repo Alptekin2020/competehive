@@ -76,6 +76,69 @@ export interface ProductInfo {
 }
 
 // ============================================
+// Deterministik başlık kabulü (AI çağrısı yok)
+// ============================================
+
+const NEAR_IDENTICAL_REASON = "Başlıklar neredeyse aynı (marka ve ürün adı birebir örtüşüyor)";
+const STRONG_OVERLAP_REASON = "Başlıklar büyük oranda aynı; belirgin bir fark bulunamadı";
+
+/**
+ * Daha önce AI'ın emin olamadığı (50–69) bir adayı yalnızca deterministik
+ * başlık kurallarıyla yeniden değerlendirir. verifyProductMatch içindeki iki
+ * kabul yolunun aynısıdır (neredeyse aynı başlık → 88; güçlü örtüşme → 75),
+ * AI'a tekrar sormaz. Onay bekleyen adayların, kurallar sonradan iyileştiğinde
+ * kullanıcı tek tek onaylamadan kabul edilebilmesi için kullanılır.
+ */
+export function reevaluateUncertainMatch(
+  sourceProduct: ProductInfo,
+  candidate: ProductInfo,
+  previous: { score: number | null; categoryMatch?: boolean | null },
+): MatchResult | null {
+  if (isPackagingListing(candidate.title, sourceProduct.title)) return null;
+  if (isAccessoryListing(candidate.title, sourceProduct.title)) return null;
+  const cleanedSource = cleanProductTitle(sourceProduct.title);
+  const cleanedCandidate = cleanProductTitle(candidate.title);
+  if (cleanedSource.length < 3 || cleanedCandidate.length < 3) return null;
+  if (
+    typeof sourceProduct.price === "number" &&
+    sourceProduct.price > 0 &&
+    typeof candidate.price === "number" &&
+    candidate.price > 0 &&
+    !withinPriceBand(sourceProduct.price, candidate.price)
+  ) {
+    return null;
+  }
+  if (hasPackOrSpecConflict(cleanedSource, urlSlugText(candidate.url))) return null;
+
+  const accept = (score: number, reason: string): MatchResult => ({
+    isMatch: true,
+    score,
+    reason,
+    attributes: {
+      brandMatch: true,
+      modelMatch: true,
+      specMatch: true,
+      categoryMatch: true,
+      details: "Deterministik başlık örtüşmesi; spec/adet/kod çelişkisi yok",
+    },
+  });
+
+  if (isNearIdenticalTitle(cleanedSource, cleanedCandidate)) {
+    return accept(88, NEAR_IDENTICAL_REASON);
+  }
+  if (
+    previous.score !== null &&
+    previous.score >= 50 &&
+    previous.score < MIN_MATCH_SCORE &&
+    previous.categoryMatch !== false &&
+    isStrongTitleOverlap(cleanedSource, cleanedCandidate)
+  ) {
+    return accept(75, STRONG_OVERLAP_REASON);
+  }
+  return null;
+}
+
+// ============================================
 // Fallback string matcher (when OpenAI unavailable)
 // ============================================
 
@@ -265,7 +328,7 @@ export async function verifyProductMatch(
     return {
       isMatch: true,
       score: 88,
-      reason: "Başlıklar neredeyse aynı (marka ve ürün adı birebir örtüşüyor)",
+      reason: NEAR_IDENTICAL_REASON,
       attributes: {
         brandMatch: true,
         modelMatch: true,
@@ -318,6 +381,9 @@ KURALLAR:
 13. AYNI ÜRÜN — FARKLI SATICI/İLAN: Aynı ürün farklı pazaryerlerinde farklı kelime sırası, fazladan pazarlama sözcükleri ("orijinal", "hediyeli", "ücretsiz kargo", "outlet", "faturalı") veya küçük başlık farklarıyla listelenir. Marka + model + boyut/hacim/miktar AYNIYSA bu farklar ÖNEMSİZDİR ve ürün AYNI ÜRÜNDÜR (score >= ${MIN_MATCH_SCORE}). Rakip fiyatı kıyaslamanın amacı aynı ürünü farklı satıcıda bulmaktır; salt pazarlama veya söz dizimi farkı yüzünden eşleşmeyi reddetme. (Boyut/hacim/miktar farkı bu kuralın İSTİSNASIDIR — Kural 1 geçerli.)
 14. EKSİK BİLGİ FARK DEĞİLDİR: Aday başlığında bir özellik (kapasite, fincan sayısı, hacim, renk vb.) HİÇ YAZMIYORSA bunu fark sayma ve "potansiyel/olası farklılık" gerekçesiyle skoru DÜŞÜRME. Yalnızca iki başlıkta AÇIKÇA yazan ve ÇELİŞEN değerler farklılıktır. Örn: kaynak "4 Fincan Kapasiteli" der, aday kapasite yazmaz → fark YOK; marka+model aynıysa AYNI ÜRÜNDÜR. "Adayda belirtilmemiş", "bilgi yok", "kapasite/hacim/boyut belirtilmemiş" ifadeleri ASLA red gerekçesi OLAMAZ — bu durumda o özellik için specMatch=true kabul et. Bu kuralı ihlal eden cevap HATALIDIR ve sistem tarafından geçersiz sayılır.
 15. RENK VARYANTI = AYNI ÜRÜN: Renk adı ("Bakır" vs "Krom") ve model kodundaki renk eki (OK004 vs OK004-K, OK004-O, "-B") aynı modelin renk varyantıdır ve fiyat takibi amacıyla AYNI ÜRÜNDÜR (Kural 1'deki renk istisnası). Boyut/hacim/kapasite çelişkisi yoksa renk yüzünden reddetme.
+
+16. "X'i 1 ARADA" MİKTAR DEĞİLDİR: "2'si 1 arada", "3'ü 1 arada", "2in1", "3 in 1", "5 Tip" gibi ifadeler ürünün ÖZELLİĞİDİR; hacim, adet veya paket bilgisi DEĞİLDİR. Bunları "farklı hacim/miktar" gerekçesi yapma; yalnızca gerçek ölçüler (ml, gr, tablet, adet) karşılaştırılır.
+17. ÜRETİCİ + ÜRÜN MARKASI: Bazı ilanlar ürün markasının önüne üretici/firma adını yazar ("Doctamin iCollagen 60 Tablet" ↔ "iCollagen 60 Tablet", "Eczacıbaşı Selpak" ↔ "Selpak"). Kaynaktaki marka adı aday başlığında da geçiyorsa, adaydaki ek üretici adı "farklı marka" DEĞİLDİR; brandMatch=true ver ve ürünü diğer kurallara göre değerlendir.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 
@@ -438,7 +504,7 @@ SKOR REHBERİ:
       );
       finalIsMatch = true;
       finalScore = 75;
-      parsed.reason = "Başlıklar büyük oranda aynı; belirgin bir fark bulunamadı";
+      parsed.reason = STRONG_OVERLAP_REASON;
     }
 
     // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)

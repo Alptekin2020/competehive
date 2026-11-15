@@ -31,6 +31,8 @@ export function competitorUrlKey(url: string | null | undefined): string {
   if (typeof url !== "string" || url.length === 0) return "";
   try {
     const parsed = new URL(url);
+    const googleKey = googleShoppingKey(parsed);
+    if (googleKey) return googleKey;
     const kept: Array<[string, string]> = [];
     parsed.searchParams.forEach((value, key) => {
       if (!TRACKING_PARAM_RE.test(key)) kept.push([key.toLowerCase(), value]);
@@ -42,4 +44,32 @@ export function competitorUrlKey(url: string | null | undefined): string {
   } catch {
     return url.replace(/\/$/, "").toLowerCase();
   }
+}
+
+// Google Alışveriş ürün kartı bağlantısı ("google.com/search?ibp=oshop&q=…&
+// prds=…catalogid:123,…"). `q` arama sorgusudur: aynı ilan farklı sorguda
+// farklı URL ile gelir ve ham karşılaştırma her sorguda yeni bir rakip satırı
+// açardı (ürün başına onlarca "google.com" satırı). İlanı tanımlayan tek şey
+// `prds` içindeki kalıcı kimliklerdir.
+// Tercih sırası: ürün kimliği (catalogid/gpcid/productid) kalıcıdır; teklif
+// kimliği en ucuz satıcı değiştikçe değişebildiği için son çaredir.
+const GOOGLE_ID_PRIORITY = ["catalogid", "gpcid", "productid", "headlineofferdocid"];
+
+function googleShoppingKey(parsed: URL): string | null {
+  if (!/(^|\.)google\.[a-z.]+$/i.test(parsed.hostname)) return null;
+  const prds = parsed.searchParams.get("prds");
+  if (!prds) return null;
+  const ids = new Map<string, string>();
+  for (const part of prds.split(",")) {
+    const sep = part.indexOf(":");
+    if (sep <= 0) continue;
+    const name = part.slice(0, sep).trim().toLowerCase();
+    const value = part.slice(sep + 1).trim();
+    if (value && !ids.has(name)) ids.set(name, value);
+  }
+  for (const name of GOOGLE_ID_PRIORITY) {
+    const value = ids.get(name);
+    if (value) return `google.com/shopping?${name}=${value}`;
+  }
+  return null;
 }
