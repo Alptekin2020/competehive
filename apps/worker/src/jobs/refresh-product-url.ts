@@ -1,7 +1,14 @@
 import { Job } from "bullmq";
 
+import { Marketplace, Prisma } from "@prisma/client";
 import { prisma } from "../db";
-import { searchProduct, extractRetailer, parsePrice, resolveRetailer } from "../serper";
+import {
+  searchProduct,
+  extractRetailer,
+  marketplaceKeyForRetailer,
+  parsePrice,
+  resolveRetailer,
+} from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { buildSearchQueries } from "../utils/search-queries";
 import { getScraper, isProductUnavailableError } from "../scrapers";
@@ -16,7 +23,7 @@ import {
   type KnownCompetitorSnapshot,
 } from "../utils/stale-competitors";
 import { competitorQueue } from "./processor";
-import { readMatchReview } from "../utils/match-review";
+import { readCompetitorSeller, readMatchReview, withCompetitorSeller } from "../utils/match-review";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -221,7 +228,13 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     // 5. Tüm siblings'in bilinen competitor URL'lerini topla (URL → [competitor records])
     const competitorByUrl = new Map<
       string,
-      Array<KnownCompetitorSnapshot & { trackedProductId: string; competitorUrl: string }>
+      Array<
+        KnownCompetitorSnapshot & {
+          trackedProductId: string;
+          competitorUrl: string;
+          matchAttributes: Prisma.JsonValue | null;
+        }
+      >
     >();
 
     for (const sibling of siblings) {
@@ -243,6 +256,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           matchScore: c.matchScore,
           marketplace: c.marketplace,
           lastScrapedAt: c.lastScrapedAt,
+          matchAttributes: c.matchAttributes,
         });
         competitorByUrl.set(urlKey, list);
       }
@@ -378,6 +392,36 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
             lastScrapedAt: now,
           },
         });
+
+        // Google ürün kartına bağlanan kayıtlarda gerçek satıcıyı da yaz: bu
+        // tur bilinen rakiplerin çoğunu günceller, keşif turunu beklemeden
+        // rozet "Google Alışveriş" yerine satıcının adını göstersin.
+        if (retailer.viaGoogle) {
+          const marketplaceKey = marketplaceKeyForRetailer(retailer.name);
+          for (const c of matchingCompetitors) {
+            const marketplaceChanged =
+              marketplaceKey !== null && c.marketplace === "CUSTOM" && marketplaceKey !== "CUSTOM";
+            const sellerChanged =
+              Boolean(retailer.sellerName) &&
+              readCompetitorSeller(c.matchAttributes) !== retailer.sellerName;
+            if (!marketplaceChanged && !sellerChanged) continue;
+            const base =
+              c.matchAttributes &&
+              typeof c.matchAttributes === "object" &&
+              !Array.isArray(c.matchAttributes)
+                ? (c.matchAttributes as Prisma.JsonObject)
+                : {};
+            await prisma.competitor.update({
+              where: { id: c.id },
+              data: {
+                ...(marketplaceChanged ? { marketplace: marketplaceKey as Marketplace } : {}),
+                ...(sellerChanged
+                  ? { matchAttributes: withCompetitorSeller(base, retailer.sellerName) }
+                  : {}),
+              },
+            });
+          }
+        }
 
         for (const c of matchingCompetitors) {
           updatedCompetitorIds.add(c.id);

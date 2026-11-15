@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { reevaluateUncertainMatch } from "../matcher";
 import {
+  marketplaceKeyForRetailer,
   cleanSellerSource,
   isGoogleHostedLink,
   resolveRetailer,
@@ -35,6 +36,25 @@ describe("Google Alışveriş bağlantısında gerçek satıcı", () => {
     expect(retailerFromSourceName("MediaMarkt Türkiye")?.name).toBe("MediaMarkt");
     expect(retailerFromSourceName("Evkur")).toBeNull();
     expect(retailerFromSourceName("Vatansever Ticaret")).toBeNull();
+  });
+
+  it("canlıda görülen satıcı adlarını doğru pazaryerine çevirir (2026-11-15 logları)", () => {
+    const cases: Array<[string, string | null]> = [
+      ["Amazon.com.tr - Amazon.com.tr – pazaryeri", "AMAZON_TR"],
+      ["Amazon", "AMAZON_TR"],
+      ["PttAVM.com", "PTTAVM"],
+      ["Vatan Bilgisayar", "VATAN"],
+      ["ciceksepeti.com", "CICEKSEPETI"],
+      ["Koçtaş", "KOCTAS"],
+      ["hepsiburada.com", "HEPSIBURADA"],
+      ["idefix", null],
+      ["Moderneczane.com", null],
+      ["Baharatevim.com.tr", null],
+    ];
+    for (const [source, expected] of cases) {
+      const retailer = retailerFromSourceName(source);
+      expect(retailer ? marketplaceKeyForRetailer(retailer.name) : null, source).toBe(expected);
+    }
   });
 
   it("google.com ve boş değerleri satıcı saymaz", () => {
