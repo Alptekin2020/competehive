@@ -23,6 +23,11 @@ export const DAILY_DIGEST_CHECK_MS = 10 * 60 * 1000;
 
 const CLAIM_TTL_SECONDS = 36 * 60 * 60;
 
+// Kimseye gönderim denenmeyen turlar eskiden hiç iz bırakmıyordu; "özet neden
+// gelmedi?" sorusu loglardan cevaplanamıyordu. Sebep günde bir kez yazılır
+// (10 dakikalık kontrol her turda aynı satırı basmasın).
+let lastIdleLogDateKey: string | null = null;
+
 async function loadDigestProducts(userId: string, now: Date): Promise<DigestProductInput[]> {
   const products = await prisma.trackedProduct.findMany({
     where: { userId, status: "ACTIVE" },
@@ -78,9 +83,15 @@ async function loadDigestProducts(userId: string, now: Date): Promise<DigestProd
 
 export async function runDailyDigestIfDue(now: Date = new Date()): Promise<void> {
   if (!isDigestWindow(now)) return;
-  if (!process.env.RESEND_API_KEY) return;
 
   const dateKey = istanbulDateKey(now);
+  if (!process.env.RESEND_API_KEY) {
+    if (lastIdleLogDateKey !== dateKey) {
+      lastIdleLogDateKey = dateKey;
+      logger.warn({ dateKey }, "Daily digest skipped — RESEND_API_KEY not set");
+    }
+    return;
+  }
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
@@ -94,15 +105,23 @@ export async function runDailyDigestIfDue(now: Date = new Date()): Promise<void>
   let sent = 0;
   let quiet = 0;
   let failed = 0;
+  let noEmail = 0;
+  let alreadyClaimed = 0;
   for (const user of users) {
-    if (!user.email) continue;
+    if (!user.email) {
+      noEmail++;
+      continue;
+    }
     try {
       const claimed = await cacheClaim(`daily-digest:${dateKey}:${user.id}`, CLAIM_TTL_SECONDS);
       if (claimed === null) {
         logger.warn("Daily digest skipped — Redis unavailable, cannot guarantee once-per-day");
         return;
       }
-      if (!claimed) continue;
+      if (!claimed) {
+        alreadyClaimed++;
+        continue;
+      }
 
       const digest = buildDigest(await loadDigestProducts(user.id, now), now);
       if (digest.actionableProductCount === 0) {
@@ -120,5 +139,13 @@ export async function runDailyDigestIfDue(now: Date = new Date()): Promise<void>
 
   if (sent > 0 || failed > 0 || quiet > 0) {
     logger.info({ dateKey, sent, quiet, failed }, "Daily digest round finished");
+    return;
+  }
+  if (lastIdleLogDateKey !== dateKey) {
+    lastIdleLogDateKey = dateKey;
+    logger.info(
+      { dateKey, eligibleUsers: users.length, noEmail, alreadyClaimed },
+      "Daily digest round had nobody to send to",
+    );
   }
 }
