@@ -4,12 +4,14 @@ import {
   searchProduct,
   searchMarketplacePages,
   extractRetailer,
+  isGoogleHostedLink,
   isScraperBackedRetailer,
   parsePrice,
+  resolveRetailer,
 } from "../serper";
 import type { SerperShoppingResult } from "../serper";
-import { verifyProductMatch, MatchResult } from "../matcher";
-import { Marketplace } from "@prisma/client";
+import { reevaluateUncertainMatch, verifyProductMatch, MatchResult } from "../matcher";
+import { Marketplace, Prisma } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import {
@@ -35,9 +37,11 @@ import { MAX_DIRECT_SCRAPES_PER_ROUND, shouldSearchMarketplacePages } from "../u
 import {
   MAX_NEW_CANDIDATES_PER_ROUND,
   MAX_PENDING_CANDIDATES,
+  readCompetitorSeller,
   readMatchReview,
   readRejectedUrlKeys,
   shouldKeepAsCandidate,
+  withCompetitorSeller,
 } from "../utils/match-review";
 
 interface OnboardJobData {
@@ -100,11 +104,22 @@ async function searchSingleKeyword(
   try {
     const results = await searchFn(keyword);
     for (const r of results) {
-      const normalizedUrl = (r.link || "").replace(/\/$/, "").toLowerCase();
+      // Anahtar: izleme parametreleri ve (Google ürün kartlarında) arama
+      // sorgusu atılmış URL — aynı ilan farklı sorguda ikinci kez AI'a gitmesin.
+      const normalizedUrl = competitorUrlKey(r.link);
       if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
         seenUrls.add(normalizedUrl);
         fresh.push(r);
       }
+    }
+    // Gözlem: kaç sonuç satıcıya değil Google'ın ürün kartına bağlanıyor ve
+    // gerçek satıcı adı geliyor mu (rakip rozetinde "google.com" görünmesin).
+    const googleHosted = results.filter((r) => isGoogleHostedLink(r.link));
+    if (googleHosted.length > 0) {
+      const sellers = [...new Set(googleHosted.map((r) => (r.source || "").trim() || "?"))];
+      console.log(
+        `🔗 Google bağlantılı sonuç: ${googleHosted.length}/${results.length} — satıcılar: ${sellers.slice(0, 8).join(", ")}`,
+      );
     }
     return { results: fresh, errored: false, errorMessage: null };
   } catch (err) {
@@ -112,6 +127,17 @@ async function searchSingleKeyword(
     console.error(`Serper arama hatası ("${keyword}"): ${message}`);
     return { results: fresh, errored: true, errorMessage: message };
   }
+}
+
+function asAttributeObject(value: unknown): Prisma.JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Prisma.JsonObject)
+    : {};
+}
+
+function readCategoryMatch(matchAttributes: unknown): boolean | null {
+  const value = asAttributeObject(matchAttributes).categoryMatch;
+  return typeof value === "boolean" ? value : null;
 }
 
 function isInPriceBand(price: number, sourcePrice: number | null): boolean {
@@ -263,6 +289,8 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       (c) => readMatchReview(c.matchAttributes) === "pending",
     ).length;
     let newCandidateCount = 0;
+    let promotedCandidateCount = 0;
+    const promotedIds = new Set<string>();
     let directScrapeQueuedCount = 0;
     // Anahtar: izleme parametrelerinden arındırılmış URL (competitorUrlKey).
     // Ham URL ile karşılaştırınca aynı ilan farklı izleme parametresiyle
@@ -330,8 +358,11 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           continue;
         }
 
-        const retailer = extractRetailer(result.link);
-        const isScraperBacked = isScraperBackedRetailer(retailer.name);
+        // Bağlantı Google'ın ürün kartına gidiyorsa gerçek satıcı `source`
+        // alanından çözülür; o bağlantı bir satıcı sayfası olmadığı için
+        // doğrudan taranamaz (fiyat kurtarma / scrape yolu kapalı).
+        const retailer = resolveRetailer(result);
+        const isScraperBacked = !retailer.viaGoogle && isScraperBackedRetailer(retailer.name);
 
         let price = parsePrice(result.price);
 
@@ -367,7 +398,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                     marketplace: retailerToMarketplace(retailer.name),
                     matchScore: recoveryMatch?.score,
                     matchReason: recoveryMatch?.reason,
-                    matchAttributes: recoveryMatch?.attributes,
+                    matchAttributes: withCompetitorSeller(
+                      recoveryMatch?.attributes,
+                      retailer.sellerName,
+                    ),
                   },
                   select: { id: true },
                 });
@@ -404,6 +438,45 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               console.log(
                 `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)} — ${preMatch.reason}`,
               );
+              // AI emin olamadıysa (50–69) ve fiyat hafif istekle okunabiliyorsa
+              // adayı atma: fiyatlı sonuçlardaki gibi kullanıcı onayına sun.
+              // Eskiden fiyatsız gelen (çoğu ikinci kaynak) adaylar bu noktada
+              // sessizce kayboluyordu.
+              if (
+                shouldKeepAsCandidate(preMatch) &&
+                newCandidateCount < MAX_NEW_CANDIDATES_PER_ROUND &&
+                pendingCandidateCount < MAX_PENDING_CANDIDATES
+              ) {
+                try {
+                  const recovered = await recoverPriceLightweight(result.link);
+                  if (
+                    recovered.price &&
+                    recovered.price > 0 &&
+                    isInPriceBand(recovered.price, sourcePrice)
+                  ) {
+                    await prisma.competitor.create({
+                      data: {
+                        trackedProductId: productId,
+                        competitorUrl,
+                        competitorName: result.title,
+                        marketplace: retailerToMarketplace(retailer.name),
+                        currentPrice: recovered.price,
+                        lastScrapedAt: now,
+                        matchScore: preMatch.score,
+                        matchReason: preMatch.reason,
+                        matchAttributes: { ...preMatch.attributes, review: "pending" },
+                      },
+                    });
+                    newCandidateCount++;
+                    pendingCandidateCount++;
+                    console.log(
+                      `🟡 Olası eşleşme onaya sunuldu (fiyat kurtarıldı): ${result.title.slice(0, 50)}`,
+                    );
+                  }
+                } catch (err) {
+                  console.error(`Fiyatsız aday kaydetme hatası (${result.link}):`, err);
+                }
+              }
               continue;
             }
             recoveryMatch = preMatch;
@@ -452,11 +525,66 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // Onay bekleyen aday: yalnızca fiyatı taze tutulur. Fiyat geçmişine
         // yazılmaz (grafiği kirletmesin) ve hareket/alarm üretmez.
         if (known && knownReview === "pending") {
+          // Kurallar adayın kaydedildiği günden beri iyileşmiş olabilir:
+          // deterministik başlık kuralı artık "aynı ürün" diyorsa aday
+          // kullanıcıyı beklemeden kabul edilir (AI'a tekrar sorulmaz).
+          const promoted = reevaluateUncertainMatch(
+            { title, price: sourcePrice ?? undefined },
+            { title: result.title, url: result.link, price },
+            {
+              score: known.matchScore,
+              categoryMatch: readCategoryMatch(known.matchAttributes),
+            },
+          );
           try {
-            await prisma.competitor.update({
-              where: { id: known.id },
-              data: { currentPrice: price, lastScrapedAt: now },
-            });
+            if (promoted) {
+              await prisma.competitor.update({
+                where: { id: known.id },
+                data: {
+                  competitorName: result.title,
+                  currentPrice: price,
+                  lastScrapedAt: now,
+                  matchScore: promoted.score,
+                  matchReason: promoted.reason,
+                  matchAttributes: withCompetitorSeller(
+                    promoted.attributes,
+                    retailer.sellerName ?? readCompetitorSeller(known.matchAttributes),
+                  ),
+                },
+              });
+              // Artık güvenilir rakip: fiyat geçmişine ikiz satırlarla girer.
+              await prisma.competitorPrice.create({
+                data: {
+                  competitorId: known.id,
+                  price,
+                  currency: "TRY",
+                  inStock: true,
+                  scrapedAt: now,
+                },
+              });
+              await prisma.priceHistory.create({
+                data: {
+                  trackedProductId: productId,
+                  price,
+                  currency: "TRY",
+                  inStock: true,
+                  sellerName: retailer.sellerName ?? retailer.name,
+                  scrapedAt: now,
+                },
+              });
+              promotedIds.add(known.id);
+              promotedCandidateCount++;
+              pendingCandidateCount = Math.max(0, pendingCandidateCount - 1);
+              savedCount++;
+              console.log(
+                `🟢 Onay bekleyen aday otomatik kabul edildi (skor ${known.matchScore} → ${promoted.score}): ${result.title.slice(0, 50)}`,
+              );
+            } else {
+              await prisma.competitor.update({
+                where: { id: known.id },
+                data: { currentPrice: price, lastScrapedAt: now },
+              });
+            }
           } catch (err) {
             console.error(`Aday fiyat güncelleme hatası (${result.link}):`, err);
           }
@@ -544,7 +672,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                     lastScrapedAt: now,
                     matchScore: matchResult.score,
                     matchReason: matchResult.reason,
-                    matchAttributes: { ...matchResult.attributes, review: "pending" },
+                    matchAttributes: withCompetitorSeller(
+                      { ...matchResult.attributes, review: "pending" as const },
+                      retailer.sellerName,
+                    ),
                   },
                 });
                 newCandidateCount++;
@@ -579,6 +710,17 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               }
             : null;
 
+        // Gerçek satıcı adı (Google bağlantıları): yeni skorla birlikte ya da
+        // bilinen kayıtta eksik/değişmişse mevcut alanlar korunarak yazılır.
+        const sellerChanged =
+          Boolean(retailer.sellerName) &&
+          readCompetitorSeller(known?.matchAttributes) !== retailer.sellerName;
+        const attributesForWrite = matchResult
+          ? withCompetitorSeller(matchResult.attributes, retailer.sellerName)
+          : sellerChanged
+            ? withCompetitorSeller(asAttributeObject(known?.matchAttributes), retailer.sellerName)
+            : undefined;
+
         try {
           const competitor = await prisma.competitor.upsert({
             where: {
@@ -594,7 +736,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               lastScrapedAt: now,
               matchScore: matchResult?.score,
               matchReason: matchResult?.reason,
-              matchAttributes: matchResult?.attributes,
+              matchAttributes: attributesForWrite,
             },
             create: {
               trackedProductId: productId,
@@ -605,7 +747,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               lastScrapedAt: now,
               matchScore: matchResult?.score,
               matchReason: matchResult?.reason,
-              matchAttributes: matchResult?.attributes,
+              matchAttributes: attributesForWrite,
             },
           });
 
@@ -625,7 +767,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               price,
               currency: "TRY",
               inStock: true,
-              sellerName: retailer.name,
+              sellerName: retailer.sellerName ?? retailer.name,
               scrapedAt: now,
             },
           });
@@ -686,6 +828,46 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         await processResults(
           webOutcome.results.map((r) => ({ ...r, title: cleanProductTitle(r.title) })),
         );
+      }
+    }
+
+    // Bu turda aramada görünmeyen onay bekleyen adaylar da kayıtlı başlıklarıyla
+    // yeniden değerlendirilir (AI çağrısı yok). Aksi halde Google'ın bir daha
+    // döndürmediği doğru aday sonsuza dek kullanıcının onayını beklerdi.
+    for (const candidate of knownCompetitors) {
+      if (promotedIds.has(candidate.id)) continue;
+      if (readMatchReview(candidate.matchAttributes) !== "pending") continue;
+      const storedName = candidate.competitorName?.trim();
+      if (!storedName) continue;
+      const storedPrice = candidate.currentPrice ? Number(candidate.currentPrice) : undefined;
+      const promoted = reevaluateUncertainMatch(
+        { title, price: sourcePrice ?? undefined },
+        { title: storedName, url: candidate.competitorUrl, price: storedPrice },
+        {
+          score: candidate.matchScore,
+          categoryMatch: readCategoryMatch(candidate.matchAttributes),
+        },
+      );
+      if (!promoted) continue;
+      try {
+        await prisma.competitor.update({
+          where: { id: candidate.id },
+          data: {
+            matchScore: promoted.score,
+            matchReason: promoted.reason,
+            matchAttributes: withCompetitorSeller(
+              promoted.attributes,
+              readCompetitorSeller(candidate.matchAttributes),
+            ),
+          },
+        });
+        promotedIds.add(candidate.id);
+        promotedCandidateCount++;
+        console.log(
+          `🟢 Onay bekleyen aday otomatik kabul edildi (skor ${candidate.matchScore} → ${promoted.score}): ${storedName.slice(0, 50)}`,
+        );
+      } catch (err) {
+        console.error(`Aday yeniden değerlendirme hatası (${candidate.id}):`, err);
       }
     }
 
@@ -782,7 +964,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         `(price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount}, ` +
         `packaging filtered: ${packagingFilteredCount}, ` +
         `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount}, ` +
-        `onaya sunulan aday: ${newCandidateCount}, doğrudan taramaya: ${directScrapeQueuedCount})`,
+        `onaya sunulan aday: ${newCandidateCount}, otomatik kabul edilen aday: ${promotedCandidateCount}, doğrudan taramaya: ${directScrapeQueuedCount})`,
     );
     return {
       found: savedCount,

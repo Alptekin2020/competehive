@@ -33,6 +33,18 @@ export interface KnownCompetitorSnapshot {
   matchScore: number | null;
   marketplace: string;
   lastScrapedAt: Date | null;
+  /** Varsa: Google ürün kartı bağlantıları doğrudan taranamaz, seçilmez. */
+  competitorUrl?: string | null;
+}
+
+/** Bağlantı Google'ın kendi sayfası mı (satıcı sayfası değil → taranamaz)? */
+export function isGoogleHostedUrl(url: string | null | undefined): boolean {
+  if (typeof url !== "string" || url.length === 0) return false;
+  try {
+    return /(^|\.)google\.[a-z.]+$/.test(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -95,11 +107,16 @@ export function pickStaleCompetitorsForDirectScrape(
   const max = opts.max ?? MAX_DIRECT_SCRAPES_PER_URL;
   const cutoff = now.getTime() - staleHours * 60 * 60 * 1000;
 
-  return competitors
-    .filter((c) => !updatedIds.has(c.id))
-    .filter((c) => DIRECT_SCRAPE_MARKETPLACES.has(c.marketplace))
-    .filter((c) => c.matchScore === null || c.matchScore >= MIN_MATCH_SCORE)
-    .filter((c) => c.lastScrapedAt === null || c.lastScrapedAt.getTime() < cutoff)
-    .sort((a, b) => (a.lastScrapedAt?.getTime() ?? 0) - (b.lastScrapedAt?.getTime() ?? 0))
-    .slice(0, Math.max(0, max));
+  return (
+    competitors
+      .filter((c) => !updatedIds.has(c.id))
+      .filter((c) => DIRECT_SCRAPE_MARKETPLACES.has(c.marketplace))
+      // Prod: pazaryeri TRENDYOL kayıtlı ama bağlantısı google.com olan rakip her
+      // turda Trendyol scraper'ına gidip Google'ın bot sayfasında boşa düşüyordu.
+      .filter((c) => !isGoogleHostedUrl(c.competitorUrl))
+      .filter((c) => c.matchScore === null || c.matchScore >= MIN_MATCH_SCORE)
+      .filter((c) => c.lastScrapedAt === null || c.lastScrapedAt.getTime() < cutoff)
+      .sort((a, b) => (a.lastScrapedAt?.getTime() ?? 0) - (b.lastScrapedAt?.getTime() ?? 0))
+      .slice(0, Math.max(0, max))
+  );
 }

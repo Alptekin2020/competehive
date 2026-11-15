@@ -1,9 +1,16 @@
 import { Job } from "bullmq";
 import { prisma } from "../db";
-import { searchProduct, extractRetailer, isScraperBackedRetailer, parsePrice } from "../serper";
+import {
+  searchProduct,
+  extractRetailer,
+  isScraperBackedRetailer,
+  parsePrice,
+  resolveRetailer,
+} from "../serper";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
 import { recoverPriceLightweight } from "../utils/recover-price";
+import { withCompetitorSeller } from "../utils/match-review";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { getScraper, isProductUnavailableError } from "../scrapers";
@@ -251,8 +258,8 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
         continue;
       }
 
-      const retailer = extractRetailer(result.link);
-      const isScraperBacked = isScraperBackedRetailer(retailer.name);
+      const retailer = resolveRetailer(result);
+      const isScraperBacked = !retailer.viaGoogle && isScraperBackedRetailer(retailer.name);
       const existingCompetitor = competitorByUrl.get(competitorUrlKey(result.link));
 
       let serperPrice = parsePrice(result.price);
@@ -357,7 +364,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
               price: verifiedPrice,
               currency: "TRY",
               inStock: true,
-              sellerName: retailer.name,
+              sellerName: retailer.sellerName ?? retailer.name,
               scrapedAt: now,
             },
           });
@@ -409,7 +416,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             lastScrapedAt: now,
             matchScore: matchResult?.score,
             matchReason: matchResult?.reason,
-            matchAttributes: matchResult?.attributes,
+            matchAttributes: withCompetitorSeller(matchResult?.attributes, retailer.sellerName),
           },
         });
 
@@ -428,7 +435,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             price: serperPrice,
             currency: "TRY",
             inStock: true,
-            sellerName: retailer.name,
+            sellerName: retailer.sellerName ?? retailer.name,
             scrapedAt: now,
           },
         });

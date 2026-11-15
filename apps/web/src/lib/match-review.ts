@@ -53,3 +53,13 @@ export function addRejectedCompetitorUrl(metadata: unknown, url: string): Record
     rejectedCompetitorUrls: [...existing, url].slice(-MAX_REJECTED_URLS),
   };
 }
+
+/**
+ * Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcının adı
+ * (worker `matchAttributes.seller` alanına yazar; worker aynası aynı adda).
+ */
+export function readCompetitorSeller(matchAttributes: unknown): string | null {
+  if (!matchAttributes || typeof matchAttributes !== "object") return null;
+  const seller = (matchAttributes as Record<string, unknown>).seller;
+  return typeof seller === "string" && seller.trim().length > 0 ? seller.trim() : null;
+}
