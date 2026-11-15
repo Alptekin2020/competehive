@@ -402,7 +402,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               aiRejectedCount++;
               if (preMatch.aiUnavailable) aiUnavailableCount++;
               console.log(
-                `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)}`,
+                `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)} — ${preMatch.reason}`,
               );
               continue;
             }

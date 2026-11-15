@@ -188,6 +188,7 @@ Entry point: `apps/worker/src/index.ts`
 - Direct `scrape-competitor` jobs gate automated rows (scored, not user-confirmed) with the 0.3x–3x band, and delete a discovery-created row that never got a price when the scrape fails; manual rows are never gated or deleted
 - Competitor listings are matched by `competitorUrlKey` (tracking params stripped, seller params kept), never by raw URL; a known competitor is always updated under its stored URL
 - The AI matcher never sees prices (it used price gaps as "different product" evidence); price sanity is deterministic (0.3x–3x band, 4x backstop). Titles are cleaned with `cleanProductTitle` (marketplace SEO suffixes) before search and matching
+- Deterministic title layer (`utils/title-similarity.ts`) wraps the AI matcher for products without a model code: near-identical titles (`isNearIdenticalTitle`) are accepted at 88 without an AI call; an uncertain AI score (50–69) with strong overlap (`isStrongTitleOverlap`) is raised to 75. Both require the brand token and no conflict (`hasTitleConflict`: specs, counts, quantities, different model codes, accessory/packaging) and no variant word (Pro, Kids, set…) among the extra tokens
 - A page that loads fine but has no purchasable offer throws `PRODUCT_UNAVAILABLE` (`isProductUnavailableError`): callers mark the product OUT_OF_STOCK and keep the last price instead of counting a scrape failure. Parsers set `unavailable` only on a positive signal
 - Puppeteer page reads go through `readPageHtml` (retries when a bot-check/geo redirect navigates mid-read)
 
