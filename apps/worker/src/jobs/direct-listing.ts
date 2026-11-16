@@ -143,6 +143,7 @@ export async function resolveDirectListings(
           .filter((r) => !rejected.has(competitorUrlKey(r.link)))
           .filter((r) => !userRejected.has(competitorUrlKey(r.link)))
           .map((r) => ({ title: cleanProductTitle(r.title), link: r.link })),
+        ownUrl,
       );
 
       if (!picked) {

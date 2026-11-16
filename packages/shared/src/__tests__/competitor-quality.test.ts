@@ -374,6 +374,20 @@ describe("compareProductCodes (exact / renk varyantı / konfigürasyon varyantı
     ).toBe("exact");
   });
 
+  it("reads slash suffixes: HD9650/90 vs HD9650/99 is a config variant", () => {
+    expect(compareProductCodes("Philips HD9650/90 Airfryer", "Philips HD9650/99 Airfryer")).toBe(
+      "config-variant",
+    );
+  });
+
+  it("treats EP3347-90 like EP3347/90 and a missing region suffix as exact", () => {
+    expect(extractProductCodes("Philips EP3347-90 Espresso")).toEqual(["EP3347"]);
+    expect(compareProductCodes("Philips EP3347/90 LatteGo", "Philips EP3347-90")).toBe("exact");
+    expect(compareProductCodes("Philips EP3347/90 LatteGo", "Philips EP3347 LatteGo")).toBe(
+      "exact",
+    );
+  });
+
   it("returns none for different laptops sharing only hardware codes (CPU/GPU)", () => {
     expect(
       compareProductCodes(

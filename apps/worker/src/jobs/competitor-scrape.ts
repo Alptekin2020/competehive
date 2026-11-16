@@ -25,6 +25,7 @@ import {
   withoutDirectCandidate,
 } from "../utils/direct-listing";
 import { readCompetitorSeller, readMatchReview } from "../utils/match-review";
+import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
 import { cleanProductTitle } from "../utils/search-queries";
 import { competitorUrlKey } from "../utils/url-match";
 import { hasPackOrSpecConflict } from "../utils/title-similarity";
@@ -63,7 +64,9 @@ export async function processCompetitorScrapeJob(
       currentPrice: true,
       matchScore: true,
       matchAttributes: true,
-      trackedProduct: { select: { currentPrice: true, status: true, productName: true } },
+      trackedProduct: {
+        select: { currentPrice: true, status: true, productName: true, productUrl: true },
+      },
     },
   });
   if (!competitor) {
@@ -184,6 +187,48 @@ export async function processCompetitorScrapeJob(
     );
     await dropIfUnpriced("pack-or-size-mismatch");
     return { success: false };
+  }
+
+  // Gerçek sayfa başlığı farklı bir model kodu/numarası gösteriyorsa
+  // (EP3347/90 ürününe EP3341/50 sayfası) otomatik satır rakip değildir:
+  // fiyat yazılmaz; hiç fiyatlanmamışsa silinir, fiyatlıysa skoru 30'a iner
+  // ve karar hesaplarından çıkar. Manuel ve onaylı satırlara dokunulmaz.
+  if (isAutomated && ownName && scraped.name) {
+    const identity = analyzeModelIdentity(
+      { title: ownName, url: competitor.trackedProduct?.productUrl },
+      {
+        title: competitor.competitorName ?? "",
+        url: competitor.competitorUrl,
+        pageTitle: scraped.name,
+      },
+    );
+    if (isModelIdentityMismatch(identity.relation)) {
+      logger.warn(
+        {
+          competitorId,
+          scrapedName: scraped.name.slice(0, 160),
+          identity: identity.relation,
+          reason: identity.reason,
+        },
+        "Competitor page title shows a different model code — ignored",
+      );
+      if (neverPriced) {
+        await dropIfUnpriced("model-code-conflict");
+      } else {
+        await prisma.competitor
+          .update({
+            where: { id: competitor.id },
+            data: {
+              matchScore: Math.min(competitor.matchScore ?? 30, 30),
+              matchReason: identity.reason,
+            },
+          })
+          .catch((err) => {
+            logger.warn({ competitorId, err }, "Model-code conflict downgrade failed");
+          });
+      }
+      return { success: false };
+    }
   }
 
   // Fiyat makullük kapısı (otomatik satırlar): keşif turundaki 0.3x–3x bandının

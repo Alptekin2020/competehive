@@ -13,6 +13,13 @@ import {
   withinPriceBand,
 } from "./utils/competitor-quality";
 import {
+  analyzeModelIdentity,
+  hasColourOrShadeConflict,
+  type ModelIdentity,
+  type ModelIdentityAnalysis,
+} from "./utils/model-identity";
+import { isGoogleHostedUrl } from "./utils/stale-competitors";
+import {
   hasPackOrSpecConflict,
   isNearIdenticalTitle,
   isSourceSubsetTitle,
@@ -60,12 +67,20 @@ export interface MatchResult {
   reason: string; // Turkish explanation
   /** AI doğrulaması yapılamadı (anahtar yok / API hatası) — karar güvenilmez. */
   aiUnavailable?: boolean;
+  /** Deterministik model kimliği karşılaştırması (bkz. utils/model-identity.ts). */
+  modelIdentity?: ModelIdentity;
   attributes: {
     brandMatch: boolean;
     modelMatch: boolean;
     specMatch: boolean;
     categoryMatch: boolean;
     details: string;
+    /**
+     * Kabulün dayanağı (yalnızca isMatch=true): "model-code" ortak model
+     * kodu / benzersiz ürün kodu, "title" başlık ya da AI kabulü. Fiyat bandı
+     * matchAttributes.matchBasis'i okur (model-code geniş, title dar bant).
+     */
+    matchBasis?: "model-code" | "title";
   };
 }
 
@@ -82,6 +97,77 @@ export interface ProductInfo {
 
 const NEAR_IDENTICAL_REASON = "Başlıklar neredeyse aynı (marka ve ürün adı birebir örtüşüyor)";
 const STRONG_OVERLAP_REASON = "Başlıklar büyük oranda aynı; belirgin bir fark bulunamadı";
+
+/** Kimliği doğrulanamayan adayın ulaşabileceği en yüksek skor (onay bekler). */
+const UNKNOWN_IDENTITY_MAX_SCORE = MIN_MATCH_SCORE - 1;
+/** Google kartında kimlik doğrulanamıyorsa: aday bile saklanmaz (<50). */
+const UNVERIFIABLE_GOOGLE_SCORE = 45;
+
+function identityOf(source: ProductInfo, candidate: ProductInfo): ModelIdentityAnalysis {
+  return analyzeModelIdentity(
+    { title: source.title, url: source.url },
+    { title: candidate.title, url: candidate.url },
+  );
+}
+
+/**
+ * Model kodu/numarası/ekran boyutu kesin farklıysa ya da (Google kartında)
+ * hiç doğrulanamıyorsa AI'a sormadan verilecek red. null → devam.
+ */
+function identityRejection(
+  identity: ModelIdentityAnalysis,
+  candidate: ProductInfo,
+): MatchResult | null {
+  let score: number;
+  let reason: string;
+  if (identity.relation === "conflict") {
+    score = 20;
+    reason = identity.reason;
+  } else if (identity.relation === "config-variant") {
+    score = 30;
+    reason = identity.reason;
+  } else if (identity.relation === "unknown" && isGoogleHostedUrl(candidate.url)) {
+    // Google ürün kartı taranamaz ve slug taşımaz: kod hiçbir zaman
+    // doğrulanamaz. Onaya sunulmaz (prod: EP3347/90 ↔ EP3341/50 kartı).
+    score = UNVERIFIABLE_GOOGLE_SCORE;
+    reason = `${identity.reason}; Google kartı doğrulanamaz`;
+  } else {
+    return null;
+  }
+  return {
+    isMatch: false,
+    score,
+    reason,
+    modelIdentity: identity.relation,
+    attributes: {
+      brandMatch: true,
+      modelMatch: false,
+      specMatch: false,
+      categoryMatch: true,
+      details: `Kaynak kod: ${identity.sourceCodes.join(", ") || "-"}; aday kod: ${identity.candidateCodes.join(", ") || "-"}`,
+    },
+  };
+}
+
+function logDeterministicAccept(
+  path: string,
+  source: ProductInfo,
+  candidate: ProductInfo,
+  score: number,
+  identity: ModelIdentity,
+): void {
+  logger.info(
+    {
+      path,
+      score,
+      identity,
+      source: source.title,
+      candidate: candidate.title,
+      url: candidate.url,
+    },
+    "Deterministic match accept",
+  );
+}
 
 /**
  * Daha önce AI'ın emin olamadığı (50–69) bir adayı yalnızca deterministik
@@ -110,19 +196,27 @@ export function reevaluateUncertainMatch(
     return null;
   }
   if (hasPackOrSpecConflict(cleanedSource, urlSlugText(candidate.url))) return null;
+  // Model kimliği doğrulanmadan (farklı kod ya da adayda kod yok) yükseltme yok.
+  const identity = identityOf(sourceProduct, candidate);
+  if (identity.relation !== "same" && identity.relation !== "none") return null;
 
-  const accept = (score: number, reason: string): MatchResult => ({
-    isMatch: true,
-    score,
-    reason,
-    attributes: {
-      brandMatch: true,
-      modelMatch: true,
-      specMatch: true,
-      categoryMatch: true,
-      details: "Deterministik başlık örtüşmesi; spec/adet/kod çelişkisi yok",
-    },
-  });
+  const accept = (score: number, reason: string): MatchResult => {
+    logDeterministicAccept("reevaluate", sourceProduct, candidate, score, identity.relation);
+    return {
+      isMatch: true,
+      score,
+      reason,
+      modelIdentity: identity.relation,
+      attributes: {
+        brandMatch: true,
+        modelMatch: true,
+        specMatch: true,
+        categoryMatch: true,
+        details: "Deterministik başlık örtüşmesi; spec/adet/kod çelişkisi yok",
+        matchBasis: "title",
+      },
+    };
+  };
 
   if (
     isNearIdenticalTitle(cleanedSource, cleanedCandidate) ||
@@ -166,14 +260,21 @@ function fallbackTokens(s: string): string[] {
 // görüyordu. Yeni tahmin: marka + token örtüşmesi + spec çelişkisi kontrolü.
 // Skor bilinçli olarak MIN_MATCH_SCORE'un ALTINDA tutulur (69): rakip listede
 // görünür ama AI onayı olmadan karar hesaplarına girmez.
-function fallbackMatch(sourceTitle: string, candidateTitle: string): MatchResult {
+function fallbackMatch(
+  sourceTitle: string,
+  candidateTitle: string,
+  identity: ModelIdentity,
+): MatchResult {
   const srcTokens = fallbackTokens(sourceTitle);
   const cndSet = new Set(fallbackTokens(candidateTitle));
   const overlap =
     srcTokens.length === 0 ? 0 : srcTokens.filter((t) => cndSet.has(t)).length / srcTokens.length;
   const brandShared = srcTokens.length > 0 && cndSet.has(srcTokens[0]);
   const specsConflict = hasConflictingSpecs(sourceTitle, candidateTitle);
-  const likelySame = brandShared && overlap >= 0.5 && !specsConflict;
+  // Model kimliği doğrulanamıyorsa (kaynakta kod var, adayda yok) başlık
+  // benzerliği tek başına "muhtemelen aynı" demeye yetmez.
+  const identityOk = identity === "same" || identity === "none";
+  const likelySame = brandShared && overlap >= 0.5 && !specsConflict && identityOk;
   return {
     isMatch: likelySame,
     score: likelySame ? MIN_MATCH_SCORE - 1 : 0,
@@ -181,12 +282,14 @@ function fallbackMatch(sourceTitle: string, candidateTitle: string): MatchResult
       ? "Başlık benzerliği yüksek — AI doğrulaması yapılamadı"
       : "AI doğrulaması yapılamadı; başlık benzerliği yetersiz",
     aiUnavailable: true,
+    modelIdentity: identity,
     attributes: {
       brandMatch: brandShared,
       modelMatch: false,
       specMatch: !specsConflict,
       categoryMatch: false,
       details: "OpenAI API kullanılamadığı için deterministik tahmin kullanıldı",
+      ...(likelySame ? { matchBasis: "title" as const } : {}),
     },
   };
 }
@@ -217,6 +320,28 @@ export async function verifyProductMatch(
     };
   }
 
+  // MODEL KİMLİĞİ (AI'dan önce): başlık + URL slug'ındaki model kodu, model
+  // numarası (A55/A56, iPhone 15/16, 3300 Serisi) ve ekran boyutu farklıysa
+  // aday farklı üründür; AI'a sorulmaz, onaya da sunulmaz (skor ≤30).
+  const identity = identityOf(sourceProduct, candidate);
+  const identityRejected = identityRejection(identity, candidate);
+  if (identityRejected) {
+    logger.info(
+      {
+        source: sourceProduct.title,
+        candidate: candidate.title,
+        url: candidate.url,
+        identity: identity.relation,
+        score: identityRejected.score,
+      },
+      "Model identity rejection",
+    );
+    return identityRejected;
+  }
+  // Kaynakta model kodu var ama aday doğrulamıyor: deterministik kabul ve
+  // backstop yükseltmesi yok, skor en fazla 69 (kullanıcı onayı beklenir).
+  const identityUnknown = identity.relation === "unknown";
+
   // Deterministik KOD ANALİZİ — AI'dan önce ve AI'dan bağımsız çalışır.
   //
   // 1) KONFİGÜRASYON VARYANTI: aynı temel kod ama rakamlı alt-SKU eki
@@ -232,7 +357,8 @@ export async function verifyProductMatch(
   if (codeRelation === "config-variant") {
     return {
       isMatch: false,
-      score: 55,
+      score: 30,
+      modelIdentity: "config-variant",
       reason: "Aynı model ailesi ama farklı konfigürasyon varyantı (alt-SKU eki)",
       attributes: {
         brandMatch: true,
@@ -255,7 +381,8 @@ export async function verifyProductMatch(
     ) {
       return {
         isMatch: false,
-        score: 55,
+        score: 30,
+        modelIdentity: "config-variant",
         reason: "Aynı model kodu ama farklı donanım/kapasite varyantı",
         attributes: {
           brandMatch: true,
@@ -267,9 +394,11 @@ export async function verifyProductMatch(
       };
     }
     if (sharesStrongProductCode(sourceProduct.title, candidate.title)) {
+      logDeterministicAccept("strong-code", sourceProduct, candidate, 95, identity.relation);
       return {
         isMatch: true,
         score: 95,
+        modelIdentity: identity.relation,
         reason: "Aynı ürün kodu (MPN/barkod) eşleşmesi",
         attributes: {
           brandMatch: true,
@@ -277,6 +406,7 @@ export async function verifyProductMatch(
           specMatch: true,
           categoryMatch: true,
           details: "Ortak benzersiz ürün kodu",
+          matchBasis: "model-code",
         },
       };
     }
@@ -292,9 +422,11 @@ export async function verifyProductMatch(
       candidate.price <= 0 ||
       withinPriceBand(sourceProduct.price, candidate.price);
     if (brandShared && priceOk) {
+      logDeterministicAccept("model-code", sourceProduct, candidate, 90, identity.relation);
       return {
         isMatch: true,
         score: 90,
+        modelIdentity: identity.relation,
         reason:
           codeRelation === "color-variant"
             ? "Aynı model kodu — renk varyantı (fiyat takibi için aynı ürün)"
@@ -305,6 +437,7 @@ export async function verifyProductMatch(
           specMatch: true,
           categoryMatch: true,
           details: "Ortak model kodu + marka teyidi; spec/adet çelişkisi yok",
+          matchBasis: "model-code",
         },
       };
     }
@@ -329,14 +462,17 @@ export async function verifyProductMatch(
   // kabul yapılmaz, karar AI'a kalır.
   const urlConflict = hasPackOrSpecConflict(cleanedSource, urlSlugText(candidate.url));
   if (
+    !identityUnknown &&
     !urlConflict &&
     priceInBand &&
     (isNearIdenticalTitle(cleanedSource, cleanedCandidate) ||
       isSourceSubsetTitle(cleanedSource, cleanedCandidate))
   ) {
+    logDeterministicAccept("near-identical", sourceProduct, candidate, 88, identity.relation);
     return {
       isMatch: true,
       score: 88,
+      modelIdentity: identity.relation,
       reason: NEAR_IDENTICAL_REASON,
       attributes: {
         brandMatch: true,
@@ -344,13 +480,14 @@ export async function verifyProductMatch(
         specMatch: true,
         categoryMatch: true,
         details: "Deterministik başlık örtüşmesi; spec/adet/kod çelişkisi yok",
+        matchBasis: "title",
       },
     };
   }
 
   const client = getOpenAIClient();
   if (!client) {
-    return fallbackMatch(sourceProduct.title, candidate.title);
+    return fallbackMatch(sourceProduct.title, candidate.title, identity.relation);
   }
 
   try {
@@ -464,7 +601,9 @@ SKOR REHBERİ:
     // doğrulanabilir hiçbir spec/adet çelişkisi yoksa red geri çevrilir:
     // politika prompt'a değil koda emanet edilir.
     const aiReason = String(parsed.reason || "");
+    const candidateIdentityText = `${candidate.title} ${urlSlugText(candidate.url)}`;
     if (
+      !identityUnknown &&
       !finalIsMatch &&
       finalScore >= 40 &&
       parsed.brandMatch === true &&
@@ -473,16 +612,26 @@ SKOR REHBERİ:
       (MISSING_INFO_REJECTION_RE.test(aiReason) || PRICE_BASED_REJECTION_RE.test(aiReason)) &&
       !isAccessoryListing(candidate.title, sourceProduct.title) &&
       !hasConflictingSpecs(sourceProduct.title, candidate.title) &&
-      !hasConflictingCountDescriptors(sourceProduct.title, candidate.title)
+      !hasConflictingCountDescriptors(sourceProduct.title, candidate.title) &&
+      // Renk/ton varyantı (Oral-B Vitality Pro Lila ↔ Siyah) yükseltilmez.
+      !hasColourOrShadeConflict(sourceProduct.title, candidateIdentityText)
     ) {
       logger.info(
         {
-          source: sourceProduct.title.slice(0, 80),
-          candidate: candidate.title.slice(0, 80),
+          source: sourceProduct.title,
+          candidate: candidate.title,
+          url: candidate.url,
           score: finalScore,
           aiReason: aiReason.slice(0, 120),
         },
         "Kural 14 backstop: 'eksik bilgi'/'fiyat' reddi geri çevrildi",
+      );
+      logDeterministicAccept(
+        "rule14",
+        sourceProduct,
+        candidate,
+        MIN_MATCH_SCORE,
+        identity.relation,
       );
       finalIsMatch = true;
       finalScore = MIN_MATCH_SCORE;
@@ -495,6 +644,7 @@ SKOR REHBERİ:
     // Prebiyotik 60 Tablet" ve "icollagen Kolajen Ve Prebiyotik Tablet" 60
     // puanda kaldı ("farklı model isimleri") ve ürün 0 rakiple bitti.
     if (
+      !identityUnknown &&
       !finalIsMatch &&
       finalScore >= 50 &&
       parsed.categoryMatch !== false &&
@@ -511,9 +661,27 @@ SKOR REHBERİ:
         },
         "Title overlap backstop: uncertain AI score accepted",
       );
+      logDeterministicAccept("title-overlap", sourceProduct, candidate, 75, identity.relation);
       finalIsMatch = true;
       finalScore = 75;
       parsed.reason = STRONG_OVERLAP_REASON;
+    }
+
+    // Model kodu doğrulanamayan aday AI ne derse desin güvenilir sayılmaz:
+    // en fazla 69 (onay bekleyen olası eşleşme).
+    if (identityUnknown && finalScore > UNKNOWN_IDENTITY_MAX_SCORE) {
+      logger.info(
+        {
+          source: sourceProduct.title,
+          candidate: candidate.title,
+          url: candidate.url,
+          score: finalScore,
+        },
+        "Model identity unknown: AI score capped",
+      );
+      finalScore = UNKNOWN_IDENTITY_MAX_SCORE;
+      finalIsMatch = false;
+      parsed.reason = identity.reason;
     }
 
     // Tutarsızlık tespiti — gözlem amaçlı log (matcher davranışını izleyebilelim)
@@ -542,6 +710,7 @@ SKOR REHBERİ:
     const result: MatchResult = {
       isMatch: finalIsMatch,
       score: finalScore,
+      modelIdentity: identity.relation,
       reason: String(parsed.reason || "Açıklama yok").slice(0, 200),
       attributes: {
         brandMatch: parsed.brandMatch === true,
@@ -549,6 +718,7 @@ SKOR REHBERİ:
         specMatch: parsed.specMatch === true,
         categoryMatch: parsed.categoryMatch === true,
         details: String(parsed.details || "").slice(0, 300),
+        ...(finalIsMatch ? { matchBasis: "title" as const } : {}),
       },
     };
 

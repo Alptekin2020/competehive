@@ -21,6 +21,7 @@ import {
   isPackagingListing,
   sharesStrongProductCode,
 } from "./competitor-quality";
+import { compareModelIdentity, isModelIdentityMismatch } from "./model-identity";
 import {
   compareTitles,
   hasPackOrSpecConflict,
@@ -556,8 +557,19 @@ export function pickDirectListing(
   ownTitle: string,
   competitorTitle: string,
   candidates: DirectListingCandidate[],
+  ownUrl?: string | null,
 ): DirectListingCandidate | null {
   const scored = candidates
+    // Model kimliği (başlık + URL slug'ı): farklı kod/numara/boyut ya da
+    // kaynaktaki kodu doğrulamayan sayfa asla bağlanmaz.
+    .filter((c) => {
+      if (!c.title?.trim() || !c.link) return false;
+      const identity = compareModelIdentity(
+        { title: ownTitle, url: ownUrl },
+        { title: c.title, url: c.link },
+      );
+      return !isModelIdentityMismatch(identity) && identity !== "unknown";
+    })
     .map((c) => scoreDirectCandidate(ownTitle, competitorTitle, c))
     .filter((s): s is ScoredDirectCandidate => s !== null)
     .sort((a, b) => b.score - a.score);
@@ -580,6 +592,8 @@ export function verifyDirectPage(
 ): boolean {
   if (!pageTitle || pageTitle.trim().length < 3) return false;
   if (hasPackOrSpecConflict(ownTitle, pageTitle)) return false;
+  const identity = compareModelIdentity({ title: ownTitle }, { title: pageTitle, url });
+  if (isModelIdentityMismatch(identity)) return false;
   return scoreDirectCandidate(ownTitle, competitorTitle, { title: pageTitle, link: url }) !== null;
 }
 

@@ -493,6 +493,23 @@ export function extractProductCodes(text: string): string[] {
     if (norm.length < 5) continue;
     if (!/[A-Z]/.test(norm) || !/\d/.test(norm)) continue; // harf VE rakam içermeli
     if (isSharedHardwareCode(norm)) continue;
+    // "EP3347-90": tireli rakam eki modelin parçası değil, varyant ekidir
+    // (EP3347/90 ile aynı yazım). Önek kendi başına kodsa ek ayrılır —
+    // aksi halde EP334790 okunup EP3347/90 ile sahte varyant çıkıyordu.
+    // Ek, configSuffixesFor tarafından ayrıca okunur.
+    const dashSuffix = m[0].match(/^(.+)-\d{1,3}$/);
+    if (dashSuffix) {
+      const prefixNorm = dashSuffix[1].replace(/-/g, "").toUpperCase();
+      if (
+        prefixNorm.length >= 5 &&
+        /[A-Z]/.test(prefixNorm) &&
+        /\d/.test(prefixNorm) &&
+        !isSharedHardwareCode(prefixNorm)
+      ) {
+        found.push({ raw: dashSuffix[1], norm: prefixNorm });
+        continue;
+      }
+    }
     found.push({ raw: m[0], norm });
   }
   const seen = new Set<string>();
@@ -696,22 +713,37 @@ export function hasConflictingCountDescriptors(a: string, b: string): boolean {
 
 export type ProductCodeRelation = "exact" | "color-variant" | "config-variant" | "none";
 
-// Kodun hemen ardından gelen ayrık, SIFIR ÖNCÜLÜ kısa rakam grubu alt-SKU
-// ekidir: "83SC000QTR 015", "83sc000qtr-001". Sıfır öncülü şartı "83SC000QTR
-// 15.6 inç" gibi ekran boyutlarının yanlışlıkla ek sayılmasını önler.
+// Koda bitişik varyant ekleri:
+// - ayrık, SIFIR ÖNCÜLÜ kısa rakam grubu: "83SC000QTR 015" (alt-SKU). Sıfır
+//   öncülü şartı "83SC000QTR 15.6 inç" gibi ekran boyutlarını ek saymaz.
+// - tireli rakam eki: "83sc000qtr-001", "EP3347-90".
+// - eğik çizgi eki: "HD9650/90", "EP3347/90" (Philips bölge/varyant eki).
 function configSuffixesFor(rawText: string, rawCode: string): Set<string> {
   const out = new Set<string>();
   if (!rawText || !rawCode) return out;
   const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`${escaped}[\\s\\-–—/]+(0\\d{1,3})(?![\\d.,])`, "gi");
-  for (const m of rawText.matchAll(re)) out.add(m[1]);
+  const re = new RegExp(
+    `${escaped}(?:\\/\\s*([A-Za-z0-9]{1,4})(?![A-Za-z0-9])|[\\-–—](\\d{1,3})(?![\\d.,A-Za-z])|\\s+(0\\d{1,3})(?![\\d.,]))`,
+    "gi",
+  );
+  for (const m of rawText.matchAll(re)) out.add((m[1] ?? m[2] ?? m[3]).toUpperCase());
   return out;
 }
 
-function sameStringSet(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
+/**
+ * İki ek kümesi farklı konfigürasyon mu? İki tarafta da ek varsa ortak ek
+ * olmalı (HD9650/90 ≠ HD9650/99). Tek taraflı ek yalnızca sıfır öncüllü
+ * alt-SKU ise varyanttır (83SC000QTR vs "83SC000QTR 001"); "/90" gibi bölge
+ * eki yazılmamışsa eksik bilgidir.
+ */
+function suffixesConflict(a: Set<string>, b: Set<string>): boolean {
+  if (a.size > 0 && b.size > 0) {
+    for (const v of a) if (b.has(v)) return false;
+    return true;
+  }
+  const lone = a.size > 0 ? a : b;
+  for (const v of lone) if (/^0\d/.test(v)) return true;
+  return false;
 }
 
 function identityCodeMap(text: string): Map<string, string> {
@@ -748,7 +780,7 @@ export function compareProductCodes(aText: string, bText: string): ProductCodeRe
   for (const [norm, rawA] of aCodes) {
     const rawB = bCodes.get(norm);
     if (!rawB) continue;
-    if (!sameStringSet(configSuffixesFor(aText, rawA), configSuffixesFor(bText, rawB))) {
+    if (suffixesConflict(configSuffixesFor(aText, rawA), configSuffixesFor(bText, rawB))) {
       return "config-variant";
     }
     exact = true;
