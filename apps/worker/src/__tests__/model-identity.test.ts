@@ -282,3 +282,49 @@ describe("hasColourOrShadeConflict", () => {
     expect(hasColourOrShadeConflict("Note Pudra No:01", "Note Pudra No:02")).toBe(true);
   });
 });
+
+describe("canlı yanlış silmeler (16 Kasım)", () => {
+  const samsung = {
+    title: "SAMSUNG 98DU9000 98 inç 248,92 cm Dahili Uydu Alıcılı 4K UHD SMART TV LED TV",
+    url: "https://www.trendyol.com/samsung/98du9000-98-inc-247-ekran-uydu-alicili-4k-uhd-smart-led-tv-p-123456789",
+  };
+  const googleCard =
+    "https://www.google.com/search?ibp=oshop&q=SAMSUNG+98+98DU9000&prds=productid:11036718234336220891";
+
+  it("aynı model kodunda ekran yazım farkı (247/248 Ekran) çelişki değildir", () => {
+    expect(
+      compareModelIdentity(samsung, {
+        title: 'Samsung 98DU9000 4K Ultra HD 98" 248 Ekran Uydu Alıcılı Smart LED TV',
+        url: googleCard,
+      }),
+    ).toBe("same");
+  });
+
+  it("slug'daki ölçü (inc-247) model kodu sayılmaz", () => {
+    expect(slugModelText(samsung.url)).not.toContain("inc-247");
+  });
+
+  it("ekran boyutu küçük yuvarlama farkında eşit, gerçek farkta çelişki", () => {
+    expect(
+      compareModelIdentity({ title: "TV 65 inç 165 Ekran" }, { title: "TV 164 Ekran" }),
+    ).not.toBe("conflict");
+    expect(compareModelIdentity({ title: "TV 165 Ekran" }, { title: "TV 140 Ekran" })).toBe(
+      "conflict",
+    );
+  });
+
+  it("yalnızca slug'da kod taşıyan kodsuz ürün adayları 'doğrulanamıyor' olmaz", () => {
+    expect(
+      compareModelIdentity(
+        {
+          title: "Cornella Bear 550 ml Ayıcık Tasarımlı Cam Pipetli İçecek Bardağı",
+          url: "https://www.trendyol.com/cornella/bear-550-ml-ayicik-bardak-cb550-p-987654321",
+        },
+        {
+          title: "Cornella Bear Cam Barista Soguk Ayicikli Icecek Bardagi 550 ml",
+          url: googleCard,
+        },
+      ),
+    ).toBe("none");
+  });
+});

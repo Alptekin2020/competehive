@@ -20,7 +20,7 @@ import { logger } from "./logger";
 
 export const REJECT_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const REJECT_CACHE_MAX_SCORE = 40;
-const REJECT_CACHE_VERSION = 1;
+const REJECT_CACHE_VERSION = 2;
 const REDIS_TIMEOUT_MS = 500;
 
 export interface CachedRejection {

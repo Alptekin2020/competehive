@@ -222,6 +222,19 @@ function screenSizes(folded: string): Map<string, Set<string>> {
   return map;
 }
 
+// Ekran ölçüleri yuvarlanarak yazılır ("248,92 cm" → "248 Ekran", slug'da
+// "247-ekran"): küçük farklar aynı boyuttur.
+const AXIS_TOLERANCE: Record<string, number> = { inch: 0.6, ekran: 3 };
+
+function axisValuesMatch(key: string, a: string, b: string): boolean {
+  if (a === b) return true;
+  const tol = AXIS_TOLERANCE[key];
+  if (tol === undefined) return false;
+  const x = parseFloat(a);
+  const y = parseFloat(b);
+  return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x - y) <= tol;
+}
+
 /** İki tarafta da bulunan bir eksende ortak değer yoksa çelişen ilk ekseni döner. */
 function disjointAxis(
   a: Map<string, Set<string>>,
@@ -231,7 +244,7 @@ function disjointAxis(
     const vb = b.get(key);
     if (!vb) continue;
     let overlap = false;
-    for (const v of va) if (vb.has(v)) overlap = true;
+    for (const v of va) for (const w of vb) if (axisValuesMatch(key, v, w)) overlap = true;
     if (!overlap) return { key, a: va, b: vb };
   }
   return null;
@@ -302,7 +315,7 @@ export function slugModelText(url: string | null | undefined): string {
         continue;
       }
       // "lx-6331" → "lx-6331" (harf öneki + rakam kodu tek kod olarak kalır).
-      if (next && /^[a-z]{1,3}$/.test(w) && /^\d{3,6}$/.test(next)) {
+      if (next && /^[a-z]{1,3}$/.test(w) && !UNIT_SEGMENT_RE.test(w) && /^\d{3,6}$/.test(next)) {
         merged.push(`${w}-${next}`);
         i++;
         continue;
@@ -396,7 +409,8 @@ export function analyzeModelIdentity(
       `Model numarası farklı: ${k}${fmtSet(letter.a)} ≠ ${k}${fmtSet(letter.b)}`,
     );
   }
-  const size = disjointAxis(screenSizes(srcFolded), screenSizes(cndFolded));
+  // Model kodu birebir aynıysa boyut koddan gelir (98DU9000 = 98"): yazım farkı çelişki sayılmaz.
+  const size = codeSame ? null : disjointAxis(screenSizes(srcFolded), screenSizes(cndFolded));
   if (size) {
     const unit = size.key === "inch" ? '"' : " Ekran";
     return result(
@@ -413,10 +427,13 @@ export function analyzeModelIdentity(
   }
   if (codeSame) return result("same", "Model kodu aynı");
 
-  if (srcCodes.length > 0) {
+  // "Doğrulanamıyor" yalnızca ürün BAŞLIĞINDA yazan koda bakar: slug'daki
+  // gürültü (ölçü, satıcı SKU'su) kodsuz ürünlerin adaylarını engellememeli.
+  const srcTitleCodes = parseModelCodes([source.title, source.pageTitle ?? ""].join(" "));
+  if (srcTitleCodes.length > 0) {
     return result(
       "unknown",
-      `Model kodu adayda doğrulanamıyor (${srcCodes.map(displayCode).join(", ")})`,
+      `Model kodu adayda doğrulanamıyor (${srcTitleCodes.map(displayCode).join(", ")})`,
     );
   }
   if (srcNamed.size > 0) {
