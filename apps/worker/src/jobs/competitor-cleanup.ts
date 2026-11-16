@@ -322,7 +322,12 @@ export async function purgeRecoveryBugCompetitors(): Promise<number> {
 // adla yeniden denetlenir; paket/ölçü çelişkisi olanlar grafik ikizleriyle
 // birlikte silinir. Idempotent: çelişkisiz satırlara dokunmaz.
 
-const TITLE_ACCEPT_REASON_PREFIXES = ["Başlıklar neredeyse aynı", "Başlıklar büyük oranda aynı"];
+const TITLE_ACCEPT_REASON_PREFIXES = [
+  "Başlıklar neredeyse aynı",
+  "Başlıklar büyük oranda aynı",
+  // Kural 14 backstop'u da URL yolundaki paketi görmüyordu (Tambol "x 2 adet").
+  "Marka+model aynı; eksik bilgi",
+];
 
 export async function purgeTitleAcceptMismatches(): Promise<number> {
   const rows = await prisma.competitor.findMany({

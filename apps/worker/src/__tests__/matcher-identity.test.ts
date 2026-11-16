@@ -144,6 +144,19 @@ describe("verifyProductMatch — model identity gate", () => {
     expect(result.score).toBe(40);
   });
 
+  it("Rule 14 backstop does not promote a multipack hidden in the URL (Tambol x 2 adet)", async () => {
+    aiSays({ ...UNCERTAIN, score: 40, reason: "Gramaj belirtilmemiş" });
+    const result = await verifyProductMatch(
+      { title: "Kahve Dünyası Tambol Çilekli Milföy Dolgulu 100 gr" },
+      {
+        title: "Kahve Dünyası Tambol Çilekli Milföy Dolgulu Sütlü ...",
+        url: "https://www.n11.com/urun/kahve-dunyasi-tambol-cilekli-milfoy-dolgulu-sutlu-cikolata-100-gr-x-2-adet-120926357",
+      },
+    );
+    expect(result.isMatch).toBe(false);
+    expect(result.score).toBeLessThan(70);
+  });
+
   it("Rule 14 backstop still promotes a missing-info rejection without conflicts", async () => {
     aiSays({ ...UNCERTAIN, score: 40, reason: "Kapasite belirtilmemiş" });
     const result = await verifyProductMatch(
