@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
-import { isSameListing, listingIdentity } from "../utils/url-match";
+import { isSameListing, listingIdentity, rejectionLinkHint } from "../utils/url-match";
 
 describe("listingIdentity", () => {
   it("keys Trendyol listings by product id, ignoring slug and seller params", () => {
@@ -88,5 +88,19 @@ describe("shouldPurgeCompetitor own-listing", () => {
         context,
       ),
     ).toBeNull();
+  });
+});
+
+describe("rejectionLinkHint", () => {
+  it("keeps host and path, drops the query", () => {
+    expect(
+      rejectionLinkHint("https://www.trendyol.com/pati/kedi-kumu-2-adet-p-1?boutiqueId=61"),
+    ).toBe("trendyol.com/pati/kedi-kumu-2-adet-p-1");
+  });
+  it("names Google cards and handles missing links", () => {
+    expect(rejectionLinkHint("https://www.google.com/search?ibp=oshop&prds=x")).toBe(
+      "google ürün kartı",
+    );
+    expect(rejectionLinkHint(undefined)).toBe("bağlantı yok");
   });
 });
