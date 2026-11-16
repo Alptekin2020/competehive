@@ -145,6 +145,11 @@ const FORM_TOKENS = new Set([
 // prod'da "Luxell LX-6331 Fanlı Isıtıcı" 6 kez "farklı marka" diye reddedildi).
 const BRAND_ALIASES: Record<string, string> = { luxell: "kumtel" };
 
+/** Katlanmış (küçük harf, ASCII) marka tokenını kanonik markaya indirger (luxell → kumtel). */
+export function canonicalBrandToken(token: string): string {
+  return BRAND_ALIASES[token] ?? token;
+}
+
 // Ana marka → alt marka (ürün serisi). Kaynak "Kahve Dünyası Tambol …", aday
 // "Tambol …" ya da "Tablet Tambol …" yazabiliyor: alt marka ortaksa ana marka
 // sözcüklerinin eksikliği çelişki değildir.
