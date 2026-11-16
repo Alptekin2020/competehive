@@ -97,7 +97,15 @@ export function shouldPurgeCompetitor(
       { title: context.productName, url: context.productUrl },
       { title: candidate.competitorName, url: candidate.competitorUrl },
     );
-    if (isModelIdentityMismatch(identity.relation)) return "model-code-conflict";
+    // Silme geri alınamaz: yalnızca açık model KODU çelişkisi/varyantı silinir.
+    // Model numarası ve ekran boyutu eksenleri karar dışı bırakır ama silmez
+    // (yazım farkları — "247/248 Ekran" — 16 Kasım'da doğru satırları sildirdi).
+    if (
+      isModelIdentityMismatch(identity.relation) &&
+      (identity.relation === "config-variant" || identity.reason.startsWith("Model kodu farklı"))
+    ) {
+      return "model-code-conflict";
+    }
     // Kodu doğrulanamayan Google kartı onay bekliyorsa: kart taranamaz ve
     // slug taşımaz, kullanıcıya hiçbir zaman doğrulanabilir bir aday olamaz.
     if (
