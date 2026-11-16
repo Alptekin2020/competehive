@@ -11,6 +11,7 @@ import {
 } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { reevaluateUncertainMatch, verifyProductMatch, MatchResult } from "../matcher";
+import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
 import { Marketplace, Prisma } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
@@ -31,16 +32,22 @@ import {
   urlMatchKey,
 } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { buildSearchQueries, cleanProductTitle } from "../utils/search-queries";
+import { MAX_SEARCH_QUERIES, buildSearchQueries, cleanProductTitle } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
 import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 
 export { buildZeroReason };
 import { alertQueue, competitorQueue } from "./processor";
 import { resolveDirectListings } from "./direct-listing";
-import { readGoogleKey } from "../utils/direct-listing";
+import { readGoogleKeys } from "../utils/direct-listing";
 import type { CompetitorPriceMove } from "./alert-rules";
 import { MAX_DIRECT_SCRAPES_PER_ROUND, shouldSearchMarketplacePages } from "../utils/second-source";
+import {
+  isCacheableRejection,
+  readCachedRejection,
+  rejectCacheApplies,
+  writeCachedRejection,
+} from "../utils/match-reject-cache";
 import {
   MAX_NEW_CANDIDATES_PER_ROUND,
   MAX_PENDING_CANDIDATES,
@@ -307,13 +314,55 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // Gerçek ürün sayfasına taşınmış rakipler, Google'ın aynı ürün kartı
     // yeniden geldiğinde de tanınmalı — aksi halde her turda mükerrer satır açılır.
     for (const c of knownCompetitors) {
-      const googleKey = readGoogleKey(c.matchAttributes);
-      if (googleKey && !knownByUrl.has(googleKey)) knownByUrl.set(googleKey, c);
+      for (const googleKey of readGoogleKeys(c.matchAttributes)) {
+        if (!knownByUrl.has(googleKey)) knownByUrl.set(googleKey, c);
+      }
     }
 
     // Bu turda tespit edilen anlamlı-olabilecek rakip fiyat hareketleri —
     // tur sonunda tek bir alert job'ına eklenir (COMPETITOR_PRICE_CHANGE).
     const competitorMoves: CompetitorPriceMove[] = [];
+
+    // AI red önbelleği: kesin redler (< 40) 7 gün boyunca aynı aday için
+    // tekrar AI'a sorulmaz. Redis yoksa doğrudan matcher çalışır.
+    let rejectCacheHits = 0;
+    const verifyWithRejectCache = async (
+      source: Parameters<typeof verifyProductMatch>[0],
+      candidate: Parameters<typeof verifyProductMatch>[1],
+      urlKey: string,
+    ): Promise<MatchResult> => {
+      const cacheable = rejectCacheApplies(source.title, candidate.title);
+      if (cacheable) {
+        const cached = await readCachedRejection(productId, urlKey);
+        if (cached) {
+          // Kurallar o günden beri iyileşmiş olabilir: deterministik başlık
+          // kabulü (AI'sız) önbellekteki reddi geçersiz kılar.
+          const promoted = reevaluateUncertainMatch(source, candidate, { score: cached.score });
+          if (promoted) return promoted;
+          rejectCacheHits++;
+          return {
+            isMatch: false,
+            score: cached.score,
+            reason: cached.reason,
+            attributes: {
+              brandMatch: false,
+              modelMatch: false,
+              specMatch: false,
+              categoryMatch: false,
+              details: "Önceki AI reddi (önbellek)",
+            },
+          };
+        }
+      }
+      const result = await verifyProductMatch(source, candidate);
+      if (cacheable && isCacheableRejection(result)) {
+        await writeCachedRejection(productId, urlKey, {
+          score: result.score,
+          reason: result.reason,
+        });
+      }
+      return result;
+    };
 
     const processResults = async (batch: SerperShoppingResult[]) => {
       for (const result of batch) {
@@ -361,6 +410,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         if (rejectedUrlKeys.has(resultUrlKey)) continue;
 
         const known = knownByUrl.get(resultUrlKey);
+        // Google kartı, gerçek ürün sayfasına taşınmış bir rakibin eski anahtarı:
+        // o satırın fiyatı/adı kendi sayfasından okunur, Google'ın değeri yazılmaz
+        // (iki kaynak birbirini ezip sahte fiyat hareketi üretiyordu).
+        if (known && competitorUrlKey(known.competitorUrl) !== resultUrlKey) continue;
         const isKnown = Boolean(known);
         const knownReview = known ? readMatchReview(known.matchAttributes) : null;
         // Bilinen rakip, KAYITLI URL'si üzerinden güncellenir (mükerrer satır yok).
@@ -440,9 +493,15 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           if (!isKnown) {
             let preMatch: MatchResult;
             try {
-              preMatch = await verifyProductMatch(
-                { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+              preMatch = await verifyWithRejectCache(
+                {
+                  title,
+                  url: product.productUrl || url || undefined,
+                  price: sourcePrice ?? undefined,
+                  marketplace: product.marketplace,
+                },
                 { title: result.title, url: result.link, marketplace: retailer.name },
+                resultUrlKey,
               );
             } catch {
               continue;
@@ -463,13 +522,53 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                 newCandidateCount < MAX_NEW_CANDIDATES_PER_ROUND &&
                 pendingCandidateCount < MAX_PENDING_CANDIDATES
               ) {
+                // Hafif istek fiyatı okuyamazsa (N11/PTT Akamai) aday yine de
+                // fiyatsız "pending" kaydedilir ve tam scraper'a doğrudan tarama
+                // işi verilir (tur başına sınır ortak). Bant dışı OKUNAN fiyat
+                // ise gerçek bir red sinyalidir; o aday kaydedilmez.
+                const keepPricelessPending = async () => {
+                  if (isGoogleHostedLink(result.link)) return;
+                  if (directScrapeQueuedCount >= MAX_DIRECT_SCRAPES_PER_ROUND) return;
+                  const row = await prisma.competitor.create({
+                    data: {
+                      trackedProductId: productId,
+                      competitorUrl,
+                      competitorName: result.title,
+                      marketplace: retailerToMarketplace(retailer.name),
+                      matchScore: preMatch.score,
+                      matchReason: preMatch.reason,
+                      matchAttributes: withCompetitorSeller(
+                        { ...preMatch.attributes, review: "pending" as const },
+                        retailer.sellerName,
+                      ),
+                    },
+                    select: { id: true },
+                  });
+                  newCandidateCount++;
+                  pendingCandidateCount++;
+                  await competitorQueue.add(
+                    "scrape-competitor",
+                    { competitorId: row.id },
+                    {
+                      jobId: `discovery-scrape-${row.id}-${Math.floor(now.getTime() / 3_600_000)}`,
+                      attempts: 1,
+                    },
+                  );
+                  directScrapeQueuedCount++;
+                  console.log(
+                    `🟡 Olası eşleşme onaya sunuldu (fiyatsız, doğrudan taramaya): ${result.title.slice(0, 50)}`,
+                  );
+                };
                 try {
-                  const recovered = await recoverPriceLightweight(result.link);
-                  if (
-                    recovered.price &&
-                    recovered.price > 0 &&
-                    isInPriceBand(recovered.price, sourcePrice)
-                  ) {
+                  let recovered: Awaited<ReturnType<typeof recoverPriceLightweight>> | null = null;
+                  try {
+                    recovered = await recoverPriceLightweight(result.link);
+                  } catch (err) {
+                    console.error(`Fiyatsız aday fiyat kurtarma hatası (${result.link}):`, err);
+                  }
+                  if (!recovered?.price || recovered.price <= 0) {
+                    await keepPricelessPending();
+                  } else if (isInPriceBand(recovered.price, sourcePrice)) {
                     await prisma.competitor.create({
                       data: {
                         trackedProductId: productId,
@@ -545,7 +644,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           // deterministik başlık kuralı artık "aynı ürün" diyorsa aday
           // kullanıcıyı beklemeden kabul edilir (AI'a tekrar sorulmaz).
           const promoted = reevaluateUncertainMatch(
-            { title, price: sourcePrice ?? undefined },
+            { title, url: product.productUrl || url || undefined, price: sourcePrice ?? undefined },
             { title: result.title, url: result.link, price },
             {
               score: known.matchScore,
@@ -619,6 +718,29 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
         // Kullanıcının onayladığı kayıtta indirgeme yapılmaz — son söz kullanıcının.
         const allowDowngrade = isKnown && knownReview !== "confirmed";
+        // (c) Model kimliği çelişkisi (EP3347/90 ↔ EP3341/50, HD9650/90 ↔ /99):
+        // geçmişte kabul edilmiş farklı model 30'a iner ve karar dışı kalır.
+        if (allowDowngrade && !matchResult) {
+          const identity = analyzeModelIdentity(
+            { title, url: product.productUrl || url || undefined },
+            { title: result.title, url: result.link },
+          );
+          if (isModelIdentityMismatch(identity.relation)) {
+            matchResult = {
+              isMatch: true,
+              score: 30,
+              reason: identity.reason,
+              modelIdentity: identity.relation,
+              attributes: {
+                brandMatch: true,
+                modelMatch: false,
+                specMatch: false,
+                categoryMatch: true,
+                details: "Model kodu/numarası çelişkisi",
+              },
+            };
+          }
+        }
         if (allowDowngrade && !matchResult && isAccessoryListing(result.title, title)) {
           matchResult = {
             isMatch: true,
@@ -657,9 +779,15 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
         if (!priceRecovered && !isKnown) {
           try {
-            matchResult = await verifyProductMatch(
-              { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+            matchResult = await verifyWithRejectCache(
+              {
+                title,
+                url: product.productUrl || url || undefined,
+                price: sourcePrice ?? undefined,
+                marketplace: product.marketplace,
+              },
               { title: result.title, url: result.link, price, marketplace: retailer.name },
+              resultUrlKey,
             );
           } catch {
             continue;
@@ -813,7 +941,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     await processResults(primaryOutcome.results);
 
     if (savedCount < MIN_SAVED_BEFORE_FALLBACK && queries.length > 1) {
-      for (let i = 1; i < Math.min(queries.length, 3); i++) {
+      for (let i = 1; i < Math.min(queries.length, MAX_SEARCH_QUERIES); i++) {
         console.log(`🔎 Fallback [${i}] "${queries[i]}" deneniyor (kaydedilen: ${savedCount})`);
         const fallbackOutcome = await searchSingleKeyword(queries[i], seenUrls);
         if (fallbackOutcome.errored) {
@@ -832,19 +960,22 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     const trustedKnownCount = knownCompetitors.filter(
       (c) => readMatchReview(c.matchAttributes) !== "pending",
     ).length;
-    if (shouldSearchMarketplacePages(savedCount, trustedKnownCount)) {
-      const webOutcome = await searchSingleKeyword(queries[0], seenUrls, searchMarketplacePages);
+    // En iyi iki sorgu denenir: kod varsa ilk sorgu "marka + tam kod", ikincisi
+    // canlı ad — biri tutmayınca diğeri farklı ürün sayfalarını bulur.
+    for (const webQuery of queries.slice(0, 2)) {
+      if (!shouldSearchMarketplacePages(savedCount, trustedKnownCount)) break;
+      const webOutcome = await searchSingleKeyword(webQuery, seenUrls, searchMarketplacePages);
       if (webOutcome.errored) {
         // İkinci kaynak yardımcıdır: hatası turu başarısız saymaz, yalnızca loglanır.
         console.error(`Pazaryeri web araması hatası: ${webOutcome.errorMessage}`);
-      } else {
-        console.log(
-          `🌐 Pazaryeri web araması "${queries[0]}": ${webOutcome.results.length} yeni ürün sayfası`,
-        );
-        await processResults(
-          webOutcome.results.map((r) => ({ ...r, title: cleanProductTitle(r.title) })),
-        );
+        break;
       }
+      console.log(
+        `🌐 Pazaryeri web araması "${webQuery}": ${webOutcome.results.length} yeni ürün sayfası`,
+      );
+      await processResults(
+        webOutcome.results.map((r) => ({ ...r, title: cleanProductTitle(r.title) })),
+      );
     }
 
     // Bu turda aramada görünmeyen onay bekleyen adaylar da kayıtlı başlıklarıyla
@@ -857,7 +988,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       if (!storedName) continue;
       const storedPrice = candidate.currentPrice ? Number(candidate.currentPrice) : undefined;
       const promoted = reevaluateUncertainMatch(
-        { title, price: sourcePrice ?? undefined },
+        { title, url: product.productUrl || url || undefined, price: sourcePrice ?? undefined },
         { title: storedName, url: candidate.competitorUrl, price: storedPrice },
         {
           score: candidate.matchScore,
@@ -993,7 +1124,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         `(price filtered: ${priceFilteredCount}, AI rejected: ${aiRejectedCount}, ` +
         `packaging filtered: ${packagingFilteredCount}, ` +
         `recovered: ${priceRecoveredCount}, unrecoverable: ${priceUnrecoverableCount}, ` +
-        `onaya sunulan aday: ${newCandidateCount}, otomatik kabul edilen aday: ${promotedCandidateCount}, doğrudan taramaya: ${directScrapeQueuedCount})`,
+        `onaya sunulan aday: ${newCandidateCount}, otomatik kabul edilen aday: ${promotedCandidateCount}, doğrudan taramaya: ${directScrapeQueuedCount}, AI red önbelleği: ${rejectCacheHits})`,
     );
     return {
       found: savedCount,

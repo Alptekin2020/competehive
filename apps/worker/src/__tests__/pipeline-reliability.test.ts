@@ -104,7 +104,8 @@ describe("product title cleanup and queries", () => {
       truncateRawTitleForSearch(
         "Oral-B Şarjlı Vitality Pro Koruma ve Temizlik Elektrikli Diş Fırçası",
       ),
-    ).toBe("Oral-B Şarjlı Vitality Pro Koruma");
+      // Ürün tipi ("Diş Fırçası") kısaltmada korunur; sarkan "ve" yine düşer.
+    ).toBe("Oral-B Şarjlı Vitality Pro Koruma Diş Fırçası");
     expect(
       truncateRawTitleForSearch("Artema Maestro A42146 Pull-Out Eviye Bataryası, 24 cm Yükseklik"),
     ).toBe("Artema Maestro A42146 Pull-Out Eviye Bataryası");

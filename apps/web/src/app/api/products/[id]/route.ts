@@ -1,3 +1,4 @@
+import { readMatchBasis } from "@competehive/shared";
 import { readCompetitorSeller, readMatchReview } from "@/lib/match-review";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -7,7 +8,12 @@ import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
 import { classifyOwnPriceHistory } from "@/lib/price-history";
 import { buildPriceEvents } from "@/lib/product-insights";
-import { getMarketplaceInfo, getRetailerInfoFromDomain } from "@competehive/shared";
+import { chartHiddenCompetitorIds, chartHiddenHistoryFlags } from "@/lib/competitor-groups";
+import {
+  getMarketplaceInfo,
+  getRetailerInfoFromDomain,
+  readCompetitorDeadAt,
+} from "@competehive/shared";
 
 // Ürün URL'sinin pazaryeri görünen adı ("Trendyol", "Amazon TR"). Worker kendi
 // fiyat satırlarını bu adla yazar; bilinmeyen alan adlarında null döner.
@@ -129,9 +135,29 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         latestStock.set(point.competitorId, { at, inStock: point.inStock });
     }
 
+    // Onay bekleyen ve uykudaki rakipler grafikte görünmez: ne fiyat çizgileri
+    // (chartHidden) ne de "Yeni rakip"/"stok bitti" olayları.
+    const hiddenCompetitorIds = chartHiddenCompetitorIds(
+      product.competitors.map((competitor) => ({
+        id: competitor.id,
+        currentPrice: competitor.currentPrice === null ? null : Number(competitor.currentPrice),
+        matchScore: competitor.matchScore,
+        lastScrapedAt: competitor.lastScrapedAt,
+        createdAt: competitor.createdAt,
+        review: readMatchReview(competitor.matchAttributes),
+      })),
+    );
+    const chartHidden = chartHiddenHistoryFlags(
+      product.priceHistory,
+      ownFlags,
+      competitorPoints,
+      hiddenCompetitorIds,
+    );
+
     // Grafik üzerindeki olay işaretleri: kendi fiyat değişimi, yeni rakip,
     // rakip stoğunun bitmesi.
     const events = buildPriceEvents({
+      hiddenCompetitorIds,
       windowStart: historyWindowStart,
       ownHistory: product.priceHistory
         .filter((_, index) => ownFlags[index])
@@ -193,6 +219,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           sellerName: entry.sellerName,
           scrapedAt: entry.scrapedAt,
           isOwn: ownFlags[index],
+          // Onay bekleyen/uykudaki rakibin satırı: grafikte çizilmez.
+          chartHidden: chartHidden[index],
         }),
       ),
       competitors: product.competitors.map(
@@ -218,8 +246,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           matchReason: competitor.matchReason,
           // "pending" = AI emin olamadı, kullanıcı onayı bekliyor; "confirmed" = kullanıcı onayladı.
           review: readMatchReview(competitor.matchAttributes),
+          matchBasis: readMatchBasis(competitor.matchAttributes, competitor.matchScore),
           // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
           seller: readCompetitorSeller(competitor.matchAttributes),
+          // İlan yayından kalktıysa (worker işareti): karar dışı, otomatikse uykuda.
+          deadAt: readCompetitorDeadAt(competitor.matchAttributes),
           createdAt: competitor.createdAt,
           inStock: latestStock.get(competitor.id)?.inStock ?? null,
         }),

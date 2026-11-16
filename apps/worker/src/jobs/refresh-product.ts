@@ -12,7 +12,7 @@ import { verifyCompetitorPrice } from "../utils/lightweight-fetch";
 import { recoverPriceLightweight } from "../utils/recover-price";
 import { withCompetitorSeller } from "../utils/match-review";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
-import { isPlausiblePriceChange } from "../utils/price-sanity";
+import { guardOwnPriceUpdate } from "./own-price-guard";
 import { getScraper, isProductUnavailableError } from "../scrapers";
 import { verifyProductMatch, MatchResult } from "../matcher";
 import { isPackagingListing, withinPriceBand } from "../utils/competitor-quality";
@@ -91,16 +91,21 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
       const sourceData = await scraper(product.productUrl);
 
       const prevOwnPrice = product.currentPrice ? Number(product.currentPrice) : null;
-      if (
-        sourceData?.price &&
-        sourceData.price > 0 &&
-        !isPlausiblePriceChange(prevOwnPrice, sourceData.price)
-      ) {
-        // Implausible jump vs. last known price → almost certainly a parse
-        // error. Skip the write so we neither store a bad price nor fire a
-        // false alert; the next refresh re-checks.
+      // Büyük değişim: ikinci tutarlı okuma ya da rakip medyanı doğrulayana kadar
+      // bekletilir (metadata.pendingOwnPrice) — sonsuza kadar engellenmez.
+      const ownDecision =
+        sourceData?.price && sourceData.price > 0
+          ? await guardOwnPriceUpdate({
+              targets: [{ id: productId, metadata: product.metadata }],
+              previousPrice: prevOwnPrice,
+              newPrice: sourceData.price,
+              now,
+              source: "manual-refresh",
+            })
+          : null;
+      if (sourceData?.price && sourceData.price > 0 && ownDecision && !ownDecision.accept) {
         console.warn(
-          `⚠️ Source refresh fiyat sanity-check başarısız: ${productId} eski=${prevOwnPrice} yeni=${sourceData.price} — atlanıyor`,
+          `⚠️ Source refresh büyük fiyat değişimi onay bekliyor: ${productId} eski=${prevOwnPrice} yeni=${sourceData.price} (${ownDecision.reason})`,
         );
       } else if (sourceData?.price && sourceData.price > 0) {
         refreshedOwnPrice = sourceData.price;
@@ -276,6 +281,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             const preMatch = await verifyProductMatch(
               {
                 title: product.productName,
+                url: product.productUrl,
                 price: sourcePrice ?? undefined,
                 marketplace: product.marketplace,
               },
@@ -387,6 +393,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
           matchResult = await verifyProductMatch(
             {
               title: product.productName,
+              url: product.productUrl,
               price: sourcePrice ?? undefined,
               marketplace: product.marketplace,
             },

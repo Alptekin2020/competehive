@@ -76,6 +76,8 @@ const NOISE_TOKENS = new Set([
   "lu",
   "lik",
   "luk",
+  "model",
+  "arada",
 ]);
 
 const UNIT_ALIASES: Record<string, string> = { g: "gr", gram: "gr", l: "lt", litre: "lt" };
@@ -138,15 +140,51 @@ const FORM_TOKENS = new Set([
   "stick",
 ]);
 
+// Marka eş adları: aynı üreticinin farklı marka yazımı. Değer kanonik addır;
+// iki başlıktaki tokenlar aynı kanonik ada indirgenir (Luxell, Kumtel'in markası:
+// prod'da "Luxell LX-6331 Fanlı Isıtıcı" 6 kez "farklı marka" diye reddedildi).
+const BRAND_ALIASES: Record<string, string> = { luxell: "kumtel" };
+
+// Ana marka → alt marka (ürün serisi). Kaynak "Kahve Dünyası Tambol …", aday
+// "Tambol …" ya da "Tablet Tambol …" yazabiliyor: alt marka ortaksa ana marka
+// sözcüklerinin eksikliği çelişki değildir.
+const PARENT_BRANDS: { parent: string[]; subBrands: string[] }[] = [
+  { parent: ["kahve", "dunyasi"], subBrands: ["tambol"] },
+];
+
+/**
+ * "2'si 1 arada", "3'ü 1 arada", "2 si 1 arada", "2in1" → tek token "2in1".
+ * Eskiden 2/si/1/arada diye dört tokena bölünüp "rakamlı fazlalık" ve "yer
+ * değiştirmiş sözcük" sinyali üretiyordu (Erbatab D3 K2 vakası).
+ */
+export function normalizeInOne(folded: string): string {
+  return folded
+    .replace(/\b(\d)\s*['’`]?\s*(?:si|su|u|i|yi|yu)?\s+1\s+arada\b/g, "$1in1")
+    .replace(/\b(\d)\s*in\s*1\b/g, "$1in1");
+}
+
+// "d3k2", "b12d3" gibi harf+rakam bileşikleri (vitamin adları) ayrı tokenlara
+// bölünür: "D3K2" ile "D3-K2" aynı ürünü anlatır. Her parça 1–2 harf + 1–2
+// rakamdır; model kodları (ep3347, hd9650, lx6331) bu kalıba uymaz.
+const COMPOUND_RE = /^(?:[a-z]{1,2}\d{1,2}){2,}$/;
+function splitCompound(token: string): string[] {
+  if (!COMPOUND_RE.test(token)) return [token];
+  return token.match(/[a-z]{1,2}\d{1,2}/g) ?? [token];
+}
+
 export function titleTokens(title: string): string[] {
-  const text = fold(title)
+  const text = normalizeInOne(fold(title))
+    // 98", 98 inç, 98 inch → "98inch" (ekran boyutu tek token; '98"' ile
+    // "98 inç" aynı yazılır, "inc" fazlalık sözcüğü üretmez).
+    .replace(/(\d{2,3})\s*(?:"|”|''|inch\b|inc\b)/g, "$1inch ")
     // "100gr", "60adet" → sayı ile birimi ayır; model kodlarına (ep3347) dokunma.
     .replace(/(\d)(gr|g|ml|lt|l|kg|mg|adet|tablet|kapsul)\b/g, "$1 $2");
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const raw of text.split(/[^a-z0-9]+/)) {
-    if (!raw) continue;
-    const token = UNIT_ALIASES[raw] ?? raw;
+  for (const piece of text.split(/[^a-z0-9]+/).flatMap(splitCompound)) {
+    if (!piece) continue;
+    const unit = UNIT_ALIASES[piece] ?? piece;
+    const token = BRAND_ALIASES[unit] ?? unit;
     if (NOISE_TOKENS.has(token)) continue;
     if (token.length < 2 && !/\d/.test(token)) continue;
     if (seen.has(token)) continue;
@@ -178,9 +216,49 @@ export interface TitleSimilarity {
   hasSwappedWords: boolean;
 }
 
+function startsWith(tokens: string[], prefix: string[]): boolean {
+  return prefix.length > 0 && prefix.every((t, i) => tokens[i] === t);
+}
+
+/**
+ * Ana marka/alt marka düzeltmesi: bir başlık ana markayla ("kahve dunyasi
+ * tambol"), diğeri yalnızca alt markayla ("tambol") başlıyorsa ana marka
+ * sözcükleri iki taraftan da düşülür ve marka alt marka sayılır.
+ */
+function alignBrands(src: string[], cnd: string[]): [string[], string[]] {
+  for (const { parent, subBrands } of PARENT_BRANDS) {
+    const srcHasParent = startsWith(src, parent);
+    const cndHasParent = startsWith(cnd, parent);
+    if (srcHasParent === cndHasParent) continue;
+    const sub = subBrands.find((b) => src.includes(b) && cnd.includes(b));
+    if (!sub) continue;
+    const drop = (tokens: string[], hasParent: boolean) =>
+      hasParent ? tokens.slice(parent.length) : tokens;
+    return [drop(src, srcHasParent), drop(cnd, cndHasParent)];
+  }
+  return [src, cnd];
+}
+
+/**
+ * Markadan ÖNCE gelen form sözcüğü ("Tablet Tambol Çilekli…": çikolata
+ * tableti) ürün formu değil, başlık önekidir; adaydan düşülür. Kaynakta da
+ * geçen form sözcüğü zaten ortak sayılır.
+ */
+function dropLeadingFormTokens(cnd: string[], brand: string | undefined, src: string[]): string[] {
+  if (!brand) return cnd;
+  const idx = cnd.indexOf(brand);
+  if (idx <= 0) return cnd;
+  return cnd.filter((t, i) => i >= idx || !FORM_TOKENS.has(t) || src.includes(t));
+}
+
+/** Kaynak ve aday tokenları (marka eş adı, alt marka ve önek düzeltmesiyle). */
+function alignedTokens(sourceTitle: string, candidateTitle: string): [string[], string[]] {
+  const [src, cndRaw] = alignBrands(titleTokens(sourceTitle), titleTokens(candidateTitle));
+  return [src, dropLeadingFormTokens(cndRaw, src[0], src)];
+}
+
 export function compareTitles(sourceTitle: string, candidateTitle: string): TitleSimilarity {
-  const src = titleTokens(sourceTitle);
-  const cnd = titleTokens(candidateTitle);
+  const [src, cnd] = alignedTokens(sourceTitle, candidateTitle);
   const srcSet = new Set(src);
   const cndSet = new Set(cnd);
   const shared = src.filter((t) => cndSet.has(t)).length;
@@ -200,7 +278,7 @@ export function compareTitles(sourceTitle: string, candidateTitle: string): Titl
 }
 
 // Paket içi adet / çoklu paket: "60 adet", "60'lı", "60 Tablet", "2 Adet".
-const QUANTITY_RE = /(\d+)\s*['’]?\s*(?:adet|li|lu|tablet|kapsul|sase|servis)\b/g;
+const QUANTITY_RE = /(\d+)\s*['’]?\s*(?:adet|li|lu|tablet|kapsul|sase|servis|ampul|poset|ped)\b/g;
 // "X 6 Adet", "6 x 100 gr", "6x100": çarpanlı çoklu paket yazımı.
 const MULTIPLIER_RES = [/\bx\s*(\d+)\b/g, /\b(\d+)\s*x\s*\d/g];
 
@@ -259,6 +337,35 @@ export function urlSlugText(url: string | null | undefined): string {
   }
 }
 
+function inchValues(title: string): Set<number> {
+  const set = new Set<number>();
+  for (const m of fold(title).matchAll(/(\d{2,3})\s*(?:"|”|''|inch\b|inc\b)/g)) {
+    set.add(parseInt(m[1], 10));
+  }
+  return set;
+}
+
+function inOneValues(title: string): Set<string> {
+  return new Set(normalizeInOne(fold(title)).match(/\b\din1\b/g) ?? []);
+}
+
+function setsDiffer<T>(a: Set<T>, b: Set<T>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  if (a.size !== b.size) return true;
+  for (const v of a) if (!b.has(v)) return true;
+  return false;
+}
+
+/** Ekran boyutu çelişkisi: 98 inç ↔ 85" (iki taraf da yazıyorsa). */
+export function hasConflictingInches(a: string, b: string): boolean {
+  return setsDiffer(inchValues(a), inchValues(b));
+}
+
+/** "2'si 1 arada" ↔ "3'ü 1 arada": farklı ürün (iki taraf da yazıyorsa). */
+export function hasConflictingInOne(a: string, b: string): boolean {
+  return setsDiffer(inOneValues(a), inOneValues(b));
+}
+
 /**
  * Paket adedi ya da ölçü (ml, gr, GB, fincan…) çelişkisi. Model kodu
  * karşılaştırması içermez: URL yolundaki ilan numaraları kod sanılmasın diye
@@ -269,7 +376,9 @@ export function hasPackOrSpecConflict(sourceText: string, candidateText: string)
     hasConflictingSpecs(sourceText, candidateText) ||
     hasConflictingCountDescriptors(sourceText, candidateText) ||
     hasConflictingQuantities(sourceText, candidateText) ||
-    hasMultipackSignal(sourceText, candidateText)
+    hasMultipackSignal(sourceText, candidateText) ||
+    hasConflictingInches(sourceText, candidateText) ||
+    hasConflictingInOne(sourceText, candidateText)
   );
 }
 
@@ -292,6 +401,8 @@ export function hasTitleConflict(sourceTitle: string, candidateTitle: string): b
     hasConflictingCountDescriptors(sourceTitle, candidateTitle) ||
     hasConflictingQuantities(sourceTitle, candidateTitle) ||
     hasMultipackSignal(sourceTitle, candidateTitle) ||
+    hasConflictingInches(sourceTitle, candidateTitle) ||
+    hasConflictingInOne(sourceTitle, candidateTitle) ||
     hasDifferentProductCodes(sourceTitle, candidateTitle) ||
     compareProductCodes(sourceTitle, candidateTitle) === "config-variant"
   );
@@ -336,4 +447,72 @@ export function isStrongTitleOverlap(sourceTitle: string, candidateTitle: string
     sim.candidateCoverage >= 0.9 &&
     sim.sourceCoverage >= 0.5;
   return (mostlySame || abbreviation) && !hasTitleConflict(sourceTitle, candidateTitle);
+}
+
+// Aday fazlalığında görülünce ürünü değiştiren tanımlayıcılar: renk ve
+// aroma/koku. Kaynak bunları hiç yazmıyorsa adayın "Siyah"/"Çilekli" eki
+// rengi/aromayı daraltır; kaynak-altkümesi kabulü bu durumda AI'a bırakılır.
+const DESCRIPTOR_VARIANT_TOKENS = new Set([
+  "siyah",
+  "beyaz",
+  "kirmizi",
+  "mavi",
+  "lacivert",
+  "yesil",
+  "sari",
+  "mor",
+  "lila",
+  "pembe",
+  "gri",
+  "turuncu",
+  "kahverengi",
+  "bej",
+  "gold",
+  "gumus",
+  "rose",
+  "cilekli",
+  "cikolatali",
+  "fistikli",
+  "findikli",
+  "kakaolu",
+  "vanilyali",
+  "limonlu",
+  "portakalli",
+  "muzlu",
+  "karamelli",
+  "naneli",
+  "lavantali",
+  "kokulu",
+  "parfumlu",
+  "aromali",
+  "meyveli",
+  "visneli",
+  "elmali",
+  "kahveli",
+]);
+
+/**
+ * Kaynak başlığın TÜM sözcükleri adayda var mı? Kaynak çoğu zaman kısa ürün
+ * adıdır, aday ise uzun pazaryeri başlığı ("Pati Clean 20 Lt Kokusuz Bentonit
+ * Kedi Kumu" ↔ aynı başlık + "İnce Taneli Süper Topaklanan"): aday kapsaması
+ * düşük kaldığı için isNearIdenticalTitle reddediyordu. Marka ortak, hiçbir
+ * çelişki yok ve adayın fazlalıkları yalnızca açıklayıcı (rakam, varyant, form,
+ * renk/aroma sözcüğü değil) ise neredeyse-aynı başlık gibi kabul edilir.
+ */
+export function isSourceSubsetTitle(sourceTitle: string, candidateTitle: string): boolean {
+  const [src, cnd] = alignedTokens(sourceTitle, candidateTitle);
+  if (src.length < MIN_SHARED_TOKENS + 1) return false;
+  const sim = compareTitles(sourceTitle, candidateTitle);
+  if (!sim.brandShared || sim.sourceCoverage < 1) return false;
+  const srcSet = new Set(src);
+  const extras = cnd.filter((t) => !srcSet.has(t));
+  if (extras.length > src.length) return false;
+  const descriptiveOnly = extras.every(
+    (t) =>
+      !/\d/.test(t) &&
+      !VARIANT_TOKENS.has(t) &&
+      !FORM_TOKENS.has(t) &&
+      !DESCRIPTOR_VARIANT_TOKENS.has(t),
+  );
+  return descriptiveOnly && !hasTitleConflict(sourceTitle, candidateTitle);
 }

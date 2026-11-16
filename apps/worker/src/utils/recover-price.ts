@@ -9,7 +9,11 @@
 // the worker. We pay the Puppeteer cost only in the existing scrape flow.
 
 import * as cheerio from "cheerio";
-import { isMarketplaceProductUrl, parsePrice } from "../serper";
+import { parsePrice } from "../serper";
+import { detectBotChallenge, leftProductPage } from "../scrapers";
+
+// Ürün sayfasından kopan yönlendirme kontrolü scraper'larla ortak (LISTING_GONE).
+export { leftProductPage };
 
 export type PriceRecoveryResult = {
   price: number | null;
@@ -21,6 +25,7 @@ export type PriceRecoveryResult = {
     | "none"
     | "http-error"
     | "akamai-block"
+    | "bot-challenge"
     | "not-product-page";
 };
 
@@ -79,15 +84,6 @@ export function looksLikeListingPage(html: string): boolean {
       .filter(Boolean),
   );
   return names.size > 1;
-}
-
-/**
- * İstek ürün sayfasından başka bir yere mi yönlendi? Bilinen pazaryerlerinde
- * ürün URL kalıbı kaybolduysa (kategori/arama/ana sayfa) fiyat okunmaz.
- */
-export function leftProductPage(requestedUrl: string, finalUrl: string): boolean {
-  if (!finalUrl || finalUrl === requestedUrl) return false;
-  return isMarketplaceProductUrl(requestedUrl) && !isMarketplaceProductUrl(finalUrl);
 }
 
 /** Yalnızca `Product` düğümlerinin teklif fiyatı kabul edilir. */
@@ -201,6 +197,11 @@ export async function recoverPriceLightweight(url: string): Promise<PriceRecover
     const html = await res.text();
     if (isAkamaiBlock(html, res.status)) {
       return { price: null, source: "akamai-block" };
+    }
+    // Amazon TR hafif isteğe her seferinde 4 KB'lık robot kontrolü sayfası
+    // döndürür; "none" sanılmasın — çağıran doğrudan taramaya (Puppeteer) verir.
+    if (detectBotChallenge(html)) {
+      return { price: null, source: "bot-challenge" };
     }
     if (!res.ok) {
       return { price: null, source: "http-error" };

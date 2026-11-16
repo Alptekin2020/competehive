@@ -10,7 +10,7 @@
 // Buradaki her şey deterministik ve G/Ç'siz: sorgular ve gönderim
 // jobs/daily-digest.ts içindedir.
 
-import { assessCompetitor } from "./competitor-quality";
+import { assessCompetitorList } from "./competitor-quality";
 
 /** Türkiye kalıcı olarak UTC+3'tür (yaz saati uygulaması yok). */
 const ISTANBUL_OFFSET_MS = 3 * 60 * 60 * 1000;
@@ -45,6 +45,8 @@ export interface DigestCompetitorInput {
   price: number | null;
   matchScore: number | null;
   lastScrapedAt: Date | null;
+  /** Ham matchAttributes — onay durumu ve eşleşme dayanağı (bant) buradan okunur. */
+  matchAttributes?: unknown;
   /** DIGEST_MOVE_WINDOW_HOURS öncesindeki son bilinen fiyat (yoksa null). */
   priceBefore: number | null;
 }
@@ -92,9 +94,10 @@ function validPrice(n: number | null | undefined): n is number {
 }
 
 /**
- * Ürün listesinden özeti üretir. Rakipler anlık uyarılarla aynı kalite
- * politikasından (assessCompetitor) geçer: onay bekleyen adaylar, bant dışı
- * fiyatlar ve bayat kayıtlar özete girmez. Aksiyon gerektirmeyen ürünler
+ * Ürün listesinden özeti üretir. Rakipler anlık uyarılarla aynı liste düzeyi
+ * kalite politikasından (assessCompetitorList) geçer: onay bekleyen adaylar,
+ * eşleşme dayanağının bandı dışındaki fiyatlar, akran-medyan aykırıları ve
+ * bayat kayıtlar özete girmez. Aksiyon gerektirmeyen ürünler
  * listelenmez; hiç yoksa `actionableProductCount` 0 döner ve e-posta gitmez.
  */
 export function buildDigest(products: DigestProductInput[], now: Date): Digest {
@@ -108,13 +111,19 @@ export function buildDigest(products: DigestProductInput[], now: Date): Digest {
     const ownPrice = product.ownPrice;
     if (!validPrice(ownPrice)) continue;
 
-    const usable = product.competitors.filter(
-      (c) =>
-        assessCompetitor(
-          { price: c.price, matchScore: c.matchScore, lastScrapedAt: c.lastScrapedAt },
-          { ownPrice, now },
-        ).usable,
+    // Liste düzeyinde değerlendirme: akran-medyan aykırılığı ancak listeyle
+    // kurulabilir — tekil kontrol, akranlarından kopuk yem ilanı "en ucuz rakip"
+    // diye özete koyuyordu.
+    const assessments = assessCompetitorList(
+      product.competitors.map((c) => ({
+        price: c.price,
+        matchScore: c.matchScore,
+        lastScrapedAt: c.lastScrapedAt,
+        matchAttributes: c.matchAttributes,
+      })),
+      { ownPrice, now },
     );
+    const usable = product.competitors.filter((_, i) => assessments[i].usable);
     if (usable.length === 0) continue;
     trackedProductCount++;
 

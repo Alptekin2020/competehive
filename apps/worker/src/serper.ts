@@ -411,6 +411,71 @@ export function isMarketplaceProductUrl(link: string): boolean {
   return false;
 }
 
+/** Fiyat karşılaştırma siteleri: satıcı değil, ürün sayfası olarak asla kabul edilmez. */
+const PRICE_COMPARISON_HOSTS = ["akakce.com", "cimri.com", "epey.com"];
+
+// Ürün sayfası olamayacak yol parçaları (arama, kategori, marka, mağaza, sepet…).
+const NON_PRODUCT_SEGMENTS = new Set([
+  "arama",
+  "search",
+  "ara",
+  "kategori",
+  "kategoriler",
+  "category",
+  "categories",
+  "collections",
+  "c",
+  "marka",
+  "markalar",
+  "brand",
+  "brands",
+  "magaza",
+  "store",
+  "kampanya",
+  "kampanyalar",
+  "blog",
+  "sepet",
+  "cart",
+  "hesap",
+  "account",
+  "uyelik",
+  "yardim",
+  "iletisim",
+  "liste",
+  "list",
+]);
+
+function hostMatchesDomain(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+/**
+ * Pazaryeri kalıbı bilinmeyen bir satıcı sitesinde (idefix, D&R, Koçtaş…)
+ * URL bir ürün sayfasına benziyor mu? Alan adı (etiket sınırında) eşleşmeli;
+ * arama/kategori/marka yolları ve sorgu aramaları elenir; son yol parçası
+ * ürün kimliği (5+ rakam) ya da uzun tireli bir slug taşımalı.
+ */
+export function isLikelyStoreProductUrl(link: string, domain: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(link);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  if (PRICE_COMPARISON_HOSTS.some((d) => hostMatchesDomain(host, d))) return false;
+  if (!hostMatchesDomain(host, domain.toLowerCase())) return false;
+  if (["q", "query", "search", "k", "keyword"].some((p) => parsed.searchParams.has(p))) {
+    return false;
+  }
+  const segments = parsed.pathname.toLowerCase().split("/").filter(Boolean);
+  if (segments.length === 0) return false;
+  if (segments.some((seg) => NON_PRODUCT_SEGMENTS.has(seg))) return false;
+  const last = segments[segments.length - 1].replace(/\.html?$/, "");
+  return /\d{5,}/.test(last) || (last.includes("-") && last.length >= 15);
+}
+
 export function buildMarketplaceSearchQuery(
   query: string,
   domains: readonly string[] = MARKETPLACE_SEARCH_DOMAINS,
@@ -434,11 +499,18 @@ interface SerperOrganicResult {
  */
 export function mapOrganicToShoppingResults(
   organic: SerperOrganicResult[],
+  storeDomains: readonly string[] = [],
 ): SerperShoppingResult[] {
   const out: SerperShoppingResult[] = [];
   for (const r of organic) {
     if (typeof r?.link !== "string" || typeof r?.title !== "string") continue;
-    if (!isMarketplaceProductUrl(r.link)) continue;
+    // Pazaryeri ürün sayfası kalıbı ya da (yalnızca istenen satıcı sitelerinde)
+    // genel ürün sayfası sezgisi. Fiyat karşılaştırma siteleri hiçbir zaman.
+    const link = r.link;
+    const accepted =
+      isMarketplaceProductUrl(link) ||
+      storeDomains.some((domain) => isLikelyStoreProductUrl(link, domain));
+    if (!accepted) continue;
     const currencyOk =
       !r.currency || r.currency === "TRY" || r.currency === "TL" || r.currency === "₺";
     let price = "";
@@ -461,10 +533,12 @@ export function mapOrganicToShoppingResults(
 export async function searchMarketplacePages(
   query: string,
   domains: readonly string[] = MARKETPLACE_SEARCH_DOMAINS,
+  options: { storeDomains?: readonly string[] } = {},
 ): Promise<SerperShoppingResult[]> {
+  const storeDomains = options.storeDomains ?? [];
   const fullQuery = buildMarketplaceSearchQuery(query, domains);
   // Shopping önbelleğiyle çakışmaması için ayrı anahtar öneki.
-  const cacheKey = `web:${fullQuery}`;
+  const cacheKey = `web:${fullQuery}${storeDomains.length > 0 ? "|store" : ""}`;
   const cached = await getCachedSerperResults(cacheKey);
   if (cached) return cached as SerperShoppingResult[];
 
@@ -502,7 +576,7 @@ export async function searchMarketplacePages(
   }
 
   const data = (await res.json()) as { organic?: SerperOrganicResult[] };
-  const results = mapOrganicToShoppingResults(data.organic ?? []);
+  const results = mapOrganicToShoppingResults(data.organic ?? [], storeDomains);
   if (results.length > 0) {
     await setCachedSerperResults(cacheKey, results);
   }

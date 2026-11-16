@@ -15,8 +15,10 @@ import { getScraper, isProductUnavailableError } from "../scrapers";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { maybeEnqueueAlerts } from "./processor";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
-import { isPlausiblePriceChange } from "../utils/price-sanity";
+import { guardOwnPriceUpdate } from "./own-price-guard";
+import { readMatchBasis, withinPriceBandForBasis } from "../utils/competitor-quality";
 import {
+  countStaleTrustedCompetitors,
   detectCompetitorMove,
   pickStaleCompetitorsForDirectScrape,
   type CompetitorMove,
@@ -24,8 +26,13 @@ import {
 } from "../utils/stale-competitors";
 import { competitorQueue } from "./processor";
 import { resolveDirectListings } from "./direct-listing";
-import { readGoogleKey } from "../utils/direct-listing";
+import {
+  needsAliasDirectRefresh,
+  partitionAliasHits,
+  readGoogleKeys,
+} from "../utils/direct-listing";
 import { readCompetitorSeller, readMatchReview, withCompetitorSeller } from "../utils/match-review";
+import { hasScrapeFailureMarks, withScrapeSuccess } from "../utils/dead-listing";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -133,6 +140,13 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
 
   // Source scrape başarısızsa Serper sonuçlarında kendi URL'imizi arayıp fiyatı kurtaracağız.
   let sourcePriceResolved = false;
+  // Kaynak okuması büyük değişim olarak bekletildiyse Serper kurtarması aynı
+  // turda bekleyen okumanın üstüne yazmasın.
+  let ownPriceHeld = false;
+  // Rakip bant kontrolünün çapası: sibling'in bu turdaki (kabul edilmiş) kendi fiyatı.
+  const ownPriceBySibling = new Map<string, number | null>(
+    siblings.map((s) => [s.id, previousStateById.get(s.id)?.price ?? null]),
+  );
 
   try {
     // 3. Source URL'i BİR KEZ scrape et
@@ -141,18 +155,23 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       const sourceData = await scraper(productUrl);
 
       const prevUrlPrice = primary.currentPrice ? Number(primary.currentPrice) : null;
-      if (
-        sourceData?.price &&
-        sourceData.price > 0 &&
-        !isPlausiblePriceChange(prevUrlPrice, sourceData.price)
-      ) {
-        // Implausible jump vs. last known price → almost certainly a parse
-        // error. Crucially, this path fans the value out to every sibling via
-        // updateMany, so skipping prevents one bad scrape from corrupting all
-        // products tracking this URL.
+      // Büyük değişim tek okumayla TÜM sibling'lere yayılmaz; ikinci tutarlı okuma
+      // ya da rakip medyanı doğrulayana kadar metadata.pendingOwnPrice'ta bekler.
+      const ownDecision =
+        sourceData?.price && sourceData.price > 0
+          ? await guardOwnPriceUpdate({
+              targets: siblings.map((s) => ({ id: s.id, metadata: s.metadata })),
+              previousPrice: prevUrlPrice,
+              newPrice: sourceData.price,
+              now,
+              source: "refresh-url",
+            })
+          : null;
+      if (sourceData?.price && sourceData.price > 0 && ownDecision && !ownDecision.accept) {
         console.warn(
-          `⚠️ URL refresh fiyat sanity-check başarısız: ${productUrl} eski=${prevUrlPrice} yeni=${sourceData.price} — ${siblings.length} sibling'e yayılması engellendi`,
+          `⚠️ URL refresh büyük fiyat değişimi onay bekliyor: ${productUrl} eski=${prevUrlPrice} yeni=${sourceData.price} (${ownDecision.reason}) — ${siblings.length} sibling'e yayılmadı`,
         );
+        ownPriceHeld = true;
       } else if (sourceData?.price && sourceData.price > 0) {
         sourcePriceResolved = true;
         const updateData: {
@@ -183,6 +202,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           where: { id: { in: siblingIds } },
           data: updateData,
         });
+        for (const id of siblingIds) ownPriceBySibling.set(id, sourceData.price);
 
         // Her sibling için PriceHistory snapshot
         const ownRetailer = extractRetailer(productUrl);
@@ -261,10 +281,11 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           matchAttributes: c.matchAttributes,
         });
         competitorByUrl.set(urlKey, list);
-        // Gerçek ürün sayfasına taşınmış rakip, Google'ın ürün kartı anahtarıyla
-        // da bulunur: fiyatı bu turda Google sonucundan güncellenmeye devam eder.
-        const googleKey = readGoogleKey(c.matchAttributes);
-        if (googleKey && googleKey !== urlKey) {
+        // Gerçek ürün sayfasına taşınmış rakip, Google'ın ürün kartı
+        // anahtarlarından herhangi biriyle de tanınır. Fiyatı/adı Google'dan
+        // YAZILMAZ (sayfadan okunur); kart görülünce sayfa doğrudan taranır.
+        for (const googleKey of readGoogleKeys(c.matchAttributes)) {
+          if (googleKey === urlKey) continue;
           const aliasList = competitorByUrl.get(googleKey) ?? [];
           aliasList.push(list[list.length - 1]);
           competitorByUrl.set(googleKey, aliasList);
@@ -314,12 +335,25 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     console.log(`📦 URL refresh: ${serperResults.length} unique Serper sonucu`);
 
     // 6.5. Source scrape başarısızsa Serper sonuçlarında kendi URL'imizi ara
-    if (!sourcePriceResolved) {
+    if (!sourcePriceResolved && !ownPriceHeld) {
       const ownKey = urlMatchKey(productUrl);
       for (const result of serperResults) {
         if (urlMatchKey(result.link) !== ownKey) continue;
         const serperOwnPrice = parsePrice(result.price);
         if (!serperOwnPrice || serperOwnPrice <= 0) continue;
+        const recoveryDecision = await guardOwnPriceUpdate({
+          targets: siblings.map((s) => ({ id: s.id, metadata: s.metadata })),
+          previousPrice: primary.currentPrice ? Number(primary.currentPrice) : null,
+          newPrice: serperOwnPrice,
+          now,
+          source: "refresh-url-serper",
+        });
+        if (!recoveryDecision.accept) {
+          console.warn(
+            `⚠️ URL refresh Serper kendi fiyatı onay bekliyor: ${productUrl} — ${serperOwnPrice} (${recoveryDecision.reason})`,
+          );
+          break;
+        }
 
         const ownRetailer = extractRetailer(productUrl);
         const ownSellerName = ownRetailer.name !== "Diğer" ? ownRetailer.name : "Benim Ürünüm";
@@ -345,6 +379,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
             })),
           });
 
+          for (const id of siblingIds) ownPriceBySibling.set(id, serperOwnPrice);
           sourcePriceResolved = true;
           console.log(
             `✅ Kendi fiyat Serper'dan kurtarıldı (URL refresh): ${productUrl} — ${serperOwnPrice}`,
@@ -378,9 +413,16 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     const updatedCompetitorIds = new Set<string>();
     const competitorMovesBySibling = new Map<string, CompetitorMove[]>();
 
+    // Takma anahtarla (Google kartı) görülen, gerçek sayfaya taşınmış kayıtlar.
+    const aliasDirectRows = new Map<string, { id: string; lastScrapedAt: Date | null }>();
+
     for (const result of serperResults) {
-      const matchingCompetitors = competitorByUrl.get(competitorUrlKey(result.link));
-      if (!matchingCompetitors || matchingCompetitors.length === 0) continue;
+      const resultKey = competitorUrlKey(result.link);
+      const allMatching = competitorByUrl.get(resultKey);
+      if (!allMatching || allMatching.length === 0) continue;
+      const { direct, viaGoogle: matchingCompetitors } = partitionAliasHits(allMatching, resultKey);
+      for (const c of direct) aliasDirectRows.set(c.id, c);
+      if (matchingCompetitors.length === 0) continue;
 
       const price = parsePrice(result.price);
       if (!price || price <= 0) continue;
@@ -389,7 +431,24 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       if (matchingCompetitors.every((c) => updatedCompetitorIds.has(c.id))) continue;
 
       const retailer = resolveRetailer(result);
-      const matchingIds = matchingCompetitors.map((c) => c.id);
+
+      // Eşleşme dayanağına göre fiyat bandı (model kodu 0.3x–3x, başlık/AI
+      // 0.55x–1.8x, onaylı kayıt bantsız): bant dışı fiyat ne güncel fiyata ne
+      // competitor_prices / price_history'ye yazılır — grafiğe de, karara da
+      // girmez. Google bu turda fiyat döndürdüğü için kayıt "görüldü" sayılır
+      // (doğrudan tarama kuyruğuna ayrıca gönderilmez).
+      const inBand = matchingCompetitors.filter((c) => {
+        const ownPrice = ownPriceBySibling.get(c.trackedProductId) ?? null;
+        const basis = readMatchBasis(c.matchAttributes, c.matchScore);
+        if (withinPriceBandForBasis(ownPrice, price, basis)) return true;
+        updatedCompetitorIds.add(c.id);
+        console.warn(
+          `🚫 URL refresh bant dışı rakip fiyatı yazılmadı: competitor=${c.id} product=${c.trackedProductId} basis=${basis} own=${ownPrice ?? "-"} price=${price} (${result.link.slice(0, 100)})`,
+        );
+        return false;
+      });
+      if (inBand.length === 0) continue;
+      const matchingIds = inBand.map((c) => c.id);
 
       try {
         // Aynı URL'i paylaşan tüm competitor kayıtlarını tek query ile güncelle.
@@ -403,12 +462,25 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           },
         });
 
+        // Google'dan taze fiyat geldi: ilan yaşıyor — ölü işareti ve hata
+        // sayacı temizlenir (bellekteki kopya da, aşağıdaki satıcı yazımı
+        // eski işareti geri yazmasın diye).
+        for (const c of matchingCompetitors) {
+          if (!hasScrapeFailureMarks(c.matchAttributes)) continue;
+          const cleared = withScrapeSuccess(c.matchAttributes) as Prisma.JsonObject;
+          await prisma.competitor.update({
+            where: { id: c.id },
+            data: { matchAttributes: cleared },
+          });
+          c.matchAttributes = cleared;
+        }
+
         // Google ürün kartına bağlanan kayıtlarda gerçek satıcıyı da yaz: bu
         // tur bilinen rakiplerin çoğunu günceller, keşif turunu beklemeden
         // rozet "Google Alışveriş" yerine satıcının adını göstersin.
         if (retailer.viaGoogle) {
           const marketplaceKey = marketplaceKeyForRetailer(retailer.name);
-          for (const c of matchingCompetitors) {
+          for (const c of inBand) {
             const marketplaceChanged =
               marketplaceKey !== null && c.marketplace === "CUSTOM" && marketplaceKey !== "CUSTOM";
             const sellerChanged =
@@ -433,9 +505,11 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           }
         }
 
-        for (const c of matchingCompetitors) {
+        for (const c of inBand) {
           updatedCompetitorIds.add(c.id);
-          const move = detectCompetitorMove(c, price, result.title);
+          const move = detectCompetitorMove(c, price, result.title, {
+            ownPrice: ownPriceBySibling.get(c.trackedProductId) ?? null,
+          });
           if (move) {
             const moves = competitorMovesBySibling.get(c.trackedProductId) ?? [];
             moves.push(move);
@@ -482,14 +556,33 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     // 7.5. Google'ın bu turda döndürmediği bilinen rakipler: bayatlamaya
     // başlayanları (24 saat+) worker'ın doğrudan scraper zincirine ver. Bu işler
     // kendi fiyat geçmişini yazar ve hareket varsa kendi uyarısını kuyruğa alır.
+    // Takma anahtarlar aynı kaydı iki kez listeler; kimliğe göre tekilleştir.
+    const uniqueKnown = [
+      ...new Map([...competitorByUrl.values()].flat().map((c) => [c.id, c])).values(),
+    ];
     const staleTargets = pickStaleCompetitorsForDirectScrape(
-      // Takma anahtarlar aynı kaydı iki kez listeler; kimliğe göre tekilleştir.
-      [...new Map([...competitorByUrl.values()].flat().map((c) => [c.id, c])).values()],
+      uniqueKnown,
       updatedCompetitorIds,
       now,
     );
     const hourBucket = Math.floor(now.getTime() / (60 * 60 * 1000));
     let directScrapesQueued = 0;
+    // Gerçek sayfaya taşınmış ve kartı bu turda görülen kayıtlar: fiyat
+    // sayfadan okunur (Google'ın fiyatı yazılmaz). Bayat olanları tara.
+    const staleIds = new Set(staleTargets.map((t) => t.id));
+    for (const row of aliasDirectRows.values()) {
+      if (staleIds.has(row.id) || !needsAliasDirectRefresh(row.lastScrapedAt, now)) continue;
+      try {
+        await competitorQueue.add(
+          "scrape-competitor",
+          { competitorId: row.id },
+          { jobId: `alias-direct-${row.id}-${hourBucket}`, attempts: 1 },
+        );
+        directScrapesQueued++;
+      } catch (err) {
+        console.error(`Gerçek sayfa taraması kuyruğa alınamadı (${row.id}):`, err);
+      }
+    }
     for (const target of staleTargets) {
       try {
         await competitorQueue.add(
@@ -506,6 +599,13 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
         console.error(`Bayat rakip tarama kuyruğa alınamadı (${target.id}):`, err);
       }
     }
+
+    // Tazelik ölçümü: karar hesaplarından 72 saat kuralıyla düşen güvenilir
+    // rakip sayısı (zaman içinde izlenebilsin diye her turda loglanır).
+    const freshness = countStaleTrustedCompetitors(uniqueKnown, updatedCompetitorIds, now);
+    console.log(
+      `🧊 Rakip tazeliği (${productUrl}): ${freshness.stale}/${freshness.trusted} güvenilir rakip 72 saatten eski (Google kartı: ${freshness.googleHosted}, ölü: ${freshness.dead}), ${directScrapesQueued} doğrudan taramaya`,
+    );
 
     // 7.6. Google ürün kartına bağlı rakipleri satıcının gerçek ürün sayfasına
     // taşı (ürün başına tur başına sınırlı arama). Hatası turu bozmaz.

@@ -51,6 +51,7 @@ export async function GET(req: Request) {
             currentPrice: true,
             matchScore: true,
             lastScrapedAt: true,
+            matchAttributes: true,
           },
         },
         priceHistory: {
@@ -87,6 +88,7 @@ export async function GET(req: Request) {
         price: toNumber(competitor.currentPrice),
         matchScore: competitor.matchScore,
         lastScrapedAt: competitor.lastScrapedAt,
+        matchAttributes: competitor.matchAttributes,
       }));
       const assessments = assessCompetitorList(inputs, { ownPrice: myPrice });
       return inputs

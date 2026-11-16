@@ -33,6 +33,101 @@ export function withinPriceBand(sourcePrice: number, candidatePrice: number): bo
 }
 
 // ============================================
+// Eşleşme dayanağına göre fiyat bandı (match basis)
+// ============================================
+//
+// Prod vakası (Philips EP3347/90, kendi fiyat ₺17.563): Google kartı "Philips
+// Series 3300 … 6 sıcak ve buzlu içecek" (gerçekte EP3341/50, ₺47.181) 2,69x
+// ile 0.3x–3x bandından geçti. 3x bandı yalnızca MODEL KODU ile kanıtlanmış
+// eşleşmeler için makul (aynı kod → aynı ürün, fiyat farkı kampanya/satıcı
+// farkıdır). Yalnız başlık/AI kararına dayanan eşleşmede aynı aile içindeki
+// kardeş model (3300 vs 3400 serisi) bu kadar geniş bantta "rakip" kalıyordu.
+//
+//   model-code → 0.3x–3x   (deterministik ortak kod kabulü)
+//   title      → 0.55x–1.8x (başlık kuralı / AI kararı; dayanak bilinmiyorsa da bu)
+//   manual     → 0.3x–3x   (kullanıcının elle eklediği, skorsuz kayıt)
+//   confirmed  → bant yok  (kullanıcı "bu aynı ürün" dedi; onun kararı geçerli)
+//
+// Dayanak matchAttributes.matchBasis alanından okunur; alan yoksa (eski
+// kayıtlar) deterministik kod kabulünün `details` metninden çıkarılır.
+
+export const TITLE_PRICE_BAND_MIN_RATIO = 0.55;
+export const TITLE_PRICE_BAND_MAX_RATIO = 1.8;
+
+export type MatchBasis = "model-code" | "title" | "manual" | "confirmed";
+
+export interface PriceBand {
+  min: number;
+  max: number;
+}
+
+// Matcher'ın deterministik kod kabulü bu açıklamalarla yazılır (95: MPN/barkod,
+// 90: model kodu + marka). matchBasis alanı olmayan eski satırlar için.
+const LEGACY_CODE_MATCH_DETAILS = ["Ortak benzersiz ürün kodu", "Ortak model kodu"];
+
+/**
+ * Bir rakip kaydının eşleşme dayanağı. Kullanıcı onayı her şeyden önce gelir;
+ * sonra açık `matchBasis` alanı, sonra eski kod-kabulü açıklaması; skorsuz
+ * kayıt manueldir; geri kalan her şey (AI, başlık kuralı, bilinmeyen) "title".
+ */
+export function readMatchBasis(
+  matchAttributes: unknown,
+  matchScore: number | null | undefined,
+): MatchBasis {
+  const attrs =
+    matchAttributes && typeof matchAttributes === "object" && !Array.isArray(matchAttributes)
+      ? (matchAttributes as Record<string, unknown>)
+      : null;
+  if (attrs?.review === "confirmed") return "confirmed";
+  const explicit = attrs?.matchBasis;
+  if (explicit === "model-code" || explicit === "code") return "model-code";
+  if (explicit === "title" || explicit === "ai") return "title";
+  const details = typeof attrs?.details === "string" ? attrs.details : "";
+  if (LEGACY_CODE_MATCH_DETAILS.some((prefix) => details.startsWith(prefix))) {
+    return "model-code";
+  }
+  if (matchScore === null || matchScore === undefined) return "manual";
+  return "title";
+}
+
+/** Dayanağa göre kendi fiyata uygulanan bant; null = bant yok (onaylı kayıt). */
+export function priceBandForBasis(basis: MatchBasis): PriceBand | null {
+  switch (basis) {
+    case "confirmed":
+      return null;
+    case "title":
+      return { min: TITLE_PRICE_BAND_MIN_RATIO, max: TITLE_PRICE_BAND_MAX_RATIO };
+    default:
+      return { min: PRICE_BAND_MIN_RATIO, max: PRICE_BAND_MAX_RATIO };
+  }
+}
+
+/**
+ * Rakip fiyatı, eşleşme dayanağının bandında mı? Kendi fiyat yoksa band
+ * uygulanamaz (true). Onaylı kayıtlar her zaman geçer.
+ */
+export function withinPriceBandForBasis(
+  ownPrice: number | null | undefined,
+  candidatePrice: number,
+  basis: MatchBasis,
+): boolean {
+  const band = priceBandForBasis(basis);
+  if (!band) return true;
+  if (typeof ownPrice !== "number" || !Number.isFinite(ownPrice) || ownPrice <= 0) return true;
+  if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) return false;
+  return candidatePrice >= ownPrice * band.min && candidatePrice <= ownPrice * band.max;
+}
+
+/** Kayıt onay bekleyen bir aday mı (matchAttributes.review === "pending")? */
+export function isPendingReview(matchAttributes: unknown): boolean {
+  return (
+    !!matchAttributes &&
+    typeof matchAttributes === "object" &&
+    (matchAttributes as Record<string, unknown>).review === "pending"
+  );
+}
+
+// ============================================
 // Ambalaj / koli / lojistik malzemesi tespiti
 // ============================================
 //
@@ -109,7 +204,28 @@ export function isPackagingListing(candidateTitle: string, sourceTitle?: string)
 // Rakip kullanılabilirlik değerlendirmesi
 // ============================================
 
-export type CompetitorIssue = "no-price" | "low-score" | "out-of-band" | "stale" | "peer-outlier";
+export type CompetitorIssue =
+  | "no-price"
+  | "low-score"
+  | "out-of-band"
+  | "stale"
+  | "peer-outlier"
+  | "dead"
+  | "pending";
+
+/**
+ * İlanın yayından kalktığı işaret (worker `scrape-competitor` işi yazar:
+ * `matchAttributes.deadAt`, ISO zaman). Kategori sayfasına yönlenen / 404 dönen
+ * ya da üst üste 3 kez taranamayan ilan; taze bir fiyat işareti temizler.
+ */
+export function readCompetitorDeadAt(matchAttributes: unknown): string | null {
+  if (!matchAttributes || typeof matchAttributes !== "object" || Array.isArray(matchAttributes)) {
+    return null;
+  }
+  const deadAt = (matchAttributes as Record<string, unknown>).deadAt;
+  if (typeof deadAt !== "string" || !deadAt) return null;
+  return Number.isFinite(new Date(deadAt).getTime()) ? deadAt : null;
+}
 
 export interface CompetitorAssessmentInput {
   /** Parse edilmiş güncel fiyat; null/0 geçersiz sayılır. */
@@ -118,6 +234,17 @@ export interface CompetitorAssessmentInput {
   matchScore: number | null;
   /** Son fiyat alınma zamanı; null = hiç alınmamış. */
   lastScrapedAt: Date | string | null;
+  /** İlan kaldırılmış işareti (`readCompetitorDeadAt`); doluysa karar dışı. */
+  deadAt?: Date | string | null;
+  /**
+   * Ham matchAttributes JSON'u — eşleşme dayanağı (bant genişliği) ve onay
+   * durumu buradan okunur. Verilmezse dayanak skordan çıkarılır.
+   */
+  matchAttributes?: unknown;
+  /** Önceden hesaplanmış dayanak (API yanıtı gibi ham JSON'un olmadığı yerler). */
+  matchBasis?: MatchBasis | null;
+  /** Önceden okunmuş onay durumu ("pending" | "confirmed"). */
+  review?: string | null;
 }
 
 export interface CompetitorAssessmentOptions {
@@ -155,14 +282,13 @@ export function assessCompetitor(
     if (input.matchScore < MIN_MATCH_SCORE) issues.push("low-score");
   }
 
-  const ownPrice = options.ownPrice;
-  if (
-    hasPrice &&
-    typeof ownPrice === "number" &&
-    Number.isFinite(ownPrice) &&
-    ownPrice > 0 &&
-    !withinPriceBand(ownPrice, price as number)
-  ) {
+  // Onay bekleyen aday, kullanıcı "bu aynı ürün" diyene kadar hiçbir karara girmez.
+  if (input.review === "pending" || isPendingReview(input.matchAttributes)) {
+    issues.push("pending");
+  }
+
+  const basis = competitorMatchBasis(input);
+  if (hasPrice && !withinPriceBandForBasis(options.ownPrice, price as number, basis)) {
     issues.push("out-of-band");
   }
 
@@ -174,7 +300,17 @@ export function assessCompetitor(
     if (!Number.isFinite(ageHours) || ageHours > maxAgeHours) issues.push("stale");
   }
 
+  // Yayından kalkmış ilanın son fiyatı 72 saat dolmadan da karara girmemeli.
+  if (input.deadAt) issues.push("dead");
+
   return { usable: issues.length === 0, issues };
+}
+
+/** Girdinin eşleşme dayanağı: açık alan > review > matchAttributes > skor. */
+export function competitorMatchBasis(input: CompetitorAssessmentInput): MatchBasis {
+  if (input.review === "confirmed") return "confirmed";
+  if (input.matchBasis) return input.matchBasis;
+  return readMatchBasis(input.matchAttributes, input.matchScore);
 }
 
 export function isUsableCompetitor(
@@ -188,34 +324,38 @@ export function isUsableCompetitor(
 // Akran-medyan fiyat aykırılığı (peer outlier)
 // ============================================
 //
-// Prod vakası (Philips HD9650/90): 16 rakibin 14'ü ₺7.2K–16.4K bandındayken
-// tek bir ilan ₺3.000 gösteriyordu — neredeyse kesin sahte/yem ilan. Kendi
-// fiyata göre kurulan 0.3x–3x bandını (3000/9475 = 0.317) kılpayı geçtiği
-// için "geçerli" sayıldı ve "önerilen fiyat ₺2.999" gibi ZARARLI bir tavsiye
-// üretti. Kendi fiyat yanlış çapa: kullanıcının fiyatı piyasanın kenarında
-// olabilir. Doğru çapa AKRAN GRUBUNUN MEDYANIDIR — sağlam (robust) istatistik,
-// tek aykırı değerden etkilenmez.
+// Prod vakaları:
+// - Philips HD9650/90: 14 rakip ₺7.2K–16.4K iken tek ilan ₺3.000 → "önerilen
+//   fiyat ₺2.999" gibi ZARARLI bir tavsiye.
+// - Philips EP3347/90: ₺17–19K kümesinde ₺47.181'lik kardeş model (EP3341/50).
+//   Eski kural (≥4 akran, yüksekte >2.75x + izolasyon) bunu geçiriyordu.
 //
-// Kural bilinçli olarak İKİ koşul ister (yalnız oran değil):
-//   1) Fiyat, akran medyanından aşırı kopuk (düşükte <0.45x, yüksekte >2.75x)
-//   2) En yakın akrandan da İZOLE (düşükte ≥1.8x, yüksekte ≥1.5x boşluk)
-// İzolasyon şartı gerçek fiyat savaşlarını korur: iki satıcı birlikte ucuzsa
-// (küme) bu gerçek olabilir; tek başına dipte duran ilan ise şüphelidir.
-// En az PEER_OUTLIER_MIN_PEERS akran yoksa kural HİÇ çalışmaz (küçük örneklemde
-// medyan güvenilmez). Tek geçişlidir — aykırılar çıkarılıp yeniden hesaplanmaz
-// (kademeli daralma/yakınsama sorularından kaçınmak için bilinçli tercih).
+// Kendi fiyat yanlış çapa olabilir (kullanıcının fiyatı piyasanın kenarında
+// olabilir); doğru çapa AKRAN GRUBUNUN MEDYANIDIR. Kural simetrik log
+// uzaklığıdır: en az PEER_OUTLIER_MIN_PEERS BAŞKA geçerli akran varsa ve
+// |ln(fiyat / akran medyanı)| > ln(PEER_OUTLIER_MAX_RATIO) ise kayıt aykırıdır
+// (1.8x pahalı ya da 1/1.8 ≈ 0.56x ucuz). Kullanıcı onaylı kayıtlar bu
+// kuraldan muaftır (akran olarak sayılmaya devam ederler). Tek geçişlidir —
+// aykırılar çıkarılıp yeniden hesaplanmaz.
 
-export const PEER_OUTLIER_MIN_PEERS = 4;
-export const PEER_OUTLIER_LOW_RATIO = 0.45;
-export const PEER_OUTLIER_LOW_GAP = 1.8;
-export const PEER_OUTLIER_HIGH_RATIO = 2.75;
-export const PEER_OUTLIER_HIGH_GAP = 1.5;
+export const PEER_OUTLIER_MIN_PEERS = 3;
+export const PEER_OUTLIER_MAX_RATIO = 1.8;
 
 export type PeerOutlierKind = "too-low" | "too-high";
 
 function medianOf(sorted: number[]): number {
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Pozitif sayıların medyanı; boş listede null. */
+export function priceMedian(prices: number[]): number | null {
+  const valid = prices
+    .filter((p) => Number.isFinite(p) && p > 0)
+    .slice()
+    .sort((a, b) => a - b);
+  if (valid.length === 0) return null;
+  return medianOf(valid);
 }
 
 /**
@@ -227,37 +367,24 @@ export function detectPeerPriceOutlier(
   peerPrices: number[],
 ): PeerOutlierKind | null {
   if (!Number.isFinite(price) || price <= 0) return null;
-  const peers = peerPrices
-    .filter((p) => Number.isFinite(p) && p > 0)
-    .slice()
-    .sort((a, b) => a - b);
+  const peers = peerPrices.filter((p) => Number.isFinite(p) && p > 0);
   if (peers.length < PEER_OUTLIER_MIN_PEERS) return null;
-
-  const median = medianOf(peers);
-  if (!Number.isFinite(median) || median <= 0) return null;
-
-  const nearest = peers.reduce(
-    (best, p) => (Math.abs(p - price) < Math.abs(best - price) ? p : best),
-    peers[0],
-  );
-
-  if (price < median * PEER_OUTLIER_LOW_RATIO && nearest / price >= PEER_OUTLIER_LOW_GAP) {
-    return "too-low";
-  }
-  if (price > median * PEER_OUTLIER_HIGH_RATIO && price / nearest >= PEER_OUTLIER_HIGH_GAP) {
-    return "too-high";
-  }
-  return null;
+  const median = priceMedian(peers);
+  if (median === null) return null;
+  const distance = Math.log(price / median);
+  if (Math.abs(distance) <= Math.log(PEER_OUTLIER_MAX_RATIO)) return null;
+  return distance < 0 ? "too-low" : "too-high";
 }
 
 /**
  * Rakip listesini İKİ geçişte değerlendirir ve girişle aynı sırada
  * CompetitorAssessment dizisi döner:
- *   Geçiş 1 — tekil kontroller (fiyat, skor, band, bayatlık).
+ *   Geçiş 1 — tekil kontroller (fiyat, skor, onay, dayanak bandı, bayatlık).
  *   Geçiş 2 — geçiş 1'i geçenler arasında akran-medyan aykırılığı; aykırı
  *             bulunanlara "peer-outlier" issue eklenir ve usable=false olur.
- * Pozisyon, öneri, alarm gibi TÜM karar noktaları tekil assessCompetitor
- * yerine bunu kullanmalıdır — akran bağlamı ancak listeyle kurulabilir.
+ *             Kullanıcı onaylı kayıtlar muaftır.
+ * Pozisyon, öneri, alarm, günlük özet gibi TÜM karar noktaları tekil
+ * assessCompetitor yerine bunu kullanmalıdır.
  */
 export function assessCompetitorList(
   inputs: CompetitorAssessmentInput[],
@@ -265,27 +392,52 @@ export function assessCompetitorList(
 ): CompetitorAssessment[] {
   const base = inputs.map((input) => assessCompetitor(input, options));
 
-  const provisionalPrices: number[] = [];
+  const provisional: Array<{ index: number; price: number }> = [];
   for (let i = 0; i < inputs.length; i++) {
     const price = inputs[i].price;
     if (base[i].usable && typeof price === "number" && Number.isFinite(price) && price > 0) {
-      provisionalPrices.push(price);
+      provisional.push({ index: i, price });
     }
   }
   // Kendisi + en az MIN_PEERS akran gerekir; yoksa aykırılık aranmaz.
-  if (provisionalPrices.length < PEER_OUTLIER_MIN_PEERS + 1) return base;
+  if (provisional.length < PEER_OUTLIER_MIN_PEERS + 1) return base;
 
   return base.map((assessment, i) => {
     if (!assessment.usable) return assessment;
+    if (competitorMatchBasis(inputs[i]) === "confirmed") return assessment;
     const price = inputs[i].price as number;
-    // Akranlar = kendisi hariç geçerli fiyatlar. Aynı fiyatlı BAŞKA satıcılar
-    // akran olarak kalmalı — bu yüzden değerden yalnızca BİR kopya çıkarılır.
-    const selfIdx = provisionalPrices.indexOf(price);
-    const peers = provisionalPrices.filter((_, j) => j !== selfIdx);
+    const peers = provisional.filter((p) => p.index !== i).map((p) => p.price);
     const outlier = detectPeerPriceOutlier(price, peers);
     if (!outlier) return assessment;
     return { usable: false, issues: [...assessment.issues, "peer-outlier" as const] };
   });
+}
+
+export interface PeerMedianResult {
+  /** Güvenilir rakip fiyatlarının medyanı; yeterli akran yoksa null. */
+  median: number | null;
+  /** Medyana giren güvenilir rakip sayısı. */
+  count: number;
+}
+
+/**
+ * Kendi fiyattan BAĞIMSIZ güvenilir rakip medyanı: kendi fiyat sorgulanırken
+ * (ani büyük değişim, piyasadan kopuk kendi fiyat) bant çapası olarak kendi
+ * fiyat kullanılamaz. Skor, onay, bayatlık ve akran aykırılığı yine uygulanır.
+ * `minPeers` altında güvenilir rakip varsa median null döner.
+ */
+export function trustedPeerMedian(
+  inputs: CompetitorAssessmentInput[],
+  options: Omit<CompetitorAssessmentOptions, "ownPrice"> & { minPeers?: number } = {},
+): PeerMedianResult {
+  const minPeers = options.minPeers ?? PEER_OUTLIER_MIN_PEERS;
+  const assessments = assessCompetitorList(inputs, { ...options, ownPrice: null });
+  const prices = inputs
+    .filter((_, i) => assessments[i].usable)
+    .map((c) => c.price)
+    .filter((p): p is number => typeof p === "number" && Number.isFinite(p) && p > 0);
+  if (prices.length < minPeers) return { median: null, count: prices.length };
+  return { median: priceMedian(prices), count: prices.length };
 }
 
 // ============================================
@@ -341,6 +493,23 @@ export function extractProductCodes(text: string): string[] {
     if (norm.length < 5) continue;
     if (!/[A-Z]/.test(norm) || !/\d/.test(norm)) continue; // harf VE rakam içermeli
     if (isSharedHardwareCode(norm)) continue;
+    // "EP3347-90": tireli rakam eki modelin parçası değil, varyant ekidir
+    // (EP3347/90 ile aynı yazım). Önek kendi başına kodsa ek ayrılır —
+    // aksi halde EP334790 okunup EP3347/90 ile sahte varyant çıkıyordu.
+    // Ek, configSuffixesFor tarafından ayrıca okunur.
+    const dashSuffix = m[0].match(/^(.+)-\d{1,3}$/);
+    if (dashSuffix) {
+      const prefixNorm = dashSuffix[1].replace(/-/g, "").toUpperCase();
+      if (
+        prefixNorm.length >= 5 &&
+        /[A-Z]/.test(prefixNorm) &&
+        /\d/.test(prefixNorm) &&
+        !isSharedHardwareCode(prefixNorm)
+      ) {
+        found.push({ raw: dashSuffix[1], norm: prefixNorm });
+        continue;
+      }
+    }
     found.push({ raw: m[0], norm });
   }
   const seen = new Set<string>();
@@ -544,22 +713,37 @@ export function hasConflictingCountDescriptors(a: string, b: string): boolean {
 
 export type ProductCodeRelation = "exact" | "color-variant" | "config-variant" | "none";
 
-// Kodun hemen ardından gelen ayrık, SIFIR ÖNCÜLÜ kısa rakam grubu alt-SKU
-// ekidir: "83SC000QTR 015", "83sc000qtr-001". Sıfır öncülü şartı "83SC000QTR
-// 15.6 inç" gibi ekran boyutlarının yanlışlıkla ek sayılmasını önler.
+// Koda bitişik varyant ekleri:
+// - ayrık, SIFIR ÖNCÜLÜ kısa rakam grubu: "83SC000QTR 015" (alt-SKU). Sıfır
+//   öncülü şartı "83SC000QTR 15.6 inç" gibi ekran boyutlarını ek saymaz.
+// - tireli rakam eki: "83sc000qtr-001", "EP3347-90".
+// - eğik çizgi eki: "HD9650/90", "EP3347/90" (Philips bölge/varyant eki).
 function configSuffixesFor(rawText: string, rawCode: string): Set<string> {
   const out = new Set<string>();
   if (!rawText || !rawCode) return out;
   const escaped = rawCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`${escaped}[\\s\\-–—/]+(0\\d{1,3})(?![\\d.,])`, "gi");
-  for (const m of rawText.matchAll(re)) out.add(m[1]);
+  const re = new RegExp(
+    `${escaped}(?:\\/\\s*([A-Za-z0-9]{1,4})(?![A-Za-z0-9])|[\\-–—](\\d{1,3})(?![\\d.,A-Za-z])|\\s+(0\\d{1,3})(?![\\d.,]))`,
+    "gi",
+  );
+  for (const m of rawText.matchAll(re)) out.add((m[1] ?? m[2] ?? m[3]).toUpperCase());
   return out;
 }
 
-function sameStringSet(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
+/**
+ * İki ek kümesi farklı konfigürasyon mu? İki tarafta da ek varsa ortak ek
+ * olmalı (HD9650/90 ≠ HD9650/99). Tek taraflı ek yalnızca sıfır öncüllü
+ * alt-SKU ise varyanttır (83SC000QTR vs "83SC000QTR 001"); "/90" gibi bölge
+ * eki yazılmamışsa eksik bilgidir.
+ */
+function suffixesConflict(a: Set<string>, b: Set<string>): boolean {
+  if (a.size > 0 && b.size > 0) {
+    for (const v of a) if (b.has(v)) return false;
+    return true;
+  }
+  const lone = a.size > 0 ? a : b;
+  for (const v of lone) if (/^0\d/.test(v)) return true;
+  return false;
 }
 
 function identityCodeMap(text: string): Map<string, string> {
@@ -596,7 +780,7 @@ export function compareProductCodes(aText: string, bText: string): ProductCodeRe
   for (const [norm, rawA] of aCodes) {
     const rawB = bCodes.get(norm);
     if (!rawB) continue;
-    if (!sameStringSet(configSuffixesFor(aText, rawA), configSuffixesFor(bText, rawB))) {
+    if (suffixesConflict(configSuffixesFor(aText, rawA), configSuffixesFor(bText, rawB))) {
       return "config-variant";
     }
     exact = true;

@@ -4,6 +4,7 @@ import {
   withinPriceBand,
   isPackagingListing,
   assessCompetitor,
+  readCompetitorDeadAt,
   isUsableCompetitor,
   extractProductCodes,
   sharesStrongProductCode,
@@ -373,6 +374,20 @@ describe("compareProductCodes (exact / renk varyantı / konfigürasyon varyantı
     ).toBe("exact");
   });
 
+  it("reads slash suffixes: HD9650/90 vs HD9650/99 is a config variant", () => {
+    expect(compareProductCodes("Philips HD9650/90 Airfryer", "Philips HD9650/99 Airfryer")).toBe(
+      "config-variant",
+    );
+  });
+
+  it("treats EP3347-90 like EP3347/90 and a missing region suffix as exact", () => {
+    expect(extractProductCodes("Philips EP3347-90 Espresso")).toEqual(["EP3347"]);
+    expect(compareProductCodes("Philips EP3347/90 LatteGo", "Philips EP3347-90")).toBe("exact");
+    expect(compareProductCodes("Philips EP3347/90 LatteGo", "Philips EP3347 LatteGo")).toBe(
+      "exact",
+    );
+  });
+
   it("returns none for different laptops sharing only hardware codes (CPU/GPU)", () => {
     expect(
       compareProductCodes(
@@ -460,16 +475,27 @@ describe("detectPeerPriceOutlier (akran-medyan aykırılığı)", () => {
     expect(detectPeerPriceOutlier(16392.03, peersOf(16392.03, PHILIPS_PRICES))).toBeNull();
   });
 
-  it("cluster protection: two sellers together at a low price are NOT flagged", () => {
-    // İki satıcı birlikte ucuzsa gerçek olabilir (tasfiye/kampanya) — izolasyon
-    // şartı (en yakın akrandan ≥1.8x kopukluk) sağlanmaz, bayrak yok.
+  it("two cheap sellers far below the peer median are both flagged (log rule, no cluster pass)", () => {
     const prices = [3000, 3100, 9500, 9800, 10000, 10500];
-    expect(detectPeerPriceOutlier(3000, peersOf(3000, prices))).toBeNull();
-    expect(detectPeerPriceOutlier(3100, peersOf(3100, prices))).toBeNull();
+    expect(detectPeerPriceOutlier(3000, peersOf(3000, prices))).toBe("too-low");
+    expect(detectPeerPriceOutlier(3100, peersOf(3100, prices))).toBe("too-low");
+  });
+
+  it("flags the EP3341/50 sibling at ₺47.181 among ₺17–19K Philips EP3347/90 peers", () => {
+    expect(detectPeerPriceOutlier(47181.75, [17563.08, 18299, 18999, 17899])).toBe("too-high");
+  });
+
+  it("uses a symmetric 1.8x log distance around the peer median", () => {
+    const peers = [10000, 10000, 10000];
+    expect(detectPeerPriceOutlier(17900, peers)).toBeNull();
+    expect(detectPeerPriceOutlier(18100, peers)).toBe("too-high");
+    expect(detectPeerPriceOutlier(5600, peers)).toBeNull(); // 1/1.8 ≈ 0.556
+    expect(detectPeerPriceOutlier(5500, peers)).toBe("too-low");
   });
 
   it("small samples are never flagged (median unreliable)", () => {
-    const few = [3000, 9500, 10000, 10500]; // kendisi hariç 3 akran < MIN_PEERS
+    const few = [3000, 9500, 10000]; // kendisi hariç 2 akran < MIN_PEERS (3)
+    expect(PEER_OUTLIER_MIN_PEERS).toBe(3);
     expect(peersOf(3000, few).length).toBeLessThan(PEER_OUTLIER_MIN_PEERS);
     expect(detectPeerPriceOutlier(3000, peersOf(3000, few))).toBeNull();
   });
@@ -484,7 +510,15 @@ describe("detectPeerPriceOutlier (akran-medyan aykırılığı)", () => {
 describe("assessCompetitorList (iki geçişli liste değerlendirmesi)", () => {
   const now = new Date("2026-07-10T12:00:00Z");
   const fresh = new Date("2026-07-10T10:00:00Z");
-  const input = (price: number) => ({ price, matchScore: 85, lastScrapedAt: fresh });
+  // Model kodu ile kanıtlanmış eşleşme → geniş (0.3x–3x) bant; akran kuralı
+  // bandın yakalayamadığını yakalamalı.
+  const codeAttrs = { matchBasis: "model-code" };
+  const input = (price: number) => ({
+    price,
+    matchScore: 90,
+    lastScrapedAt: fresh,
+    matchAttributes: codeAttrs,
+  });
 
   it("marks the Philips outliers unusable with the peer-outlier issue", () => {
     const inputs = PHILIPS_PRICES.map(input);
@@ -508,13 +542,12 @@ describe("assessCompetitorList (iki geçişli liste değerlendirmesi)", () => {
     // Bayat/bantdışı kayıtlar akran havuzuna girmez — çöp veri medyanı bükemez.
     const stale = new Date("2026-07-01T00:00:00Z");
     const inputs = [
-      { price: 3000, matchScore: 85, lastScrapedAt: fresh },
-      { price: 3050, matchScore: 85, lastScrapedAt: stale }, // bayat → akran DEĞİL
+      input(3000),
+      { ...input(3050), lastScrapedAt: stale }, // bayat → akran DEĞİL
       ...[9500, 9800, 10000, 10500, 11000].map(input),
     ];
     const assessments = assessCompetitorList(inputs, { ownPrice: 9475, now });
-    // Bayat 3050 akran olsaydı 3000 kümelenme korumasına takılıp bayraklanmazdı;
-    // akran değil → 3000 izole kalır ve bayraklanır.
+    // Bayat 3050 akran havuzuna girmez; 3000 medyandan kopuk → bayraklanır.
     expect(assessments[0].usable).toBe(false);
     expect(assessments[0].issues).toContain("peer-outlier");
     expect(assessments[1].issues).toContain("stale");
@@ -553,5 +586,29 @@ describe("assessCompetitorList (iki geçişli liste değerlendirmesi)", () => {
     expect(assessments[dupIdx].usable).toBe(true);
     expect(assessments[dupIdx + 1].usable).toBe(true);
     expect(assessments[dupIdx + 2].usable).toBe(true);
+  });
+});
+
+describe("dead listings (matchAttributes.deadAt)", () => {
+  const now = new Date("2026-11-16T03:26:00Z");
+  it("excludes a row whose listing is gone even while its price is fresh", () => {
+    const deadAt = readCompetitorDeadAt({ deadAt: "2026-11-16T00:00:00Z", deadReason: "gone" });
+    expect(deadAt).toBe("2026-11-16T00:00:00Z");
+    const result = assessCompetitor(
+      { price: 2499, matchScore: 88, lastScrapedAt: now, deadAt },
+      { now, ownPrice: 2600 },
+    );
+    expect(result.usable).toBe(false);
+    expect(result.issues).toEqual(["dead"]);
+  });
+
+  it("ignores missing or malformed marks", () => {
+    expect(readCompetitorDeadAt({})).toBeNull();
+    expect(readCompetitorDeadAt({ deadAt: 5 })).toBeNull();
+    expect(readCompetitorDeadAt([])).toBeNull();
+    expect(
+      assessCompetitor({ price: 2499, matchScore: 88, lastScrapedAt: now, deadAt: null }, { now })
+        .usable,
+    ).toBe(true);
   });
 });

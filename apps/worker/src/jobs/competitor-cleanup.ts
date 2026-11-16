@@ -16,22 +16,34 @@
 //   3) Ürünün KENDİ ilanına bağlanmış otomatik rakipler (aynı pazaryeri ürün
 //      id'si, slug farklı olabilir). Kullanıcının elle eklediği (skorsuz) veya
 //      onayladığı satırlar silinmez.
+//   4) Model kodu/numarası ürünle çelişen otomatik rakipler (başlık + URL
+//      slug'ı: EP3347/90 ↔ EP3341/50, HD9650/90 ↔ /99) ve kodu hiçbir zaman
+//      doğrulanamayacak onay bekleyen Google kartları.
 // Güçlü AI skoru (>= MIN_MATCH_SCORE) olan kayıtlar fiyat sapsa bile silinmez —
 // fiyat meşru şekilde değişmiş olabilir; onları görüntüleme katmanı zaten
 // karar dışı bırakıyor.
 
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { MIN_MATCH_SCORE, isPackagingListing } from "../utils/competitor-quality";
 import { readMatchReview } from "../utils/match-review";
 import { hasPackOrSpecConflict, urlSlugText } from "../utils/title-similarity";
+import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
+import { isGoogleHostedUrl } from "../utils/stale-competitors";
 import { isSameListing } from "../utils/url-match";
 
 // Silme bandı — görüntüleme bandından bilinçli olarak daha geniş.
 export const PURGE_BAND_MIN_RATIO = 0.2;
 export const PURGE_BAND_MAX_RATIO = 5.0;
 
-export type PurgeReason = "packaging" | "price-out-of-band" | "own-listing" | null;
+export type PurgeReason =
+  | "packaging"
+  | "price-out-of-band"
+  | "own-listing"
+  | "model-code-conflict"
+  | "unverifiable-model"
+  | null;
 
 export interface PurgeCandidate {
   competitorName: string | null;
@@ -71,6 +83,30 @@ export function shouldPurgeCompetitor(
     isSameListing(candidate.competitorUrl, context.productUrl)
   ) {
     return "own-listing";
+  }
+
+  // Otomatik satır (skorlu, kullanıcı onaysız) ürünle çelişen bir model
+  // kimliği taşıyorsa farklı üründür. Elle eklenen/onaylı satıra dokunulmaz.
+  if (
+    candidate.matchScore !== null &&
+    candidate.matchScore !== undefined &&
+    readMatchReview(candidate.matchAttributes) !== "confirmed" &&
+    candidate.competitorName
+  ) {
+    const identity = analyzeModelIdentity(
+      { title: context.productName, url: context.productUrl },
+      { title: candidate.competitorName, url: candidate.competitorUrl },
+    );
+    if (isModelIdentityMismatch(identity.relation)) return "model-code-conflict";
+    // Kodu doğrulanamayan Google kartı onay bekliyorsa: kart taranamaz ve
+    // slug taşımaz, kullanıcıya hiçbir zaman doğrulanabilir bir aday olamaz.
+    if (
+      identity.relation === "unknown" &&
+      readMatchReview(candidate.matchAttributes) === "pending" &&
+      isGoogleHostedUrl(candidate.competitorUrl)
+    ) {
+      return "unverifiable-model";
+    }
   }
 
   const strongScore =
@@ -120,7 +156,9 @@ export async function cleanupJunkCompetitors(): Promise<{
       currentPrice: unknown;
       matchScore: number | null;
       matchAttributes: unknown;
+      trackedProductId: string;
       trackedProduct: { productName: string; currentPrice: unknown; productUrl: string } | null;
+      competitorPrices: Array<{ price: Prisma.Decimal; scrapedAt: Date }>;
     }> = await prisma.competitor.findMany({
       take: PAGE_SIZE,
       // Keyset sayfalama (id > cursor): Prisma `cursor` sayfalaması cursor
@@ -130,6 +168,7 @@ export async function cleanupJunkCompetitors(): Promise<{
       orderBy: { id: "asc" },
       select: {
         id: true,
+        trackedProductId: true,
         competitorName: true,
         competitorUrl: true,
         currentPrice: true,
@@ -138,6 +177,7 @@ export async function cleanupJunkCompetitors(): Promise<{
         trackedProduct: {
           select: { productName: true, currentPrice: true, productUrl: true },
         },
+        competitorPrices: { select: { price: true, scrapedAt: true } },
       },
     });
 
@@ -146,6 +186,7 @@ export async function cleanupJunkCompetitors(): Promise<{
     scanned += batch.length;
 
     const toDelete: string[] = [];
+    const twins: Prisma.PriceHistoryWhereInput[] = [];
     for (const row of batch) {
       if (!row.trackedProduct) continue;
       const reason = shouldPurgeCompetitor(
@@ -167,11 +208,22 @@ export async function cleanupJunkCompetitors(): Promise<{
       );
       if (reason) {
         toDelete.push(row.id);
+        // Grafikteki ikiz satırlar (price_history) cascade ile silinmez; kalırsa
+        // ikizsiz rakip satırı ürünün kendi fiyatı sanılabilir.
+        for (const cp of row.competitorPrices) {
+          twins.push({
+            trackedProductId: row.trackedProductId,
+            scrapedAt: cp.scrapedAt,
+            price: cp.price,
+            previousPrice: null,
+          });
+        }
         byReason[reason] = (byReason[reason] ?? 0) + 1;
         logger.info(
           {
             competitorId: row.id,
-            name: row.competitorName?.slice(0, 80),
+            name: row.competitorName?.slice(0, 160),
+            url: row.competitorUrl.slice(0, 160),
             reason,
           },
           "Junk competitor purged",
@@ -180,6 +232,9 @@ export async function cleanupJunkCompetitors(): Promise<{
     }
 
     if (toDelete.length > 0) {
+      if (twins.length > 0) {
+        await prisma.priceHistory.deleteMany({ where: { OR: twins } });
+      }
       await prisma.competitor.deleteMany({ where: { id: { in: toDelete } } });
       purged += toDelete.length;
     }
