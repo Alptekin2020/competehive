@@ -96,7 +96,7 @@ describe("verifyProductMatch — alt-SKU / konfigürasyon varyantı (Lenovo prod
       },
     );
     expect(result.isMatch).toBe(false);
-    expect(result.score).toBe(55);
+    expect(result.score).toBe(30);
   });
 
   it("downgrades dash-joined numeric suffixes (83SC000QTR-015)", async () => {
@@ -108,7 +108,7 @@ describe("verifyProductMatch — alt-SKU / konfigürasyon varyantı (Lenovo prod
       },
     );
     expect(result.isMatch).toBe(false);
-    expect(result.score).toBe(55);
+    expect(result.score).toBe(30);
   });
 
   it("still downgrades conflicting spec variants sharing the bare MPN (16GB vs 20GB)", async () => {
@@ -120,7 +120,7 @@ describe("verifyProductMatch — alt-SKU / konfigürasyon varyantı (Lenovo prod
       },
     );
     expect(result.isMatch).toBe(false);
-    expect(result.score).toBe(55);
+    expect(result.score).toBe(30);
   });
 
   it("does not screen-size false-positive: '83SC000QTR 15.6\"' is not a sub-SKU", async () => {

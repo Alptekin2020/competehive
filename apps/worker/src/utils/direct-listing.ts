@@ -20,6 +20,7 @@ import {
   isPackagingListing,
   sharesStrongProductCode,
 } from "./competitor-quality";
+import { compareModelIdentity, isModelIdentityMismatch } from "./model-identity";
 import {
   compareTitles,
   hasPackOrSpecConflict,
@@ -108,10 +109,18 @@ export function pickDirectListing(
   ownTitle: string,
   competitorTitle: string,
   candidates: DirectListingCandidate[],
+  ownUrl?: string | null,
 ): DirectListingCandidate | null {
   for (const candidate of candidates) {
     const title = candidate.title?.trim();
     if (!title || !candidate.link) continue;
+    // Model kimliği (başlık + URL slug'ı): farklı kod/numara/boyut ya da
+    // kaynaktaki kodu doğrulamayan sayfa asla bağlanmaz.
+    const identity = compareModelIdentity(
+      { title: ownTitle, url: ownUrl },
+      { title, url: candidate.link },
+    );
+    if (isModelIdentityMismatch(identity) || identity === "unknown") continue;
     if (isPackagingListing(title, ownTitle) || isAccessoryListing(title, ownTitle)) continue;
     if (hasPackOrSpecConflict(ownTitle, title)) continue;
     if (hasPackOrSpecConflict(ownTitle, urlSlugText(candidate.link))) continue;

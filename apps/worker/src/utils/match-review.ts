@@ -45,8 +45,11 @@ export function shouldKeepAsCandidate(match: {
   isMatch: boolean;
   score: number;
   aiUnavailable?: boolean;
+  modelIdentity?: string;
 }): boolean {
   if (match.isMatch || match.aiUnavailable) return false;
+  // Model kodu/numarası kesin farklı aday kullanıcıya hiç sunulmaz.
+  if (match.modelIdentity === "conflict" || match.modelIdentity === "config-variant") return false;
   return match.score >= CANDIDATE_MIN_SCORE && match.score < MIN_MATCH_SCORE;
 }
 

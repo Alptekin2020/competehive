@@ -11,6 +11,7 @@ import {
 } from "../serper";
 import type { SerperShoppingResult } from "../serper";
 import { reevaluateUncertainMatch, verifyProductMatch, MatchResult } from "../matcher";
+import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
 import { Marketplace, Prisma } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { recoverPriceLightweight } from "../utils/recover-price";
@@ -441,7 +442,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             let preMatch: MatchResult;
             try {
               preMatch = await verifyProductMatch(
-                { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+                {
+                  title,
+                  url: product.productUrl || url || undefined,
+                  price: sourcePrice ?? undefined,
+                  marketplace: product.marketplace,
+                },
                 { title: result.title, url: result.link, marketplace: retailer.name },
               );
             } catch {
@@ -545,7 +551,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           // deterministik başlık kuralı artık "aynı ürün" diyorsa aday
           // kullanıcıyı beklemeden kabul edilir (AI'a tekrar sorulmaz).
           const promoted = reevaluateUncertainMatch(
-            { title, price: sourcePrice ?? undefined },
+            { title, url: product.productUrl || url || undefined, price: sourcePrice ?? undefined },
             { title: result.title, url: result.link, price },
             {
               score: known.matchScore,
@@ -619,6 +625,29 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // ki karar hesaplarından (pozisyon/öneri/alarm) çıksınlar.
         // Kullanıcının onayladığı kayıtta indirgeme yapılmaz — son söz kullanıcının.
         const allowDowngrade = isKnown && knownReview !== "confirmed";
+        // (c) Model kimliği çelişkisi (EP3347/90 ↔ EP3341/50, HD9650/90 ↔ /99):
+        // geçmişte kabul edilmiş farklı model 30'a iner ve karar dışı kalır.
+        if (allowDowngrade && !matchResult) {
+          const identity = analyzeModelIdentity(
+            { title, url: product.productUrl || url || undefined },
+            { title: result.title, url: result.link },
+          );
+          if (isModelIdentityMismatch(identity.relation)) {
+            matchResult = {
+              isMatch: true,
+              score: 30,
+              reason: identity.reason,
+              modelIdentity: identity.relation,
+              attributes: {
+                brandMatch: true,
+                modelMatch: false,
+                specMatch: false,
+                categoryMatch: true,
+                details: "Model kodu/numarası çelişkisi",
+              },
+            };
+          }
+        }
         if (allowDowngrade && !matchResult && isAccessoryListing(result.title, title)) {
           matchResult = {
             isMatch: true,
@@ -658,7 +687,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         if (!priceRecovered && !isKnown) {
           try {
             matchResult = await verifyProductMatch(
-              { title, price: sourcePrice ?? undefined, marketplace: product.marketplace },
+              {
+                title,
+                url: product.productUrl || url || undefined,
+                price: sourcePrice ?? undefined,
+                marketplace: product.marketplace,
+              },
               { title: result.title, url: result.link, price, marketplace: retailer.name },
             );
           } catch {
@@ -857,7 +891,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       if (!storedName) continue;
       const storedPrice = candidate.currentPrice ? Number(candidate.currentPrice) : undefined;
       const promoted = reevaluateUncertainMatch(
-        { title, price: sourcePrice ?? undefined },
+        { title, url: product.productUrl || url || undefined, price: sourcePrice ?? undefined },
         { title: storedName, url: candidate.competitorUrl, price: storedPrice },
         {
           score: candidate.matchScore,

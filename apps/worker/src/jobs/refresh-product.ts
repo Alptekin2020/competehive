@@ -276,6 +276,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
             const preMatch = await verifyProductMatch(
               {
                 title: product.productName,
+                url: product.productUrl,
                 price: sourcePrice ?? undefined,
                 marketplace: product.marketplace,
               },
@@ -387,6 +388,7 @@ export async function processRefreshJob(job: Job<RefreshJobData>) {
           matchResult = await verifyProductMatch(
             {
               title: product.productName,
+              url: product.productUrl,
               price: sourcePrice ?? undefined,
               marketplace: product.marketplace,
             },

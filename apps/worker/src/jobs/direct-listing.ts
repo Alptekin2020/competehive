@@ -101,6 +101,7 @@ export async function resolveDirectListings(
           // Kendi ilanımız rakip olamaz (slug farklı olsa bile aynı ürün id'si).
           .filter((r) => !isSameListing(r.link, ownUrl))
           .map((r) => ({ title: cleanProductTitle(r.title), link: r.link })),
+        ownUrl,
       );
 
       if (!picked) {
