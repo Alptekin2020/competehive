@@ -627,6 +627,9 @@ SKOR REHBERİ:
       !isAccessoryListing(candidate.title, sourceProduct.title) &&
       !hasConflictingSpecs(sourceProduct.title, candidate.title) &&
       !hasConflictingCountDescriptors(sourceProduct.title, candidate.title) &&
+      // Arama başlığı kesik olabilir: paket/adet/ölçü URL yolunda da aranır
+      // (canlı: "...Dolgulu Sütlü ..." kartı ".../100-gr-x-2-adet" ilanıydı, 70 aldı).
+      !hasPackOrSpecConflict(sourceProduct.title, candidateIdentityText) &&
       // Renk/ton varyantı (Oral-B Vitality Pro Lila ↔ Siyah) yükseltilmez.
       !hasColourOrShadeConflict(sourceProduct.title, candidateIdentityText)
     ) {
