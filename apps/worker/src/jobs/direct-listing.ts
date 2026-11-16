@@ -65,6 +65,10 @@ function sellerOf(c: { competitorUrl: string; matchAttributes: unknown }): strin
  * kuyruğa alınır. Aynı sayfa zaten aynı satıcının ayrı bir rakibiyse Google
  * satırı mükerrer olduğu için silinir. Hata turu bozmaz; yalnızca loglanır.
  */
+function samePageLink(a: string, b: string): boolean {
+  return competitorUrlKey(a) === competitorUrlKey(b) || isSameListing(a, b);
+}
+
 export async function resolveDirectListings(
   productId: string,
   ownTitle: string,
@@ -111,6 +115,7 @@ export async function resolveDirectListings(
 
   const urlKeyToId = new Map(competitors.map((c) => [competitorUrlKey(c.competitorUrl), c.id]));
   const hourBucket = Math.floor(now.getTime() / 3_600_000);
+  const claimedThisRound = new Set<string>();
 
   const markLookedUp = (target: (typeof targets)[number]) =>
     prisma.competitor.update({
@@ -133,18 +138,47 @@ export async function resolveDirectListings(
       const results = await searchMarketplacePages(query, [site.domain], {
         storeDomains: site.kind === "store" ? [site.domain] : [],
       });
-      const picked = pickDirectListing(
-        cleanedOwnTitle,
-        competitorTitle,
-        results
-          // Kendi ilanımız rakip olamaz (slug farklı olsa bile aynı ürün id'si).
-          .filter((r) => !isSameListing(r.link, ownUrl))
-          // Doğrulamada reddedilmiş ya da kullanıcının sildiği sayfalar bir daha önerilmez.
-          .filter((r) => !rejected.has(competitorUrlKey(r.link)))
-          .filter((r) => !userRejected.has(competitorUrlKey(r.link)))
-          .map((r) => ({ title: cleanProductTitle(r.title), link: r.link })),
-        ownUrl,
-      );
+      let pool = results
+        // Kendi ilanımız rakip olamaz (slug farklı olsa bile aynı ürün id'si).
+        .filter((r) => !isSameListing(r.link, ownUrl))
+        // Doğrulamada reddedilmiş ya da kullanıcının sildiği sayfalar bir daha önerilmez.
+        .filter((r) => !rejected.has(competitorUrlKey(r.link)))
+        .filter((r) => !userRejected.has(competitorUrlKey(r.link)))
+        // Bu turda başka bir kart için aday seçilmiş sayfa ikinci kez seçilmez
+        // (doğrulama ikincisini zaten bırakırdı ve kart 7 gün beklerdi).
+        .filter((r) => !claimedThisRound.has(competitorUrlKey(r.link)))
+        .map((r) => ({ title: cleanProductTitle(r.title), link: r.link }));
+      let picked = pickDirectListing(cleanedOwnTitle, competitorTitle, pool, ownUrl);
+      // Seçilen sayfa başka bir satırın (farklı satıcı / onaylı) sayfasıysa ve
+      // birleştirilemiyorsa, aynı ürünün diğer ilanları denenir: pazaryerinde
+      // aynı ürünü birden çok satıcı satar (prod: HD9650/90 kartları hep
+      // "skip-different-seller" ile Google'da kalıyordu).
+      let skipped: { existingId: string; decision: string } | null = null;
+      while (picked) {
+        const existingId = urlKeyToId.get(competitorUrlKey(picked.link));
+        if (!existingId || existingId === target.id) break;
+        const existing = competitors.find((c) => c.id === existingId);
+        const decision = decideDirectMerge({
+          targetConfirmed: readMatchReview(target.matchAttributes) === "confirmed",
+          targetSeller: sellerName,
+          existingSeller: existing ? sellerOf(existing) : null,
+          existingTrusted: existing ? isTrusted(existing) : false,
+        });
+        if (decision === "merge" && existing) break;
+        skipped = { existingId, decision };
+        const taken = picked.link;
+        pool = pool.filter((r) => !samePageLink(r.link, taken));
+        picked = pickDirectListing(cleanedOwnTitle, competitorTitle, pool, ownUrl);
+      }
+
+      if (!picked && skipped) {
+        logger.info(
+          { productId, competitorId: target.id, ...skipped },
+          "Google-hosted competitor kept: direct page belongs to another row",
+        );
+        await markLookedUp(target);
+        continue;
+      }
 
       if (!picked) {
         // Teşhis: "N arandı, 0 bağlandı" turlarında hangi sayfaların neden
@@ -175,10 +209,7 @@ export async function resolveDirectListings(
           existingTrusted: existing ? isTrusted(existing) : false,
         });
         if (decision !== "merge" || !existing) {
-          logger.info(
-            { productId, competitorId: target.id, existingId, decision },
-            "Google-hosted competitor kept: direct page belongs to another row",
-          );
+          // Döngü bu durumu zaten eler; savunma amaçlı.
           await markLookedUp(target);
           continue;
         }
@@ -215,6 +246,7 @@ export async function resolveDirectListings(
           ) as Prisma.JsonObject,
         },
       });
+      claimedThisRound.add(pickedKey);
       outcome.linked++;
       logger.info(
         { productId, competitorId: target.id, site: site.domain, url: picked.link },
