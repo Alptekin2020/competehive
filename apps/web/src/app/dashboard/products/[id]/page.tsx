@@ -15,7 +15,6 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import {
-  MIN_MATCH_SCORE,
   THIN_MARGIN_PCT,
   assessCompetitorList,
   computeMargin,
@@ -25,14 +24,16 @@ import {
 } from "@competehive/shared";
 import { formatPctTR, parseTrNumber } from "@/lib/format";
 import RefreshButton from "@/components/RefreshButton";
-import { MarketplaceBadge } from "@/components/ui/MarketplaceBadge";
 import { storeDisplayName } from "@/lib/marketplaces";
 import InfoTip from "@/components/ui/InfoTip";
+import { DORMANT_COMPETITOR_DAYS } from "@/lib/competitor-source";
 import {
-  DORMANT_COMPETITOR_DAYS,
-  isDormantCompetitor,
-  resolveCompetitorSource,
-} from "@/lib/competitor-source";
+  countCompetitors,
+  currentCompetitors,
+  decisionCandidates,
+  groupCompetitors,
+} from "@/lib/competitor-groups";
+import { CollapsibleGroup, CompetitorCard } from "@/components/products/CompetitorCards";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -64,6 +65,8 @@ interface PriceHistoryEntry {
   // Sunucu sınıflandırır (lib/price-history.ts): true = ürünün kendi fiyatı,
   // false = rakip fiyatı. Satıcı adından tahmin edilmez.
   isOwn: boolean;
+  // Onay bekleyen veya uykudaki rakibin satırı: grafikte çizilmez.
+  chartHidden?: boolean;
 }
 
 interface CompetitorEntry {
@@ -106,7 +109,6 @@ interface ProductData {
 }
 
 type CompetitorSort = "lowest" | "highest" | "closest";
-type CompetitorFilter = "all" | "priced" | "suspicious";
 type TimeRange = "7d" | "30d" | "all";
 
 // Marj bandı → rozet etiketi + renkleri. margin.ts'teki MarginBand ile senkron.
@@ -168,6 +170,8 @@ function prepareChartData(history: PriceHistoryEntry[]) {
 
   // history sunucudan scrapedAt artan sırada gelir: aynı gün içinde son kayıt kazanır.
   for (const entry of history) {
+    // Onay bekleyen/uykudaki rakiplerin satırları çizgilere ve ortalamaya girmez.
+    if (entry.chartHidden) continue;
     const price = Number(entry.price);
     if (!Number.isFinite(price)) continue;
     const entryDate = new Date(entry.scrapedAt);
@@ -226,41 +230,6 @@ function safePrice(value: string | null): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function MatchScoreBadge({ score }: { score: number | null }) {
-  if (score === null || score === undefined) return null;
-
-  let colorClass: string;
-
-  if (score >= 90) {
-    colorClass = "bg-green-500/10 text-green-400 border-green-500/30";
-  } else if (score >= MIN_MATCH_SCORE) {
-    colorClass = "bg-amber-500/10 text-amber-400 border-amber-500/30";
-  } else if (score >= 40) {
-    colorClass = "bg-orange-500/10 text-orange-400 border-orange-500/30";
-  } else {
-    colorClass = "bg-red-500/10 text-red-400 border-red-500/30";
-  }
-
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${colorClass}`}
-      title={`Bu ilanın sizin ürününüzle aynı ürün olma ihtimali: %${score}. %${MIN_MATCH_SCORE} altındaki rakipler hesaplara girmez.`}
-    >
-      Eşleşme %{score}
-    </span>
-  );
-}
-
-// Rakip adı boş/boşluk geldiğinde satır tamamen isimsiz (ve tıklanamaz
-// görünümde) kalmasın — en azından alan adı gösterilir.
-function hostnameOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
 function timeAgo(dateStr: string): string {
   const now = new Date();
   const date = new Date(dateStr);
@@ -283,9 +252,11 @@ export default function ProductDetailPage() {
   const [compareStatus, setCompareStatus] = useState<string | null>(null);
   const [compareError, setCompareError] = useState<string | null>(null);
   const [competitorSort, setCompetitorSort] = useState<CompetitorSort>("lowest");
-  const [competitorFilter, setCompetitorFilter] = useState<CompetitorFilter>("all");
   // Uzun süredir fiyatı alınamayan otomatik kayıtlar varsayılan olarak gizlenir.
   const [showDormant, setShowDormant] = useState(false);
+  // "Diğer rakipler" ve "Onay bekleyen olası eşleşmeler" grupları varsayılan kapalı.
+  const [showOther, setShowOther] = useState(false);
+  const [showPending, setShowPending] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("30d");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -457,7 +428,8 @@ export default function ProductDetailPage() {
     // datacenter-IP engellerine takıldığı için terk edildi. Worker, iş bitince
     // refreshCompletedAt/refreshError yazar — onu yoklayarak sonucu gösteririz.
     const startedAtMs = Date.now();
-    const competitorsBefore = product.competitors?.length ?? 0;
+    // Onay bekleyen olası eşleşmeler "yeni rakip" sayılmaz.
+    const competitorsBefore = currentCompetitors(product.competitors ?? []).length;
 
     try {
       const res = await fetch(`/api/products/${product.id}/search-competitors`, {
@@ -487,7 +459,7 @@ export default function ProductDetailPage() {
           : 0;
         if (completedAtMs > startedAtMs) {
           setProduct(fresh);
-          const competitorsAfter = fresh.competitors?.length ?? 0;
+          const competitorsAfter = currentCompetitors(fresh.competitors ?? []).length;
           if (fresh.refreshStatus === "failed" && fresh.refreshError) {
             setCompareStatus(null);
             setCompareError(`Tarama hatası: ${fresh.refreshError}`);
@@ -739,7 +711,9 @@ export default function ProductDetailPage() {
   );
   // Satıcı bazlı çizgiler yalnızca rakipler içindir; kendi fiyat "Benim Fiyatım" çizgisidir.
   const retailers = [
-    ...new Set(filteredHistory.filter((h) => !h.isOwn).map((h) => competitorSeriesName(h))),
+    ...new Set(
+      filteredHistory.filter((h) => !h.isOwn && !h.chartHidden).map((h) => competitorSeriesName(h)),
+    ),
   ];
 
   // Merkezi kalite politikası (packages/shared/competitor-quality): fiyat var mı,
@@ -750,18 +724,17 @@ export default function ProductDetailPage() {
   // assessCompetitorList ayrıca akran-medyan aykırılığını uygular: 14 rakip
   // ₺7.2K+ bandındayken tek başına ₺3.000 gösteren ilan (peer-outlier) karar
   // hesaplarından düşer — "önerilen fiyat ₺2.999" faciası bir daha yaşanmaz.
-  const assessmentList = assessCompetitorList(
-    competitors.map((c) => ({
-      price: safePrice(c.currentPrice),
-      matchScore: c.matchScore ?? null,
-      lastScrapedAt: c.lastScrapedAt,
-    })),
-    { ownPrice, now },
-  );
+  // Onay bekleyen olası eşleşmeler (review = "pending") bu katmanda elenir:
+  // kullanıcı onaylayana kadar pozisyon/öneri/akran medyanına girmezler.
+  const decision = decisionCandidates(competitors);
+  const assessmentList = assessCompetitorList(decision.inputs, { ownPrice, now });
   const competitorAssessments = new Map<string, CompetitorAssessment>();
-  competitors.forEach((c, i) => {
+  decision.competitors.forEach((c, i) => {
     competitorAssessments.set(c.id, assessmentList[i]);
   });
+  // Sayaçlar yalnızca güncel kayıtlara bakar: onay bekleyen ve uykudaki hariç.
+  const counts = countCompetitors(competitors, now);
+  const liveCompetitors = currentCompetitors(competitors, now);
   const validCompetitors = competitors.filter(
     (c) => competitorAssessments.get(c.id)?.usable === true,
   );
@@ -781,7 +754,7 @@ export default function ProductDetailPage() {
   const scanSettled = product.refreshStatus === "completed" || product.refreshStatus === "failed";
   const positionBadge: { text: string; tone: "amber" | "rose" } | null =
     validCompetitors.length === 0
-      ? competitors.length === 0
+      ? counts.current === 0 && counts.pending === 0
         ? scanSettled
           ? { text: "Rakip bulunamadı", tone: "rose" }
           : { text: "Rakip verisi bekleniyor", tone: "amber" }
@@ -818,7 +791,7 @@ export default function ProductDetailPage() {
 
   // Şüpheli = düşük AI skoru VEYA fiyat bandı dışı VEYA akran-medyan aykırısı
   // (skorsuz legacy koliler dahil).
-  const suspiciousCompetitors = competitors.filter((c) => {
+  const suspiciousCompetitors = liveCompetitors.filter((c) => {
     const issues = competitorAssessments.get(c.id)?.issues ?? [];
     return (
       issues.includes("low-score") ||
@@ -826,10 +799,9 @@ export default function ProductDetailPage() {
       issues.includes("peer-outlier")
     );
   });
-  const staleCompetitors = competitors.filter((c) =>
+  const staleCompetitors = liveCompetitors.filter((c) =>
     (competitorAssessments.get(c.id)?.issues ?? []).includes("stale"),
   );
-  const hasSuspiciousSignal = suspiciousCompetitors.length > 0;
   const freshnessBaseDate = product.refreshCompletedAt || product.lastScrapedAt;
   const freshnessHours = freshnessBaseDate
     ? (now.getTime() - new Date(freshnessBaseDate).getTime()) / (1000 * 60 * 60)
@@ -888,16 +860,13 @@ export default function ProductDetailPage() {
 
   // Uykudaki (30+ gündür güncellenemeyen) otomatik kayıtlar güncel rakip
   // sayılmaz: sayaçlar ve güven etiketi yalnızca yaşayan kayıtlara bakar.
-  const dormantCount = competitors.filter((c) => isDormantCompetitor(c)).length;
-  const currentCompetitorCount = competitors.length - dormantCount;
+  const currentCompetitorCount = counts.current;
   const qualityRatio =
     currentCompetitorCount > 0 ? validCompetitors.length / currentCompetitorCount : 0;
   const staleRatio =
-    currentCompetitorCount > 0
-      ? Math.max(0, staleCompetitors.length - dormantCount) / currentCompetitorCount
-      : 0;
+    currentCompetitorCount > 0 ? staleCompetitors.length / currentCompetitorCount : 0;
   const qualityLabel =
-    competitors.length === 0
+    currentCompetitorCount === 0
       ? scanSettled
         ? "Rakip yok"
         : "Rakip verisi bekleniyor"
@@ -909,36 +878,23 @@ export default function ProductDetailPage() {
             ? "Temkinli değerlendir"
             : "Düşük güven";
 
-  const pendingReviewCount = competitors.filter((c) => c.review === "pending").length;
+  const sortedCompetitors = [...competitors].sort((a, b) => {
+    const aPrice = safePrice(a.currentPrice);
+    const bPrice = safePrice(b.currentPrice);
+    if (aPrice === null && bPrice === null) return 0;
+    if (aPrice === null) return 1;
+    if (bPrice === null) return -1;
 
-  const filteredCompetitors = competitors
-    .filter((competitor) => showDormant || !isDormantCompetitor(competitor))
-    .filter((competitor) => {
-      if (competitorFilter === "priced") return safePrice(competitor.currentPrice) !== null;
-      if (competitorFilter === "suspicious") {
-        const issues = competitorAssessments.get(competitor.id)?.issues ?? [];
-        return (
-          issues.includes("low-score") ||
-          issues.includes("out-of-band") ||
-          issues.includes("peer-outlier")
-        );
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      const aPrice = safePrice(a.currentPrice);
-      const bPrice = safePrice(b.currentPrice);
-      if (aPrice === null && bPrice === null) return 0;
-      if (aPrice === null) return 1;
-      if (bPrice === null) return -1;
-
-      if (competitorSort === "highest") return bPrice - aPrice;
-      if (competitorSort === "closest") {
-        const base = ownPrice ?? aPrice;
-        return Math.abs(aPrice - base) - Math.abs(bPrice - base);
-      }
-      return aPrice - bPrice;
-    });
+    if (competitorSort === "highest") return bPrice - aPrice;
+    if (competitorSort === "closest") {
+      const base = ownPrice ?? aPrice;
+      return Math.abs(aPrice - base) - Math.abs(bPrice - base);
+    }
+    return aPrice - bPrice;
+  });
+  const groups = groupCompetitors(sortedCompetitors, competitorAssessments, { showDormant, now });
+  const dormantCount = groups.dormantCount;
+  const pendingReviewCount = groups.pending.length;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -1133,7 +1089,11 @@ export default function ProductDetailPage() {
               <p className="text-sm text-zinc-400">Rakip verisi bekleniyor — ilk tarama sürüyor</p>
             )
           ) : (
-            <p className="text-sm text-rose-400">Geçerli rakip yok — eşleşmeler düşük güvenli</p>
+            <p className="text-sm text-rose-400">
+              {counts.current === 0 && counts.pending > 0
+                ? `Henüz karara uygun rakip yok — ${counts.pending} olası eşleşme onayınızı bekliyor`
+                : "Geçerli rakip yok — eşleşmeler düşük güvenli"}
+            </p>
           )}
         </div>
       )}
@@ -1230,7 +1190,7 @@ export default function ProductDetailPage() {
                 Şüpheli eşleşme
                 <InfoTip
                   align="right"
-                  text="Eşleşme güveni düşük, fiyatı sizinkiyle kıyaslanamayacak kadar farklı veya piyasa medyanından aşırı kopuk (olası sahte/yem ilan) kayıtlar. Listede görünür ama hesaplamalara girmez. 'Şüpheli olanlar' filtresiyle inceleyebilirsiniz."
+                  text="Eşleşme güveni düşük, fiyatı sizinkiyle kıyaslanamayacak kadar farklı veya piyasa medyanından aşırı kopuk (olası sahte/yem ilan) kayıtlar. Hesaplamalara girmez; 'Diğer rakipler' grubunda inceleyebilirsiniz. Onay bekleyen olası eşleşmeler bu sayıya dahil değildir."
                 />
               </span>
               <span className="text-white">{suspiciousCompetitors.length}</span>
@@ -1495,10 +1455,11 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      {/* Chart + Competitors Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+      {/* Grafik ve rakip listesi alt alta, tam genişlikte: rakip başlıkları dar
+          bir sütunda kelime kelime kırılıyordu. */}
+      <div className="space-y-4 sm:space-y-6">
         {/* Price Chart Section */}
-        <div className="lg:col-span-2">
+        <div>
           {priceHistory.length === 0 ? (
             <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-8 text-center">
               <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto mb-4">
@@ -1718,8 +1679,8 @@ export default function ProductDetailPage() {
               </div>
             </div>
           ) : (
-            <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-6">
-              <div className="mb-4">
+            <div className="bg-[#111113] border border-[#1F1F23] rounded-xl p-4 sm:p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-base font-semibold text-white inline-flex items-center gap-2 flex-wrap">
                   Rakip Fiyatları
                   <span className="text-gray-500 font-normal text-sm">
@@ -1727,345 +1688,141 @@ export default function ProductDetailPage() {
                   </span>
                   <InfoTip
                     align="left"
-                    text="🎯 rozeti yapay zekânın eşleşme güvenini (0–100) gösterir. 'Eski' = fiyat 72 saatten önce alındı; 'Bant dışı' = fiyat sizinkiyle kıyaslanamayacak kadar farklı. Bu kayıtlar listede görünür ama hesaplamalara girmez."
+                    text="Numaralı liste karara uygun rakiplerdir: pozisyon, öneri ve uyarılar yalnızca bunlarla hesaplanır. Eşleşme güveni düşük, fiyatı bant dışı veya eski kayıtlar 'Diğer rakipler'de; yapay zekânın emin olamadığı ilanlar 'Onay bekleyen olası eşleşmeler'de durur ve siz onaylayana kadar hiçbir hesaba girmez."
                   />
                 </h2>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <select
-                    value={competitorSort}
-                    onChange={(e) => setCompetitorSort(e.target.value as CompetitorSort)}
-                    className="bg-[#0B0B0D] border border-[#1F1F23] rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
-                  >
-                    <option value="lowest">En düşük fiyat</option>
-                    <option value="highest">En yüksek fiyat</option>
-                    <option value="closest">Fiyatıma en yakın</option>
-                  </select>
-                  {[
-                    { key: "all", label: "Tümü", show: true },
-                    { key: "priced", label: "Fiyatı olanlar", show: true },
-                    { key: "suspicious", label: "Şüpheli olanlar", show: hasSuspiciousSignal },
-                  ]
-                    .filter((f) => f.show)
-                    .map((filter) => (
-                      <button
-                        key={filter.key}
-                        onClick={() => setCompetitorFilter(filter.key as CompetitorFilter)}
-                        className={`px-2.5 py-1 rounded-full text-xs border transition ${
-                          competitorFilter === filter.key
-                            ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
-                            : "text-gray-400 border-[#2B2B30] hover:text-white"
-                        }`}
-                      >
-                        {filter.label}
-                      </button>
-                    ))}
-                </div>
+                <select
+                  value={competitorSort}
+                  onChange={(e) => setCompetitorSort(e.target.value as CompetitorSort)}
+                  aria-label="Rakip sıralaması"
+                  className="bg-[#0B0B0D] border border-[#1F1F23] rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                >
+                  <option value="lowest">En düşük fiyat</option>
+                  <option value="highest">En yüksek fiyat</option>
+                  <option value="closest">Fiyatıma en yakın</option>
+                </select>
               </div>
-              {pendingReviewCount > 0 && (
-                <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
-                  <p className="text-sm font-medium text-amber-200">
+              {pendingReviewCount > 0 && !showPending && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+                  <p className="text-sm text-amber-200">
                     {pendingReviewCount} olası eşleşme onayınızı bekliyor
-                  </p>
-                  <p className="text-xs text-amber-200/70 mt-0.5">
-                    Yapay zekâ bu ilanların aynı ürün olduğundan emin olamadı. Siz ürününüzü daha
-                    iyi tanırsınız: &quot;Bu aynı ürün&quot; derseniz fiyat karşılaştırmasına ve
-                    uyarılara dahil edilir, &quot;değil&quot; derseniz bir daha gösterilmez.
-                  </p>
-                  {competitorFilter !== "suspicious" && (
-                    <button
-                      type="button"
-                      onClick={() => setCompetitorFilter("suspicious")}
-                      className="mt-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-2"
-                    >
-                      Onay bekleyenleri göster
-                    </button>
-                  )}
-                </div>
-              )}
-              {dormantCount > 0 && (
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1F1F23] bg-[#0A0A0B] px-3 py-2">
-                  <p className="text-xs text-gray-400">
-                    {DORMANT_COMPETITOR_DAYS} günden uzun süredir fiyatı güncellenemeyen{" "}
-                    {dormantCount} eski kayıt {showDormant ? "gösteriliyor" : "gizlendi"}. Bu
-                    kayıtlar hesaplara girmez.
                   </p>
                   <button
                     type="button"
-                    onClick={() => setShowDormant((v) => !v)}
+                    onClick={() => {
+                      setShowPending(true);
+                      document
+                        .getElementById("pending-competitors")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                    className="text-xs font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-2"
+                  >
+                    İncele
+                  </button>
+                </div>
+              )}
+              <div className="space-y-2">
+                {groups.trusted.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-[#2A2A2F] p-5 text-center">
+                    <p className="text-sm text-gray-400">
+                      Karara uygun rakip yok. Aşağıdaki gruplarda incelenecek kayıtlar olabilir.
+                    </p>
+                  </div>
+                ) : (
+                  groups.trusted.map((competitor, index) => (
+                    <CompetitorCard
+                      key={competitor.id}
+                      competitor={competitor}
+                      variant="trusted"
+                      index={index + 1}
+                      ownPrice={ownPrice}
+                      currency={product.currency}
+                      isCheapest={cheapestCompetitor?.id === competitor.id}
+                      issues={competitorAssessments.get(competitor.id)?.issues ?? []}
+                      onReject={(competitorId) => {
+                        setCompetitorDeleteError(null);
+                        setCompetitorDeleteId(competitorId);
+                      }}
+                      now={now}
+                    />
+                  ))
+                )}
+              </div>
+
+              <CollapsibleGroup
+                title="Diğer rakipler"
+                count={groups.other.length}
+                description="Eşleşme güveni düşük, fiyatı sizin fiyatınızla kıyaslanamayacak kadar farklı, piyasa medyanından kopuk veya fiyatı 72 saatten eski kayıtlar. Listede durur ama hiçbir hesaba girmez."
+                open={showOther}
+                onToggle={() => setShowOther((v) => !v)}
+              >
+                {groups.other.map((competitor) => (
+                  <CompetitorCard
+                    key={competitor.id}
+                    competitor={competitor}
+                    variant="other"
+                    ownPrice={ownPrice}
+                    currency={product.currency}
+                    issues={competitorAssessments.get(competitor.id)?.issues ?? []}
+                    confirming={competitorConfirmId === competitor.id}
+                    confirmDisabled={competitorConfirmId !== null}
+                    onConfirm={handleConfirmCompetitor}
+                    onReject={(competitorId) => {
+                      setCompetitorDeleteError(null);
+                      setCompetitorDeleteId(competitorId);
+                    }}
+                    now={now}
+                  />
+                ))}
+              </CollapsibleGroup>
+
+              <CollapsibleGroup
+                id="pending-competitors"
+                title="Onay bekleyen olası eşleşmeler"
+                count={groups.pending.length}
+                description="Yapay zekâ bu ilanların sizin ürününüzle aynı olduğundan emin olamadı. Siz onaylayana kadar fiyat karşılaştırmasına, grafiğe ve uyarılara dahil edilmezler. 'Bu aynı ürün' derseniz hesaplara girer; 'Aynı ürün değil' derseniz bir daha gösterilmez."
+                open={showPending}
+                onToggle={() => setShowPending((v) => !v)}
+              >
+                {groups.pending.map((competitor) => (
+                  <CompetitorCard
+                    key={competitor.id}
+                    competitor={competitor}
+                    variant="pending"
+                    ownPrice={ownPrice}
+                    currency={product.currency}
+                    confirming={competitorConfirmId === competitor.id}
+                    confirmDisabled={competitorConfirmId !== null}
+                    onConfirm={handleConfirmCompetitor}
+                    onReject={(competitorId) => {
+                      setCompetitorDeleteError(null);
+                      setCompetitorDeleteId(competitorId);
+                    }}
+                    now={now}
+                  />
+                ))}
+              </CollapsibleGroup>
+
+              {dormantCount > 0 && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1F1F23] bg-[#0A0A0B] px-3 py-2">
+                  <p className="text-xs text-gray-400">
+                    {DORMANT_COMPETITOR_DAYS} günden uzun süredir fiyatı güncellenemeyen{" "}
+                    {dormantCount} eski kayıt{" "}
+                    {showDormant ? "'Diğer rakipler' içinde gösteriliyor" : "gizlendi"}. Bu kayıtlar
+                    hesaplara girmez.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDormant((v) => !v);
+                      setShowOther(true);
+                    }}
                     className="text-xs font-semibold text-gray-300 hover:text-white underline underline-offset-2"
                   >
                     {showDormant ? "Gizle" : "Göster"}
                   </button>
                 </div>
               )}
-              <div className="space-y-3">
-                {filteredCompetitors.length === 0 && (
-                  <div className="rounded-lg border border-dashed border-[#2A2A2F] p-5 text-center">
-                    <p className="text-sm text-gray-400">
-                      Seçili filtre için görüntülenecek rakip bulunamadı.
-                    </p>
-                  </div>
-                )}
-                {filteredCompetitors.map((competitor, index) => {
-                  const cPrice = competitor.currentPrice ? Number(competitor.currentPrice) : null;
-                  const diff = cPrice && ownPrice ? ((cPrice - ownPrice) / ownPrice) * 100 : null;
-                  const isCheapest = cheapestCompetitor?.id === competitor.id;
-                  const isCheaperThanMe = cPrice !== null && ownPrice !== null && cPrice < ownPrice;
-                  const isExpensiveThanMe =
-                    cPrice !== null && ownPrice !== null && cPrice > ownPrice;
-
-                  return (
-                    <div
-                      key={competitor.id}
-                      className={`flex items-start gap-3 p-3 rounded-lg bg-[#0A0A0B] border transition-colors ${
-                        isCheapest
-                          ? "border-emerald-500/40"
-                          : isCheaperThanMe
-                            ? "border-green-500/25"
-                            : isExpensiveThanMe
-                              ? "border-red-500/25"
-                              : "border-[#1F1F23] hover:border-[#2F2F33]"
-                      }`}
-                    >
-                      <span className="text-gray-500 text-xs w-5 text-center mt-0.5">
-                        {index + 1}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        {/* Rozetler başlığın ÜSTÜNDE ayrı satırda durur: eski
-                            düzende rozet grubu + fiyat bloğu (ikisi de
-                            flex-shrink-0) dar panelde satırın tamamını kaplayıp
-                            flex-1 başlığı sıfır genişliğe eziyor, rakip adı
-                            hiç görünmüyordu. */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {(() => {
-                            // Rozet gerçek kaynağı gösterir: bilinen pazaryeri,
-                            // Google bağlantısında fiyatı veren satıcı, aksi halde
-                            // alan adı. "google.com" hiçbir zaman satıcı değildir.
-                            const source = resolveCompetitorSource(competitor);
-                            return (
-                              <>
-                                <MarketplaceBadge
-                                  marketplace={source.marketplace}
-                                  overrideName={source.overrideName}
-                                  overrideColor={source.overrideColor}
-                                />
-                                {source.viaGoogle && (
-                                  <span
-                                    className="text-[11px] text-gray-400 bg-white/5 border border-[#2B2B30] px-1.5 py-0.5 rounded"
-                                    title="Bu fiyat Google Alışveriş'ten alındı; bağlantı Google'ın ürün sayfasını açar, satıcıya oradan gidebilirsiniz."
-                                  >
-                                    Google Alışveriş üzerinden
-                                  </span>
-                                )}
-                              </>
-                            );
-                          })()}
-                          <MatchScoreBadge score={competitor.matchScore} />
-                          {competitor.review === "pending" && (
-                            <span
-                              className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded"
-                              title="Yapay zekâ emin olamadı. Siz onaylayana kadar hesaplara ve uyarılara dahil edilmez."
-                            >
-                              Onayınızı bekliyor
-                            </span>
-                          )}
-                          {competitor.review === "confirmed" && (
-                            <span
-                              className="text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded"
-                              title="Bu eşleşmeyi siz onayladınız"
-                            >
-                              Sizin onayınız
-                            </span>
-                          )}
-                          {competitor.inStock === false && (
-                            <span
-                              className="text-[11px] text-pink-300 bg-pink-500/10 border border-pink-500/25 px-1.5 py-0.5 rounded"
-                              title="Son taramada bu rakibin stoğu yoktu — talep size kayabilir"
-                            >
-                              Stok yok
-                            </span>
-                          )}
-                          {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
-                            "out-of-band",
-                          ) && (
-                            <span
-                              className="text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 px-1.5 py-0.5 rounded"
-                              title="Fiyatı sizin fiyatınızın 0.3x–3x bandının dışında — büyük olasılıkla farklı ürün; hesaplara dahil edilmez"
-                            >
-                              Bant dışı
-                            </span>
-                          )}
-                          {(competitorAssessments.get(competitor.id)?.issues ?? []).includes(
-                            "peer-outlier",
-                          ) && (
-                            <span
-                              className="text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/25 px-1.5 py-0.5 rounded"
-                              title="Fiyatı diğer rakiplerin medyanından aşırı kopuk — büyük olasılıkla sahte/yem ilan veya farklı ürün; pozisyon, öneri ve alarm hesaplarına dahil edilmez"
-                            >
-                              Piyasa dışı
-                            </span>
-                          )}
-                        </div>
-                        <a
-                          href={competitor.competitorUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm text-gray-300 hover:text-white transition-colors block mt-1 line-clamp-2 break-words"
-                          title={
-                            competitor.competitorName?.trim() ||
-                            competitor.seller ||
-                            hostnameOf(competitor.competitorUrl)
-                          }
-                        >
-                          {competitor.competitorName?.trim() ||
-                            competitor.seller ||
-                            hostnameOf(competitor.competitorUrl)}
-                        </a>
-                        {competitor.matchReason && (
-                          <p
-                            className="text-xs text-gray-500 mt-0.5 truncate"
-                            title={competitor.matchReason}
-                          >
-                            {competitor.matchReason}
-                          </p>
-                        )}
-                        {/* Eşleşmesi kesin olmayan rakiplerde kullanıcı hatalı
-                            eşleşmeyi tek tıkla ayıklayabilsin. */}
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                          {competitor.matchScore !== null &&
-                            competitor.matchScore < MIN_MATCH_SCORE && (
-                              <button
-                                type="button"
-                                disabled={competitorConfirmId !== null}
-                                onClick={() => handleConfirmCompetitor(competitor.id)}
-                                className="text-xs font-semibold text-emerald-300 hover:text-emerald-200 underline underline-offset-2 transition disabled:opacity-50"
-                              >
-                                {competitorConfirmId === competitor.id
-                                  ? "Kaydediliyor…"
-                                  : "Bu aynı ürün"}
-                              </button>
-                            )}
-                          {(competitor.matchScore === null || competitor.matchScore < 90) && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCompetitorDeleteError(null);
-                                setCompetitorDeleteId(competitor.id);
-                              }}
-                              className="text-xs font-medium text-gray-400 hover:text-rose-300 underline underline-offset-2 decoration-dotted transition"
-                            >
-                              Bu aynı ürün değil
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        {cPrice ? (
-                          <>
-                            <p className="text-sm font-bold text-white">
-                              {formatPrice(cPrice, product.currency)}
-                            </p>
-                            {isCheapest && (
-                              <p className="text-[11px] text-emerald-300">En düşük rakip</p>
-                            )}
-                            {diff !== null && (
-                              <p
-                                className={`text-xs ${
-                                  diff < 0
-                                    ? "text-green-400"
-                                    : diff > 0
-                                      ? "text-red-400"
-                                      : "text-gray-400"
-                                }`}
-                              >
-                                {formatPctTR(diff, { sign: true })}
-                              </p>
-                            )}
-                            {competitor.lastScrapedAt && (
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <p className="text-[11px] text-gray-500">
-                                  {timeAgo(competitor.lastScrapedAt)}
-                                </p>
-                                {(() => {
-                                  const hours =
-                                    (Date.now() - new Date(competitor.lastScrapedAt).getTime()) /
-                                    (1000 * 60 * 60);
-                                  if (hours > 72)
-                                    return (
-                                      <span
-                                        className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded"
-                                        title="Bu fiyat 72+ saat önce alındı, güncel olmayabilir"
-                                      >
-                                        Eski
-                                      </span>
-                                    );
-                                  if (hours > 24)
-                                    return (
-                                      <span
-                                        className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded"
-                                        title="Bu fiyat 24+ saat önce alındı"
-                                      >
-                                        {Math.floor(hours)}sa
-                                      </span>
-                                    );
-                                  return null;
-                                })()}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-sm text-gray-500">Fiyat yok</p>
-                        )}
-                      </div>
-                      <a
-                        href={competitor.competitorUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1.5 text-gray-500 hover:text-amber-400 rounded-lg hover:bg-amber-500/10 transition flex-shrink-0"
-                        title="Rakip ürüne git"
-                        aria-label="Rakip ürüne git"
-                      >
-                        <svg
-                          className="w-3.5 h-3.5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCompetitorDeleteError(null);
-                          setCompetitorDeleteId(competitor.id);
-                        }}
-                        className="p-1.5 text-gray-600 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition flex-shrink-0"
-                        title="Bu aynı ürün değil — rakibi listeden kaldır"
-                        aria-label="Bu aynı ürün değil, rakibi kaldır"
-                      >
-                        <svg
-                          className="w-3.5 h-3.5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
             </div>
           )}
         </div>

@@ -7,6 +7,7 @@ import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
 import { classifyOwnPriceHistory } from "@/lib/price-history";
 import { buildPriceEvents } from "@/lib/product-insights";
+import { chartHiddenCompetitorIds, chartHiddenHistoryFlags } from "@/lib/competitor-groups";
 import { getMarketplaceInfo, getRetailerInfoFromDomain } from "@competehive/shared";
 
 // Ürün URL'sinin pazaryeri görünen adı ("Trendyol", "Amazon TR"). Worker kendi
@@ -129,9 +130,29 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         latestStock.set(point.competitorId, { at, inStock: point.inStock });
     }
 
+    // Onay bekleyen ve uykudaki rakipler grafikte görünmez: ne fiyat çizgileri
+    // (chartHidden) ne de "Yeni rakip"/"stok bitti" olayları.
+    const hiddenCompetitorIds = chartHiddenCompetitorIds(
+      product.competitors.map((competitor) => ({
+        id: competitor.id,
+        currentPrice: competitor.currentPrice === null ? null : Number(competitor.currentPrice),
+        matchScore: competitor.matchScore,
+        lastScrapedAt: competitor.lastScrapedAt,
+        createdAt: competitor.createdAt,
+        review: readMatchReview(competitor.matchAttributes),
+      })),
+    );
+    const chartHidden = chartHiddenHistoryFlags(
+      product.priceHistory,
+      ownFlags,
+      competitorPoints,
+      hiddenCompetitorIds,
+    );
+
     // Grafik üzerindeki olay işaretleri: kendi fiyat değişimi, yeni rakip,
     // rakip stoğunun bitmesi.
     const events = buildPriceEvents({
+      hiddenCompetitorIds,
       windowStart: historyWindowStart,
       ownHistory: product.priceHistory
         .filter((_, index) => ownFlags[index])
@@ -193,6 +214,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           sellerName: entry.sellerName,
           scrapedAt: entry.scrapedAt,
           isOwn: ownFlags[index],
+          // Onay bekleyen/uykudaki rakibin satırı: grafikte çizilmez.
+          chartHidden: chartHidden[index],
         }),
       ),
       competitors: product.competitors.map(

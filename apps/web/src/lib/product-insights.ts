@@ -351,6 +351,11 @@ export interface PriceEventInput {
   competitors: Array<{ id: string; name: string | null; createdAt: string | Date }>;
   competitorStock: Array<{ competitorId: string; scrapedAt: string | Date; inStock: boolean }>;
   windowStart: Date;
+  /**
+   * Grafikte olay üretmeyecek rakipler (onay bekleyen ve uykudaki kayıtlar,
+   * bkz. lib/competitor-groups.ts chartHiddenCompetitorIds).
+   */
+  hiddenCompetitorIds?: ReadonlySet<string>;
 }
 
 /**
@@ -378,8 +383,10 @@ export function buildPriceEvents(input: PriceEventInput): PriceEvent[] {
     });
   }
 
+  const hidden = input.hiddenCompetitorIds ?? new Set<string>();
   const names = new Map<string, string>();
   for (const c of input.competitors) {
+    if (hidden.has(c.id)) continue;
     const name = c.name?.trim() || "Bir rakip";
     names.set(c.id, name);
     const at = toDate(c.createdAt);
@@ -389,6 +396,7 @@ export function buildPriceEvents(input: PriceEventInput): PriceEvent[] {
 
   const byCompetitor = new Map<string, Array<{ at: Date; inStock: boolean }>>();
   for (const row of input.competitorStock) {
+    if (hidden.has(row.competitorId)) continue;
     const at = toDate(row.scrapedAt);
     if (!at) continue;
     const list = byCompetitor.get(row.competitorId) ?? [];
@@ -431,6 +439,7 @@ export interface ApiProductLike {
     last_scraped_at?: string | null;
     in_stock?: boolean | null;
     competitor_name?: string | null;
+    review?: "pending" | "confirmed" | null;
   }>;
 }
 
@@ -450,12 +459,16 @@ export function toInsightInput(p: ApiProductLike): InsightProductInput {
     lastSuccessAt: p.last_success_at ?? null,
     lastScrapedAt: p.last_scraped_at,
     scrapeInterval: p.scrape_interval ?? null,
-    competitors: (p.competitors ?? []).map((c) => ({
-      price: toNumberOrNull(c.current_price),
-      matchScore: c.match_score ?? null,
-      lastScrapedAt: c.last_scraped_at ?? null,
-      inStock: c.in_stock ?? null,
-      name: c.competitor_name ?? null,
-    })),
+    // Onay bekleyen olası eşleşmeler kullanıcı onaylayana kadar karar
+    // hesaplarına (pozisyon, öneri, fırsat) girmez — eleme burada yapılır.
+    competitors: (p.competitors ?? [])
+      .filter((c) => c.review !== "pending")
+      .map((c) => ({
+        price: toNumberOrNull(c.current_price),
+        matchScore: c.match_score ?? null,
+        lastScrapedAt: c.last_scraped_at ?? null,
+        inStock: c.in_stock ?? null,
+        name: c.competitor_name ?? null,
+      })),
   };
 }
