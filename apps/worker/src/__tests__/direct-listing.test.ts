@@ -8,6 +8,7 @@ import {
 } from "../serper";
 import {
   DIRECT_LOOKUP_RETRY_DAYS,
+  DIRECT_RULES_VERSION,
   DIRECT_TRANSIENT_RETRY_HOURS,
   MAX_DIRECT_REJECTED,
   MAX_DIRECT_TRANSIENT_FAILURES,
@@ -23,6 +24,7 @@ import {
   scraperMarketplaceFor,
   sellerSiteDomain,
   siteDomainForMarketplace,
+  unlinkableGoogleSellers,
   verifyDirectPage,
   withDirectCandidate,
   withDirectLookup,
@@ -433,5 +435,94 @@ describe("birleştirme ve takma anahtar", () => {
     const now = new Date("2026-11-16T10:00:00Z");
     expect(needsAliasDirectRefresh(new Date(now.getTime() - 3_600_000), now)).toBe(false);
     expect(needsAliasDirectRefresh(new Date(now.getTime() - 13 * 3_600_000), now)).toBe(true);
+  });
+});
+
+describe("verifyDirectPage: prod 16 Kasım yanlış retleri", () => {
+  it("'Air Fryer' ile 'Airfryer' aynı ürün tipidir (HD9650/90 Trendyol sayfası)", () => {
+    expect(
+      verifyDirectPage(
+        "Philips HD9650/90 XXL Avance Collection Air Fryer 7,3 Litre Yağsız Fritöz",
+        "",
+        "Philips HD9650/90 2225W Viva Collection Airfryer XXL Fritöz Büyük 7.3 L Kapasiteli",
+        "https://www.trendyol.com/philips/hd9650-90-2225w-viva-collection-airfryer-xxl-fritoz-buyuk-7-3-l-kapasiteli-p-37286628",
+      ),
+    ).toBe(true);
+  });
+
+  it("'Renkli' ↔ 'Kapasiteli' çeşit değişimi sayılmaz (Vatan Arzum OK004)", () => {
+    expect(
+      verifyDirectPage(
+        "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem 4 Fincan Kapasiteli Bakır",
+        "",
+        "Arzum OK004 Okka Minio Türk Kahve Makinesi Bakır Renkli",
+        "https://www.vatanbilgisayar.com/arzum-ok004-okka-minio-turk-kahve-makinesi-bakir-renkli.html",
+      ),
+    ).toBe(true);
+  });
+
+  it("gerçek aroma değişimi hâlâ reddedilir", () => {
+    expect(
+      verifyDirectPage(
+        "Tambol Çilekli Protein Bar 40 g",
+        "",
+        "Tambol Fıstıklı Protein Bar 40 g",
+        "https://www.trendyol.com/tambol/fistikli-protein-bar-40-g-p-123",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("unlinkableGoogleSellers", () => {
+  const card = "https://www.google.com/search?ibp=oshop&prds=pid:1";
+  it("yalnızca sitesi bilinmeyen satıcıların Google kartlarını sayar", () => {
+    const out = unlinkableGoogleSellers([
+      { competitorUrl: card, marketplace: "CUSTOM", matchAttributes: { seller: "Gürgençler" } },
+      { competitorUrl: card, marketplace: "CUSTOM", matchAttributes: { seller: "Gürgençler" } },
+      { competitorUrl: card, marketplace: "CUSTOM", matchAttributes: {} },
+      { competitorUrl: card, marketplace: "CUSTOM", matchAttributes: { seller: "idefix" } },
+      { competitorUrl: card, marketplace: "TRENDYOL", matchAttributes: {} },
+      {
+        competitorUrl: "https://www.example.com/p/1",
+        marketplace: "CUSTOM",
+        matchAttributes: { seller: "Başka" },
+      },
+    ]);
+    expect(out).toEqual([
+      { seller: "Gürgençler", count: 2 },
+      { seller: "(bilinmiyor)", count: 1 },
+    ]);
+  });
+});
+
+describe("kural sürümü (directRulesV)", () => {
+  const now = new Date("2026-11-16T18:00:00Z");
+  const yesterday = new Date("2026-11-15T18:00:00Z").toISOString();
+  const legacy = {
+    directLookupAt: yesterday,
+    directRejected: ["trendyol.com/philips/hd9650-90-p-37286628"],
+    directTransient: { key: "x", count: 1, retryAt: "2026-11-17T18:00:00Z" },
+  };
+
+  it("eski sürümle aranmış kayıt 7 günü beklemeden yeniden aranır", () => {
+    expect(isDirectLookupDue(legacy, now)).toBe(true);
+  });
+
+  it("eski sürümün retleri yok sayılır ve yeni aramada silinir", () => {
+    expect(readDirectRejected(legacy)).toEqual([]);
+    const after = withDirectLookup(legacy, now);
+    expect(after.directRulesV).toBe(DIRECT_RULES_VERSION);
+    expect(after.directRejected).toBeUndefined();
+    expect(after.directTransient).toBeUndefined();
+    expect(isDirectLookupDue(after, now)).toBe(false);
+  });
+
+  it("güncel sürümün retleri korunur", () => {
+    const rejected = withDirectRejected(
+      withDirectLookup({}, now),
+      "https://www.trendyol.com/a-p-1",
+    );
+    expect(readDirectRejected(rejected)).toHaveLength(1);
+    expect(readDirectRejected(withDirectLookup(rejected, now))).toHaveLength(1);
   });
 });
