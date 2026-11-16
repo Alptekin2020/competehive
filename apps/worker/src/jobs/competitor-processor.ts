@@ -24,7 +24,12 @@ import {
   sharesStrongProductCode,
   withinPriceBand,
 } from "../utils/competitor-quality";
-import { competitorUrlKey, isSameListing, urlMatchKey } from "../utils/url-match";
+import {
+  competitorUrlKey,
+  isSameListing,
+  rejectionLinkHint,
+  urlMatchKey,
+} from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { buildSearchQueries, cleanProductTitle } from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
@@ -447,7 +452,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               aiRejectedCount++;
               if (preMatch.aiUnavailable) aiUnavailableCount++;
               console.log(
-                `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 50)} — ${preMatch.reason}`,
+                `❌ AI reddetti (pre-match no-price, skor: ${preMatch.score}): ${result.title.slice(0, 120)} — ${preMatch.reason} [${rejectionLinkHint(result.link)}]`,
               );
               // AI emin olamadıysa (50–69) ve fiyat hafif istekle okunabiliyorsa
               // adayı atma: fiyatlı sonuçlardaki gibi kullanıcı onayına sun.
@@ -664,7 +669,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
             aiRejectedCount++;
             if (matchResult.aiUnavailable) aiUnavailableCount++;
             console.log(
-              `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 50)} — ${matchResult.reason}`,
+              `❌ AI reddetti (skor: ${matchResult.score}): ${result.title.slice(0, 120)} — ${matchResult.reason} [${rejectionLinkHint(result.link)}]`,
             );
             // AI emin olamadıysa (50–69) adayı atma: kullanıcı onayına sun.
             if (

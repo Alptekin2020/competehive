@@ -111,3 +111,20 @@ function googleShoppingKey(parsed: URL): string | null {
   }
   return null;
 }
+
+/**
+ * Short, log-safe pointer to a listing for rejection logs: host + path without
+ * the query (titles are truncated in search results, and the pack size or
+ * variant that made the matcher say no often sits in the URL slug).
+ */
+export function rejectionLinkHint(url: string | null | undefined): string {
+  if (typeof url !== "string" || url.length === 0) return "bağlantı yok";
+  try {
+    const parsed = new URL(url);
+    const host = parsed.host.toLowerCase().replace(/^www\./, "");
+    if (host.endsWith("google.com")) return "google ürün kartı";
+    return `${host}${parsed.pathname}`.slice(0, 140);
+  } catch {
+    return url.slice(0, 140);
+  }
+}
