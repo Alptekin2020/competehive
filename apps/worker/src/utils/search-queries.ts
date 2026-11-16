@@ -35,10 +35,165 @@ function trimDanglingTail(words: string[]): string[] {
   return out;
 }
 
+// "2'si 1 arada", "3'ü 1 Arada", "2 si 1 arada": tek bir anlam birimi —
+// kısaltma asla ortasından kesmez (eski sorgu "Erbatab Vitamin D3 K2 2'si 1").
+const IN_ONE_RE = /^\d['’`]?(?:s[ıiuü]|[ıiuü]|y[ıiuü])?$/iu;
+
+/** Başlığı kelime birimlerine böler; "N'si 1 arada" üç kelimesi tek birimdir. */
+function toUnits(words: string[]): string[] {
+  const units: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const next = words[i + 1];
+    const after = words[i + 2];
+    if (IN_ONE_RE.test(w) && next === "1" && after && foldToken(after) === "arada") {
+      units.push(`${w} ${next} ${after}`);
+      i += 2;
+      continue;
+    }
+    // "2 si 1 arada" yazımı (kesme işaretsiz).
+    if (
+      /^\d$/.test(w) &&
+      next &&
+      /^(?:s[ıiuü]|[ıiuü])$/iu.test(next) &&
+      words[i + 2] === "1" &&
+      words[i + 3] &&
+      foldToken(words[i + 3]) === "arada"
+    ) {
+      units.push(`${w} ${next} 1 ${words[i + 3]}`);
+      i += 3;
+      continue;
+    }
+    units.push(w);
+  }
+  return units;
+}
+
+// Sorguda ürünü tanımlamayan teknik ölçüler (güç, voltaj, boyut…): Google
+// Shopping başlıkları bunları farklı yazar ya da hiç yazmaz; 6 kelimelik
+// bütçeyi ürün tipinden çalıyorlar. Hacim/ağırlık/adet (20 ml, 100 gr, 2'li)
+// paketi tanımladığı için KORUNUR.
+const SPEC_UNIT_RE = /^(?:w|watt|v|volt|hz|mah|cm|mm|rpm|dpi|bar|kw|btu)$/;
+const SPEC_INLINE_RE = /^\d+(?:[.,]\d+)?(?:w|watt|v|volt|hz|mah|cm|mm|rpm|dpi|bar|kw|btu)$/;
+
+const SPEC_LABEL_RE =
+  /^(?:yukseklik|yuksekligi|genislik|genisligi|uzunluk|uzunlugu|derinlik|cap|capi|guc|gucu)$/;
+
+function dropSpecNoise(units: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < units.length; i++) {
+    const unit = units[i].replace(/[,;]+$/u, "");
+    if (unit.length === 0 || /^[,;:|\-–—]+$/u.test(unit)) continue;
+    const folded = foldToken(unit);
+    if (SPEC_INLINE_RE.test(folded)) continue;
+    const next = units[i + 1] ? foldToken(units[i + 1].replace(/[,;]+$/u, "")) : "";
+    if (/^\d+(?:[.,]\d+)?$/.test(folded) && SPEC_UNIT_RE.test(next)) {
+      i++;
+      // Ölçünün etiketi de düşer: "24 cm Yükseklik".
+      if (units[i + 1] && SPEC_LABEL_RE.test(foldToken(units[i + 1]))) i++;
+      continue;
+    }
+    out.push(unit);
+  }
+  return out;
+}
+
+// Ürün TİPİ sözcükleri (başlığın baş ismi). Kısaltmada düşerse arama başka
+// ürünlere kayıyor: "KUSTAR 3 Fonksiyonlu Oynar Başlıklı Krom" → batarya
+// yerine duş başlıkları; "Pati Clean 20 Lt Kokusuz Bentonit" → kedi kumu yok.
+const HEAD_NOUNS = new Set([
+  "batarya",
+  "bataryasi",
+  "damla",
+  "damlasi",
+  "kumu",
+  "makine",
+  "makinesi",
+  "makinasi",
+  "isitici",
+  "isiticisi",
+  "supurge",
+  "supurgesi",
+  "firca",
+  "fircasi",
+  "tencere",
+  "tava",
+  "krem",
+  "kremi",
+  "sampuan",
+  "sampuani",
+  "serum",
+  "serumu",
+  "jel",
+  "sprey",
+  "kapsul",
+  "tablet",
+  "surup",
+  "vantilator",
+  "televizyon",
+  "tv",
+  "kulaklik",
+  "telefon",
+  "laptop",
+  "bilgisayar",
+  "monitor",
+  "saat",
+  "ayakkabi",
+  "cikolata",
+  "kahve",
+  "mama",
+  "mamasi",
+  "deterjan",
+  "deterjani",
+  "parfum",
+  "pudra",
+  "ruj",
+  "maskara",
+  "fondoten",
+]);
+
+/** Birim bir ürün tipi sözcüğü mü? Liste + Türkçe tamlama eki (-ası/-esi). */
+function isHeadNoun(unit: string): boolean {
+  const folded = foldToken(unit.replace(/[^\p{L}\p{N}]+/gu, ""));
+  if (HEAD_NOUNS.has(folded)) return true;
+  return folded.length >= 7 && /[aeiou]s[iu]$/.test(folded) && !/\d/.test(folded);
+}
+
+/** Son ürün tipi birimi + (varsa) onu niteleyen önceki birim: "Evye Bataryası", "Kedi Kumu". */
+function headPhraseIndex(units: string[]): { start: number; end: number } | null {
+  for (let i = units.length - 1; i >= 1; i--) {
+    if (!isHeadNoun(units[i])) continue;
+    const isModifier = (j: number) =>
+      j >= 1 && (/^\p{L}[\p{L}'’-]*$/u.test(units[j]) || units[j].includes(" "));
+    if (!isModifier(i - 1)) return { start: i, end: i };
+    // Tamlama zinciri: "Türk Kahvesi Makinesi" — önceki birim de tamlamaysa bir
+    // niteleyici daha alınır.
+    const start = isHeadNoun(units[i - 1]) && isModifier(i - 2) ? i - 2 : i - 1;
+    return { start, end: i };
+  }
+  return null;
+}
+
 export function truncateRawTitleForSearch(title: string): string {
-  const words = title.trim().split(/\s+/);
-  if (words.length <= RAW_TITLE_MAX_WORDS + 1) return trimDanglingTail(words).join(" ");
-  return trimDanglingTail(words.slice(0, RAW_TITLE_MAX_WORDS)).join(" ");
+  const units = dropSpecNoise(toUnits(title.trim().split(/\s+/)));
+  if (units.length <= RAW_TITLE_MAX_WORDS + 1) return trimDanglingTail(units).join(" ");
+  const head = headPhraseIndex(units);
+  // Baş isim ilk 6 birimin dışında kaldıysa: ilk birimler + baş isim öbeği
+  // (en fazla 7 birim) — ürün tipi sorgudan asla düşmez.
+  if (head && head.end >= RAW_TITLE_MAX_WORDS) {
+    const phrase = units.slice(head.start, head.end + 1);
+    const leadCount = Math.max(1, RAW_TITLE_MAX_WORDS + 1 - phrase.length);
+    const lead = trimDanglingTail(units.slice(0, Math.min(leadCount, head.start)));
+    return [...lead, ...phrase].join(" ");
+  }
+  return trimDanglingTail(units.slice(0, RAW_TITLE_MAX_WORDS)).join(" ");
+}
+
+/** Başlığın baş isim öbeği ("Evye Bataryası") — marka + ürün tipi sorgusu için. */
+export function extractHeadPhrase(title: string): string | null {
+  const units = dropSpecNoise(toUnits(title.trim().split(/\s+/)));
+  const head = headPhraseIndex(units);
+  return head ? units.slice(head.start, head.end + 1).join(" ") : null;
 }
 
 // Pazaryerlerinin sayfa başlığına eklediği SEO kalıpları. Ürün adına karışınca
@@ -224,6 +379,8 @@ const SEARCH_NOISE_WORDS = new Set([
   "orjinal",
   "stokta",
   "stoklarda",
+  "model",
+  "modeli",
 ]);
 
 /**
@@ -239,11 +396,59 @@ export function stripSearchNoise(name: string): string {
   return result.length >= 3 ? result : name.trim();
 }
 
+// İki kelimelik markalar: ilk kelime tek başına marka değildir.
+const MULTI_WORD_BRANDS = ["kahve dunyasi", "pati clean"];
+
+/** Marka: metadata.brand adın başındaysa o; değilse bilinen iki kelimelik marka ya da ilk kelime. */
+function brandOf(name: string, metadata: unknown): string {
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+  const metaBrand =
+    metadata && typeof metadata === "object" ? (metadata as { brand?: unknown }).brand : undefined;
+  if (typeof metaBrand === "string" && metaBrand.trim()) {
+    const bw = metaBrand.trim().split(/\s+/);
+    const prefix = words.slice(0, bw.length).join(" ");
+    if (asciiFold(prefix) === asciiFold(bw.join(" "))) return prefix;
+  }
+  const firstTwo = asciiFold(words.slice(0, 2).join(" "));
+  if (MULTI_WORD_BRANDS.includes(firstTwo)) return words.slice(0, 2).join(" ");
+  return words[0];
+}
+
 /**
- * Arama sorgularını CANLI ürün adından kurar (ground truth). Metadata
- * keywords'ü yalnızca ürün adıyla anlamlı token paylaşıyorsa ekler; böylece
- * bayat "Trendyol ürünü" placeholder'ı elenir, sağlam AI marka/model keyword'ü
- * korunur. Jenerik/çok kısa sorgular asla döndürülmez. En fazla 3 sorgu.
+ * Model kodunun başlıktaki TAM yazımı: "EP3347/90" (kod çıkarımı "/90" ekini
+ * atabilir; ek konfigürasyonu belirler, sorguda korunmalı).
+ */
+function fullCodeToken(name: string, code: string): string {
+  const lc = code.toLowerCase();
+  for (const raw of name.split(/\s+/)) {
+    const w = raw.replace(/^[\p{P}\p{S}]+|[,;:)(]+$/gu, "");
+    if (w.toLowerCase().includes(lc)) return w;
+  }
+  return code;
+}
+
+/** metadata.gtin / ean / barcode: 8–14 haneli barkod. */
+export function extractGtin(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const meta = metadata as Record<string, unknown>;
+  for (const key of ["gtin", "ean", "barcode", "gtin13"]) {
+    const v = meta[key];
+    const digits = typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+    if (/^\d{8,14}$/.test(digits)) return digits;
+  }
+  return null;
+}
+
+/**
+ * Arama sorgularını CANLI ürün adından kurar (ground truth). Sıra:
+ * 1) marka + tam model kodu ("Philips EP3347/90") — birebir ürünü bulmanın en
+ *    güvenilir yolu, kod varsa her zaman ilk sorgu;
+ * 2) gürültüsü ayıklanmış canlı ad (baş isim korunarak kısaltılmış);
+ * 3) barkod (metadata'da varsa, çıplak GTIN);
+ * 4) marka + ürün tipi ("KUSTAR Evye Bataryası");
+ * 5) ürün adıyla token paylaşan AI keyword'leri; 6) ilk 4 kelime.
+ * Jenerik/çok kısa sorgular asla döndürülmez. En fazla 4 sorgu.
  */
 export function buildSearchQueries(
   productName: string,
@@ -257,52 +462,57 @@ export function buildSearchQueries(
   const queries: string[] = [];
   const seen = new Set<string>();
 
-  const push = (raw: string) => {
-    const q = truncateRawTitleForSearch(raw.trim());
+  const push = (raw: string, truncate = true) => {
+    const q = truncate ? truncateRawTitleForSearch(raw.trim()) : raw.trim();
     // Dedup anahtarı locale-INVARIANT küçük harf olmalı: tr-TR "I"→"ı"
     // dönüşümü "NIKE" ile "Nike"yi farklı anahtarlar yapıp dedup'ı bozar.
     const key = q.toLowerCase();
-    if (!q || isGenericQuery(q) || seen.has(key)) return;
+    if (!q || seen.has(key)) return;
+    if (truncate && isGenericQuery(q)) return;
     seen.add(key);
     queries.push(q);
   };
 
-  // 1) Canlı ürün adı (gürültüsü ayıklanmış) — birincil, geniş sorgu.
-  push(cleanName);
+  const nameIsGeneric = isGenericQuery(liveName);
+  const brand = nameIsGeneric ? "" : brandOf(cleanName, metadata);
 
-  // 1.5) Marka + MODEL KODU/BARKOD sorgusu — birebir aynı ürünü bulmanın en
-  //      güvenilir yolu. Ad ilk 6 kelimeye kısaldığında sondaki model kodu
-  //      (Lenovo "83SC000QTR") düşüyordu; bu yüzden kodu açıkça hedefliyoruz.
-  const codes = extractProductCodes(liveName);
+  // 1) Marka + TAM model kodu.
+  const codes = nameIsGeneric ? [] : extractProductCodes(liveName);
   if (codes.length > 0) {
-    const codeTokenSet = new Set(codes.map((c) => c.toLowerCase()));
-    const brandWords = cleanName
-      .split(/\s+/)
-      .filter((w) => w.length >= 2 && !codeTokenSet.has(w.toLowerCase()))
-      .slice(0, 2)
-      .join(" ");
-    push(`${brandWords} ${codes[0]}`.trim());
+    const code = fullCodeToken(cleanName, codes[0]);
+    const brandPart = brand && !brand.toLowerCase().includes(code.toLowerCase()) ? brand : "";
+    push(`${brandPart} ${code}`.trim());
   }
 
-  // 2) AI keywords — yalnızca canlı adla anlamlı token paylaşanlar (bayat/jenerik
+  // 2) Canlı ürün adı (gürültüsü ayıklanmış).
+  push(cleanName);
+
+  // 3) Barkod: çıplak GTIN Google Shopping'de birebir ürünü bulur.
+  const gtin = extractGtin(metadata);
+  if (gtin) push(gtin, false);
+
+  // 4) Marka + ürün tipi.
+  const head = nameIsGeneric ? null : extractHeadPhrase(cleanName);
+  if (brand && head && !asciiFold(brand).includes(asciiFold(head))) {
+    push(`${brand} ${head}`);
+  }
+
+  // 5) AI keywords — yalnızca canlı adla anlamlı token paylaşanlar (bayat/jenerik
   //    keyword'ü ele). Ad jenerikse token kümesi boş kabul edilir → keyword'ler
   //    olduğu gibi denenir (placeholder ada takılıp keyword'leri kaybetme).
-  const liveTokens = isGenericQuery(liveName)
-    ? new Set<string>()
-    : new Set(meaningfulTokens(liveName));
+  const liveTokens = nameIsGeneric ? new Set<string>() : new Set(meaningfulTokens(liveName));
   for (const kw of extractSearchKeywords(metadata)) {
     const shares = liveTokens.size === 0 || meaningfulTokens(kw).some((t) => liveTokens.has(t));
     if (shares) push(kw);
   }
 
-  // 3) Yedek geniş sorgu: model kodu ve AI keyword'ü olmayan ürünlerde tek bir
-  //    6 kelimelik sorgu kalıyordu (prod: Oral-B, Siveno, icollagen — birincil
-  //    arama tutmayınca deneyecek ikinci sorgu yoktu). Adın ilk 4 kelimesi
-  //    (marka + ürün ailesi) daha geniş bir ikinci şans verir.
+  // 6) Yedek geniş sorgu: adın ilk 4 kelimesi (marka + ürün ailesi).
   if (queries.length < 2) {
     const words = cleanName.split(/\s+/).filter(Boolean);
     if (words.length > 4) push(words.slice(0, 4).join(" "));
   }
 
-  return queries.slice(0, 3);
+  return queries.slice(0, MAX_SEARCH_QUERIES);
 }
+
+export const MAX_SEARCH_QUERIES = 4;
