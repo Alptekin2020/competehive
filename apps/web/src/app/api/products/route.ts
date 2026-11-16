@@ -26,6 +26,7 @@ import {
   isGenericStoreMarketplace,
   normalizeProductImage,
   storeHostFromUrl,
+  readMatchBasis,
 } from "@competehive/shared";
 
 // GET - Kullanicinin urunlerini ve rakip fiyatlarini listele
@@ -162,6 +163,8 @@ export async function GET() {
           competitor_url: c.competitorUrl,
           match_score: c.matchScore,
           review: readMatchReview(c.matchAttributes),
+          // Fiyat bandının genişliği: model kodu / başlık-AI / manuel / onaylı.
+          match_basis: readMatchBasis(c.matchAttributes, c.matchScore),
           last_scraped_at: c.lastScrapedAt,
           in_stock: c.competitorPrices[0]?.inStock ?? null,
         })),

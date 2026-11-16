@@ -11,10 +11,12 @@
 import {
   assessCompetitorList,
   computeMargin,
+  PEER_OUTLIER_MAX_RATIO,
   priceForMargin,
   THIN_MARGIN_PCT,
+  trustedPeerMedian,
 } from "@competehive/shared";
-import type { MarginResult } from "@competehive/shared";
+import type { MarginResult, MatchBasis } from "@competehive/shared";
 
 /** Taze sayılma süresi (saat). Bunu aşan ürün "Verisi eski" olarak işaretlenir. */
 export const STALE_HOURS = 24;
@@ -26,6 +28,18 @@ const ERROR_RETRY_MINUTES = 1440;
 export const UNDERCUT_MAX_GAP_PCT = 5;
 /** "Fiyatı artır, yine en ucuz kal" fırsatı için ikinci sıradaki rakiple en az fark (%). */
 export const RAISE_MIN_HEADROOM_PCT = 3;
+/**
+ * Önerilen fiyat artışı tek seferde bu yüzdeyi aşmaz: bir sonraki rakip çok
+ * yukarıdaysa (veya kendi fiyat yanlış okunmuşsa) "+%78 artır" gibi tavsiye
+ * satış kaybettirir.
+ */
+export const MAX_SUGGESTED_RAISE_PCT = 15;
+/**
+ * Kendi fiyat güvenilir rakip medyanından bu oranın ötesindeyse (iki yönde,
+ * log-simetrik) öneri yerine "Fiyatınızı kontrol edin" uyarısı gösterilir.
+ * Akran aykırılık kuralıyla aynı eşik.
+ */
+export const OWN_PRICE_OUTLIER_RATIO = PEER_OUTLIER_MAX_RATIO;
 
 export type MarketPosition = "cheapest" | "middle" | "most-expensive" | "no-data";
 
@@ -36,6 +50,10 @@ export interface InsightCompetitorInput {
   /** Rakibin son taramadaki stok durumu (bilinmiyorsa null). */
   inStock?: boolean | null;
   name?: string | null;
+  /** Onay durumu: "pending" adaylar karara girmez. */
+  review?: "pending" | "confirmed" | null;
+  /** Eşleşme dayanağı (fiyat bandı genişliği). */
+  matchBasis?: MatchBasis | null;
 }
 
 export interface InsightProductInput {
@@ -75,6 +93,13 @@ export interface ProductInsight {
   nextCheckAt: Date | null;
   /** Karara uygun rakiplerden stoğu biten sayısı. */
   outOfStockCompetitors: number;
+  /** Kendi fiyattan bağımsız güvenilir rakip medyanı (yeterli akran yoksa null). */
+  peerMedianPrice: number | null;
+  /**
+   * Kendi fiyat piyasadan kopuk mu (medyanın 1/1.8'i altı ya da 1.8x üstü)?
+   * Kopuksa fiyat önerisi yapılmaz; kullanıcıdan fiyatı kontrol etmesi istenir.
+   */
+  ownPriceOutlier: "too-low" | "too-high" | null;
 }
 
 function toDate(value: string | Date | null | undefined): Date | null {
@@ -113,14 +138,25 @@ export function computeProductInsight(
   now: Date = new Date(),
 ): ProductInsight {
   const ownPrice = validNumber(input.currentPrice);
-  const assessments = assessCompetitorList(
-    input.competitors.map((c) => ({
-      price: c.price,
-      matchScore: c.matchScore,
-      lastScrapedAt: c.lastScrapedAt,
-    })),
-    { ownPrice, now },
-  );
+  const assessmentInputs = input.competitors.map((c) => ({
+    price: c.price,
+    matchScore: c.matchScore,
+    lastScrapedAt: c.lastScrapedAt,
+    review: c.review ?? null,
+    matchBasis: c.matchBasis ?? null,
+  }));
+  const assessments = assessCompetitorList(assessmentInputs, { ownPrice, now });
+  // Kendi fiyat bant çapası olarak kullanılmadan hesaplanan piyasa medyanı:
+  // kendi fiyat yanlışsa (airfryer ₺8.999 vs ₺17K piyasa) dar bant gerçek
+  // rakipleri eler; kopukluğu ancak bağımsız medyan gösterir.
+  const peerMedianPrice = trustedPeerMedian(assessmentInputs, { now }).median;
+  let ownPriceOutlier: "too-low" | "too-high" | null = null;
+  if (ownPrice !== null && peerMedianPrice !== null) {
+    const distance = Math.log(ownPrice / peerMedianPrice);
+    if (Math.abs(distance) > Math.log(OWN_PRICE_OUTLIER_RATIO)) {
+      ownPriceOutlier = distance < 0 ? "too-low" : "too-high";
+    }
+  }
   const valid = input.competitors.filter((_, i) => assessments[i].usable);
   const validPrices = valid
     .map((c) => validNumber(c.price))
@@ -149,6 +185,8 @@ export function computeProductInsight(
     neverScraped,
     nextCheckAt,
     outOfStockCompetitors,
+    peerMedianPrice,
+    ownPriceOutlier,
   };
 
   if (ownPrice === null || validPrices.length === 0) {
@@ -198,7 +236,12 @@ export function computeProductInsight(
 // Fırsatlar
 // ============================================
 
-export type OpportunityKind = "undercut" | "raise" | "loss" | "competitor-out-of-stock";
+export type OpportunityKind =
+  | "undercut"
+  | "raise"
+  | "loss"
+  | "competitor-out-of-stock"
+  | "check-price";
 
 export interface Opportunity {
   productId: string;
@@ -224,8 +267,10 @@ export function formatTryShort(value: number): string {
 
 /**
  * Bir ürün için en değerli fırsatı döndürür (yoksa null). Öncelik:
- * zarar > rakip stoğu bitti > fiyatı artırma payı > küçük indirimle en ucuz olma.
- * Öneriler maliyet girilmişse %10 marj tabanının altına inmez.
+ * fiyatı kontrol et (kendi fiyat piyasadan kopuk) > zarar > rakip stoğu bitti >
+ * fiyatı artırma payı > küçük indirimle en ucuz olma.
+ * Öneriler maliyet girilmişse %10 marj tabanının altına inmez; fiyat artırma
+ * önerisi tek seferde +%15'i aşmaz.
  */
 export function findOpportunity(
   input: InsightProductInput,
@@ -234,6 +279,24 @@ export function findOpportunity(
   const ownPrice = validNumber(input.currentPrice);
   if (ownPrice === null) return null;
   const common = { productId: input.id, productName: input.name };
+
+  // Kendi fiyat güvenilir rakip medyanından çok uzaksa (prod: airfryer ₺8.999,
+  // piyasa medyanı ~₺17K → "+%78 artır" önerisi) büyük ihtimalle fiyat yanlış
+  // okunmuş ya da farklı bir ürün/varyant takip ediliyor. Öneri yapılmaz.
+  if (insight.ownPriceOutlier && insight.peerMedianPrice !== null) {
+    const median = formatTryShort(insight.peerMedianPrice);
+    return {
+      ...common,
+      kind: "check-price",
+      title: "Fiyatınızı kontrol edin",
+      detail:
+        insight.ownPriceOutlier === "too-low"
+          ? `Fiyatınız (${formatTryShort(ownPrice)}) rakiplerin ortanca fiyatının (${median}) çok altında. Fiyat veya takip edilen ürün yanlış olabilir.`
+          : `Fiyatınız (${formatTryShort(ownPrice)}) rakiplerin ortanca fiyatının (${median}) çok üstünde. Fiyat veya takip edilen ürün yanlış olabilir.`,
+      suggestedPrice: null,
+      weight: 450,
+    };
+  }
 
   if (insight.margin && insight.margin.band === "loss") {
     return {
@@ -264,7 +327,8 @@ export function findOpportunity(
     const next = insight.validCompetitorPrices.find((p) => p > ownPrice);
     if (next !== undefined) {
       const headroomPct = ((next - ownPrice) / ownPrice) * 100;
-      const target = Math.floor(next - 1);
+      const cap = Math.floor(ownPrice * (1 + MAX_SUGGESTED_RAISE_PCT / 100));
+      const target = Math.min(Math.floor(next - 1), cap);
       if (headroomPct >= RAISE_MIN_HEADROOM_PCT && target > ownPrice) {
         return {
           ...common,
@@ -272,7 +336,7 @@ export function findOpportunity(
           title: `${formatTryShort(target - ownPrice)} daha pahalı satabilirsiniz`,
           detail: `Fiyatı ${formatTryShort(target)} yapsanız da en ucuz siz kalırsınız.`,
           suggestedPrice: target,
-          weight: 200 + headroomPct,
+          weight: 200 + Math.min(headroomPct, MAX_SUGGESTED_RAISE_PCT),
         };
       }
     }
@@ -436,10 +500,11 @@ export interface ApiProductLike {
   competitors?: Array<{
     current_price: string | number | null;
     match_score?: number | null;
+    review?: "pending" | "confirmed" | null;
+    match_basis?: MatchBasis | null;
     last_scraped_at?: string | null;
     in_stock?: boolean | null;
     competitor_name?: string | null;
-    review?: "pending" | "confirmed" | null;
   }>;
 }
 
@@ -466,6 +531,8 @@ export function toInsightInput(p: ApiProductLike): InsightProductInput {
       .map((c) => ({
         price: toNumberOrNull(c.current_price),
         matchScore: c.match_score ?? null,
+        review: c.review ?? null,
+        matchBasis: c.match_basis ?? null,
         lastScrapedAt: c.last_scraped_at ?? null,
         inStock: c.in_stock ?? null,
         name: c.competitor_name ?? null,

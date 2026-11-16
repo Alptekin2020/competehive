@@ -64,6 +64,7 @@ async function loadDigestProducts(userId: string, now: Date): Promise<DigestProd
           currentPrice: true,
           matchScore: true,
           lastScrapedAt: true,
+          matchAttributes: true,
         },
       },
     },
@@ -97,6 +98,7 @@ async function loadDigestProducts(userId: string, now: Date): Promise<DigestProd
       price: c.currentPrice === null ? null : Number(c.currentPrice),
       matchScore: c.matchScore,
       lastScrapedAt: c.lastScrapedAt,
+      matchAttributes: c.matchAttributes,
       priceBefore: priceBefore.get(c.id) ?? null,
     })),
   }));

@@ -18,7 +18,12 @@
 //    bu rakiplerden sınırlı bir kısmını worker'ın doğrudan scraper zincirine
 //    (scrape-competitor işi) yönlendirir.
 
-import { MIN_MATCH_SCORE } from "./competitor-quality";
+import {
+  isPendingReview,
+  MIN_MATCH_SCORE,
+  readMatchBasis,
+  withinPriceBandForBasis,
+} from "./competitor-quality";
 import { DEAD_REPROBE_DAYS, readScrapeHealth } from "./dead-listing";
 
 export interface CompetitorMove {
@@ -52,19 +57,30 @@ export function isGoogleHostedUrl(url: string | null | undefined): boolean {
 
 /**
  * Bilinen bir rakibin bu turdaki yeni fiyatı bir hareket mi? Kalite kapısı
- * COMPETITOR_CHEAPER ile aynı: MIN_MATCH_SCORE altı skorlar karar dışı; null
- * skor manuel/legacy kayıttır ve geçer. Anlamlılık (% eşik) alert worker'da
- * kullanıcının eşiğiyle süzülür — burada yalnızca gerçek değişim aranır.
+ * karar hesaplarıyla aynı (assessCompetitor): onay bekleyen aday hareket
+ * üretmez; MIN_MATCH_SCORE altı skor karar dışı (null skor manuel kayıttır,
+ * geçer); kendi fiyat verilmişse yeni fiyat eşleşme dayanağının bandında
+ * olmalı (model kodu 0.3x–3x, başlık/AI 0.55x–1.8x, onaylı kayıt bantsız).
+ * Anlamlılık (% eşik) alert worker'da kullanıcının eşiğiyle süzülür — burada
+ * yalnızca gerçek değişim aranır.
  */
 export function detectCompetitorMove(
-  known: Pick<KnownCompetitorSnapshot, "competitorName" | "currentPrice" | "matchScore">,
+  known: Pick<KnownCompetitorSnapshot, "competitorName" | "currentPrice" | "matchScore"> & {
+    matchAttributes?: unknown;
+  },
   newPrice: number,
   newTitle?: string | null,
+  options: { ownPrice?: number | null } = {},
 ): CompetitorMove | null {
   const previousPrice = known.currentPrice;
   if (previousPrice === null || !Number.isFinite(previousPrice) || previousPrice <= 0) return null;
   if (!Number.isFinite(newPrice) || newPrice <= 0 || newPrice === previousPrice) return null;
-  if (known.matchScore !== null && known.matchScore < MIN_MATCH_SCORE) return null;
+  if (isPendingReview(known.matchAttributes)) return null;
+  const basis = readMatchBasis(known.matchAttributes, known.matchScore);
+  if (basis !== "confirmed" && known.matchScore !== null && known.matchScore < MIN_MATCH_SCORE) {
+    return null;
+  }
+  if (!withinPriceBandForBasis(options.ownPrice, newPrice, basis)) return null;
   return {
     competitorName: newTitle || known.competitorName || null,
     previousPrice,

@@ -5,6 +5,7 @@ import {
   computeProductInsight,
   findOpportunity,
   formatNextCheck,
+  MAX_SUGGESTED_RAISE_PCT,
   type InsightProductInput,
 } from "../product-insights";
 
@@ -116,15 +117,64 @@ describe("findOpportunity", () => {
   });
 
   it("suggests raising when cheapest with headroom", () => {
-    const op = run(product({ competitors: [comp(1200), comp(1300)] }));
+    const op = run(product({ competitors: [comp(1100), comp(1300)] }));
     expect(op?.kind).toBe("raise");
-    expect(op?.suggestedPrice).toBe(1199);
+    expect(op?.suggestedPrice).toBe(1099);
   });
 
   it("ignores invalid competitors for the raise target", () => {
-    // 1050 has a low match score, so the next valid rival is 1200.
-    const op = run(product({ competitors: [comp(1050, { matchScore: 10 }), comp(1200)] }));
-    expect(op?.suggestedPrice).toBe(1199);
+    // 1050 has a low match score, so the next valid rival is 1120.
+    const op = run(product({ competitors: [comp(1050, { matchScore: 10 }), comp(1120)] }));
+    expect(op?.suggestedPrice).toBe(1119);
+  });
+
+  it("caps a suggested raise at +15%", () => {
+    expect(MAX_SUGGESTED_RAISE_PCT).toBe(15);
+    const op = run(product({ competitors: [comp(1500), comp(1550), comp(1600)] }));
+    expect(op?.kind).toBe("raise");
+    expect(op?.suggestedPrice).toBe(1150);
+  });
+
+  it("asks to check the own price instead of a +78% raise (airfryer 8.999 vs ~₺17K market)", () => {
+    const input = product({
+      currentPrice: 8999,
+      competitors: [comp(16999), comp(17499), comp(17999), comp(18499)],
+    });
+    const insight = computeProductInsight(input, NOW);
+    expect(insight.peerMedianPrice).toBe(17749);
+    expect(insight.ownPriceOutlier).toBe("too-low");
+    const op = findOpportunity(input, insight);
+    expect(op?.kind).toBe("check-price");
+    expect(op?.title).toBe("Fiyatınızı kontrol edin");
+    expect(op?.suggestedPrice).toBeNull();
+  });
+
+  it("flags an own price far above the market too", () => {
+    const input = product({
+      currentPrice: 40000,
+      competitors: [comp(16999), comp(17499), comp(17999)],
+    });
+    expect(computeProductInsight(input, NOW).ownPriceOutlier).toBe("too-high");
+  });
+
+  it("does not flag the own price with fewer than 3 trusted peers or pending rows", () => {
+    const few = product({ currentPrice: 8999, competitors: [comp(16999), comp(17499)] });
+    expect(computeProductInsight(few, NOW).ownPriceOutlier).toBeNull();
+    const pending = product({
+      currentPrice: 8999,
+      competitors: [comp(16999), comp(17499), comp(17999, { review: "pending" })],
+    });
+    expect(computeProductInsight(pending, NOW).ownPriceOutlier).toBeNull();
+  });
+
+  it("keeps model-code matches at 2.5x in the decision set but not title matches", () => {
+    const code = product({
+      currentPrice: 1000,
+      competitors: [comp(2500, { matchBasis: "model-code" })],
+    });
+    expect(computeProductInsight(code, NOW).validCompetitorCount).toBe(1);
+    const title = product({ currentPrice: 1000, competitors: [comp(2500)] });
+    expect(computeProductInsight(title, NOW).validCompetitorCount).toBe(0);
   });
 
   it("prioritizes loss and competitor stock-outs", () => {

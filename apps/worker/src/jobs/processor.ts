@@ -5,8 +5,8 @@ import { getScraper, isProductUnavailableError, ScrapedProduct, ScraperError } f
 import { sendAlerts, sendScrapeFailureAlert } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
-import { isPlausiblePriceChange } from "../utils/price-sanity";
 import { assessCompetitorList, readCompetitorDeadAt } from "../utils/competitor-quality";
+import { guardOwnPriceUpdate } from "./own-price-guard";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
 import { getAlertConditionState, setAlertConditionState } from "../utils/alert-state";
 import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
@@ -290,23 +290,32 @@ export const scrapeWorker = new Worker(
         select: {
           currentPrice: true,
           status: true,
+          metadata: true,
         },
       });
 
       const previousPrice = product?.currentPrice ? Number(product.currentPrice) : null;
       const previousInStock = product ? product.status !== "OUT_OF_STOCK" : null;
 
-      // Price sanity check: reject changes > 90% unless price was null/0 before
-      if (!isPlausiblePriceChange(previousPrice, result.price)) {
-        const changePct = Math.abs((result.price - previousPrice!) / previousPrice!) * 100;
+      // Büyük değişim tek okumayla yazılmaz (ayrıştırma hatası olabilir) ama
+      // sonsuza kadar da engellenmez: ikinci tutarlı okuma ya da rakip medyanı
+      // doğrularsa kabul edilir (resolveOwnPriceUpdate).
+      const ownDecision = await guardOwnPriceUpdate({
+        targets: [{ id: productId, metadata: product?.metadata ?? null }],
+        previousPrice,
+        newPrice: result.price,
+        now: new Date(),
+        source: "scrape",
+      });
+      if (!ownDecision.accept) {
         logger.warn(
           {
             productId,
             oldPrice: previousPrice,
             newPrice: result.price,
-            changePct: changePct.toFixed(1),
+            reason: ownDecision.reason,
           },
-          "Price change > 90% — likely parsing error, skipping update",
+          "Large own-price change held until a second read or the market confirms it",
         );
         await prisma.trackedProduct.update({
           where: { id: productId },
@@ -460,7 +469,16 @@ export const scrapeWorker = new Worker(
           const previousPrice = failedProduct.currentPrice
             ? Number(failedProduct.currentPrice)
             : null;
-          if (recoveredPrice && isPlausiblePriceChange(previousPrice, recoveredPrice)) {
+          const recoveredDecision = recoveredPrice
+            ? await guardOwnPriceUpdate({
+                targets: [{ id: productId, metadata: failedProduct.metadata }],
+                previousPrice,
+                newPrice: recoveredPrice,
+                now: new Date(),
+                source: "serper-recovery",
+              })
+            : null;
+          if (recoveredPrice && recoveredDecision?.accept) {
             const previousInStock = failedProduct.status !== "OUT_OF_STOCK";
             // sellerName grafikte "kendi fiyat" ayrımı için kullanılır — boş
             // kalırsa kayıt "Bilinmeyen" satıcıya (rakip) sınıflanır.
@@ -709,6 +727,7 @@ export const alertWorker = new Worker(
         matchScore: c.matchScore,
         lastScrapedAt: c.lastScrapedAt,
         deadAt: readCompetitorDeadAt(c.matchAttributes),
+        matchAttributes: c.matchAttributes,
       }));
       const assessments = assessCompetitorList(mapped, { ownPrice });
       const usable = mapped.filter((_, i) => assessments[i].usable);

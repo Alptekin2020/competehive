@@ -20,6 +20,7 @@ import {
   computeMargin,
   priceForMargin,
   type CompetitorAssessment,
+  type MatchBasis,
   type MarginBand,
 } from "@competehive/shared";
 import { formatPctTR, parseTrNumber } from "@/lib/format";
@@ -80,6 +81,8 @@ interface CompetitorEntry {
   matchReason: string | null;
   // "pending" = AI emin olamadı, onayınızı bekliyor; "confirmed" = siz onayladınız.
   review?: "pending" | "confirmed" | null;
+  // Eşleşme dayanağı (fiyat bandı genişliği): model-code / title / manual / confirmed.
+  matchBasis?: MatchBasis | null;
   // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
   seller?: string | null;
   // İlan yayından kalktı (worker işareti); karar hesaplarına girmez.

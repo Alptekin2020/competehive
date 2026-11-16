@@ -12,7 +12,11 @@
 // görünür. Uykudaki (30+ gün fiyatsız) otomatik kayıtlar da sayaçlara ve
 // grafiğe girmez.
 
-import type { CompetitorAssessment, CompetitorAssessmentInput } from "@competehive/shared";
+import type {
+  CompetitorAssessment,
+  CompetitorAssessmentInput,
+  MatchBasis,
+} from "@competehive/shared";
 
 import { isDormantCompetitor } from "./competitor-source";
 
@@ -24,6 +28,7 @@ export interface GroupableCompetitor {
   createdAt?: string | Date | null;
   review?: "pending" | "confirmed" | null;
   deadAt?: string | null;
+  matchBasis?: MatchBasis | null;
 }
 
 export function isPendingReview(competitor: { review?: string | null }): boolean {
@@ -53,6 +58,8 @@ export function decisionCandidates<T extends GroupableCompetitor>(
       matchScore: c.matchScore ?? null,
       lastScrapedAt: c.lastScrapedAt,
       deadAt: c.deadAt ?? null,
+      review: c.review ?? null,
+      matchBasis: c.matchBasis ?? null,
     })),
   };
 }
