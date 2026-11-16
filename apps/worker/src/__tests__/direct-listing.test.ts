@@ -353,12 +353,21 @@ describe("gerçek sayfa adayı: hepsini puanla, kesin retler", () => {
     ).toBeNull();
   });
 
-  it("farklı sayfalardaki iki eşit güçte aday belirsizliktir → null", () => {
+  it("başlıkla eşleşen, farklı sayfalardaki iki eşit güçte aday belirsizliktir → null", () => {
     const title = "Philips Airfryer XXL HD9650/90 Avance Collection Fritöz";
+    // Aynı kod + marka: aynı ürünün iki ilanı, belirsizlik değil.
     expect(
       pickDirectListing(OWN, "Philips HD9650/90 Airfryer XXL", [
         { title, link: "https://www.trendyol.com/philips/airfryer-xxl-hd9650-90-p-111111" },
         { title, link: "https://www.trendyol.com/philips/airfryer-xxl-hd9650-90-p-222222" },
+      ]),
+    ).not.toBeNull();
+    // Kodsuz ürün: başlık eşleşmesinde iki farklı sayfa belirsizdir.
+    const plain = "Siveno Sivrisinek ve Kene Kovucu Losyon Bitkisel 50 ml";
+    expect(
+      pickDirectListing(plain, "", [
+        { title: plain, link: "https://www.trendyol.com/siveno/losyon-p-111111" },
+        { title: plain, link: "https://www.trendyol.com/siveno/losyon-p-222222" },
       ]),
     ).toBeNull();
     // Aynı ilanın iki URL'si belirsizlik değildir.
@@ -524,5 +533,57 @@ describe("kural sürümü (directRulesV)", () => {
     );
     expect(readDirectRejected(rejected)).toHaveLength(1);
     expect(readDirectRejected(withDirectLookup(rejected, now))).toHaveLength(1);
+  });
+});
+
+describe("pickDirectListing: aynı ürünün birden çok ilanı (prod 16 Kasım)", () => {
+  const own = "Philips Airfryer XXL HD9650/90 Avance Collection Fritöz";
+  const ownUrl =
+    "https://www.trendyol.com/philips/airfryer-xxl-hd9650-90-avance-collection-fritoz-p-14262809";
+
+  it("iki ilan da aynı kod + marka ile geçiyorsa belirsiz sayılmaz, en iyisi seçilir", () => {
+    const picked = pickDirectListing(
+      own,
+      "",
+      [
+        {
+          title: "Philips Hd9650/90 Xxl Avance Collection Air Fryer 7.3 ...",
+          link: "https://www.trendyol.com/philips/hd9650-90-xxl-avance-collection-air-fryer-p-750152581",
+        },
+        {
+          title: "Philips Airfryer XXL HD9650/90 Avance Collection Fritöz",
+          link: "https://www.trendyol.com/philips/airfryer-xxl-hd9650-90-p-831352478",
+        },
+      ],
+      ownUrl,
+    );
+    expect(picked?.link).toBe(
+      "https://www.trendyol.com/philips/airfryer-xxl-hd9650-90-p-831352478",
+    );
+  });
+
+  it("markayı başlıkta yazmayan Trendyol ilanında marka URL yolundan okunur", () => {
+    const picked = pickDirectListing(
+      "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Bakır",
+      "",
+      [
+        {
+          title: "OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici ...",
+          link: "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-p-146157",
+        },
+      ],
+      "https://www.hepsiburada.com/arzum-ok004-okka-minio-turk-kahvesi-makinesi-bakir-p-HBV000001ALSP",
+    );
+    expect(picked?.link).toContain("p-146157");
+  });
+
+  it("URL'de marka yoksa markasız başlık kod yoluyla kabul edilmez", () => {
+    const picked = pickDirectListing("Arzum OK004 Okka Minio Türk Kahvesi Makinesi Bakır", "", [
+      {
+        title: "OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici ...",
+        link: "https://www.trendyol.com/baska/ok004-okka-minio-turk-kahvesi-makinesi-p-146157",
+      },
+    ]);
+    expect(picked).toBeNull();
   });
 });

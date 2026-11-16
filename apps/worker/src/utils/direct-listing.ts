@@ -27,6 +27,7 @@ import {
   hasPackOrSpecConflict,
   isNearIdenticalTitle,
   isStrongTitleOverlap,
+  titleTokens,
   urlSlugText,
 } from "./title-similarity";
 import { readCompetitorSeller } from "./match-review";
@@ -295,7 +296,7 @@ export function readDirectLookupAt(matchAttributes: unknown): Date | null {
  * directTransient) yok sayılır (prod 16 Kasım: "Air Fryer" ↔ "Airfryer" ve
  * "Renkli" ↔ "Kapasiteli" yüzünden doğru sayfalar reddedilmişti).
  */
-export const DIRECT_RULES_VERSION = 2;
+export const DIRECT_RULES_VERSION = 3;
 
 export function readDirectRulesVersion(matchAttributes: unknown): number {
   const value = asObject(matchAttributes).directRulesV;
@@ -668,9 +669,13 @@ export function scoreDirectCandidate(
   // Kısa model kodu (HD9650) tek başına yetmez: marka da ortak olmalı. Uzun
   // kod (MPN/barkod) çakışması neredeyse imkânsız olduğundan yeterlidir.
   // Kod yolunda da varyant sözcüğü (Pro/Kids/Set…) kabulü engeller.
+  // Trendyol başlıkları markayı yazmaz ("OK004 Okka Minio…"); marka URL'nin
+  // mağaza yolunda durur (/arzum/ok004-…). Kod yolu için o da ortak marka sayılır.
   const sameCode =
     compareProductCodes(ownTitle, title) === "exact" &&
-    (sharesStrongProductCode(ownTitle, title) || sim.brandShared) &&
+    (sharesStrongProductCode(ownTitle, title) ||
+      sim.brandShared ||
+      brandInSlug(ownTitle, candidate.link)) &&
     !sim.hasVariantExtra;
   if (sameCode) return { candidate: normalized, score: 90 + coverage + cardBonus, via: "code" };
   if (isNearIdenticalTitle(ownTitle, title)) {
@@ -680,6 +685,13 @@ export function scoreDirectCandidate(
     return { candidate: normalized, score: 75 + coverage + cardBonus, via: "overlap" };
   }
   return null;
+}
+
+/** Kendi başlığın ilk sözcüğü (marka) adayın URL yolunda geçiyor mu? */
+function brandInSlug(ownTitle: string, link: string): boolean {
+  const brand = titleTokens(ownTitle)[0];
+  if (!brand || brand.length < 3 || /\d/.test(brand)) return false;
+  return titleTokens(urlSlugText(link)).includes(brand);
 }
 
 function samePage(a: string, b: string): boolean {
@@ -715,7 +727,12 @@ export function pickDirectListing(
   if (scored.length === 0) return null;
   const [best, ...rest] = scored;
   const rival = rest.find((s) => !samePage(s.candidate.link, best.candidate.link));
-  if (rival && best.score - rival.score < DIRECT_AMBIGUITY_MARGIN) return null;
+  // İkisi de aynı model kodu + marka ile geçtiyse aynı ürünün iki ilanıdır
+  // (pazaryerinde birden çok satıcı): hangisi seçilse aynı ürünün fiyatıdır,
+  // belirsizlik yoktur (prod 16 Kasım: HD9650/90 ve Arzum OK004 aramaları bu
+  // yüzden hiç bağlanmıyordu). Başlık eşleşmelerinde belirsizlik kuralı kalır.
+  const bothCode = best.via === "code" && rival?.via === "code";
+  if (rival && !bothCode && best.score - rival.score < DIRECT_AMBIGUITY_MARGIN) return null;
   return best.candidate;
 }
 
