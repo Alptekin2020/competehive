@@ -38,7 +38,7 @@ import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 export { buildZeroReason };
 import { alertQueue, competitorQueue } from "./processor";
 import { resolveDirectListings } from "./direct-listing";
-import { readGoogleKey } from "../utils/direct-listing";
+import { readGoogleKeys } from "../utils/direct-listing";
 import type { CompetitorPriceMove } from "./alert-rules";
 import { MAX_DIRECT_SCRAPES_PER_ROUND, shouldSearchMarketplacePages } from "../utils/second-source";
 import {
@@ -307,8 +307,9 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // Gerçek ürün sayfasına taşınmış rakipler, Google'ın aynı ürün kartı
     // yeniden geldiğinde de tanınmalı — aksi halde her turda mükerrer satır açılır.
     for (const c of knownCompetitors) {
-      const googleKey = readGoogleKey(c.matchAttributes);
-      if (googleKey && !knownByUrl.has(googleKey)) knownByUrl.set(googleKey, c);
+      for (const googleKey of readGoogleKeys(c.matchAttributes)) {
+        if (!knownByUrl.has(googleKey)) knownByUrl.set(googleKey, c);
+      }
     }
 
     // Bu turda tespit edilen anlamlı-olabilecek rakip fiyat hareketleri —

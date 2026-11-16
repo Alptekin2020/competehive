@@ -9,23 +9,41 @@
 // scraper zincirini (API → HTML → Puppeteer) rakip URL'sine doğrudan uygular —
 // Puppeteer, Cloudflare/Akamai engellerini datacenter IP'den de geçebiliyor.
 
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { getScraper } from "../scrapers";
 import { extractRetailer, isGoogleHostedLink } from "../serper";
 import { MIN_MATCH_SCORE, withinPriceBand } from "../utils/competitor-quality";
-import { readMatchReview } from "../utils/match-review";
+import {
+  readDirectCandidate,
+  scraperMarketplaceFor,
+  verifyDirectPage,
+  withDirectRejected,
+  withGoogleKeys,
+  withoutDirectCandidate,
+} from "../utils/direct-listing";
+import { readCompetitorSeller, readMatchReview } from "../utils/match-review";
+import { cleanProductTitle } from "../utils/search-queries";
+import { competitorUrlKey } from "../utils/url-match";
 import { hasPackOrSpecConflict } from "../utils/title-similarity";
 import { alertQueue } from "./processor";
 
 export interface CompetitorScrapeJobData {
   competitorId: string;
+  /**
+   * Google kartına bağlı satırın gerçek sayfa ADAYINI doğrula
+   * (matchAttributes.directCandidate): bkz. processDirectVerifyJob.
+   */
+  verifyDirect?: boolean;
 }
 
 export async function processCompetitorScrapeJob(
   data: CompetitorScrapeJobData,
 ): Promise<{ success: boolean; price?: number }> {
   const { competitorId } = data;
+  if (data.verifyDirect) return processDirectVerifyJob(competitorId);
 
   const competitor = await prisma.competitor.findUnique({
     where: { id: competitorId },
@@ -72,7 +90,9 @@ export async function processCompetitorScrapeJob(
     return { success: false };
   }
 
-  const scraper = getScraper(competitor.marketplace);
+  // Özel scraper'ı olmayan satıcı siteleri (Koçtaş, idefix…) bağımsız mağaza
+  // yolundan taranır: SSRF korumalı, Puppeteer'sız.
+  const scraper = getScraper(scraperMarketplaceFor(competitor.marketplace));
   // Hata fırlarsa BullMQ job ayarlarına göre yeniden dener.
   let scraped: Awaited<ReturnType<typeof scraper>>;
   try {
@@ -199,6 +219,154 @@ export async function processCompetitorScrapeJob(
   logger.info(
     { competitorId, price: scraped.price, marketplace: competitor.marketplace },
     "Competitor scraped directly",
+  );
+  return { success: true, price: scraped.price };
+}
+
+// ============================================
+// Gerçek sayfa adayının doğrulanması (iki aşamalı taşıma, 2. aşama)
+// ============================================
+//
+// resolveDirectListings (jobs/direct-listing.ts) arama sonucundan bir aday
+// sayfa seçer ama bağlantıyı değiştirmez. Bu dal sayfayı tarar, GERÇEK
+// başlığını kendi ürünümüzle (başlık kuralları + paket/ölçü çelişkisi) ve
+// fiyatını 0.3x–3x bandıyla doğrular; ancak o zaman bağlantıyı taşır. Başarısız
+// adayda Google satırı olduğu gibi kalır, aday directRejected'a yazılır.
+
+async function processDirectVerifyJob(
+  competitorId: string,
+): Promise<{ success: boolean; price?: number }> {
+  const competitor = await prisma.competitor.findUnique({
+    where: { id: competitorId },
+    select: {
+      id: true,
+      competitorUrl: true,
+      marketplace: true,
+      competitorName: true,
+      trackedProductId: true,
+      matchScore: true,
+      matchAttributes: true,
+      trackedProduct: { select: { currentPrice: true, productName: true } },
+    },
+  });
+  if (!competitor) return { success: false };
+  const candidate = readDirectCandidate(competitor.matchAttributes);
+  if (!candidate) return { success: false };
+  // Satır bu arada başka bir yoldan taşındıysa aday geçersiz.
+  if (!isGoogleHostedLink(competitor.competitorUrl)) {
+    await prisma.competitor.update({
+      where: { id: competitor.id },
+      data: {
+        matchAttributes: withoutDirectCandidate(competitor.matchAttributes) as Prisma.JsonObject,
+      },
+    });
+    return { success: false };
+  }
+
+  const reject = async (reason: string) => {
+    await prisma.competitor.update({
+      where: { id: competitor.id },
+      data: {
+        matchAttributes: withDirectRejected(
+          competitor.matchAttributes,
+          candidate.url,
+        ) as Prisma.JsonObject,
+      },
+    });
+    logger.info(
+      { competitorId, reason, url: candidate.url.slice(0, 120) },
+      "Direct listing candidate rejected — Google row kept",
+    );
+    return { success: false };
+  };
+
+  let scraped: Awaited<ReturnType<ReturnType<typeof getScraper>>>;
+  try {
+    scraped = await getScraper(scraperMarketplaceFor(competitor.marketplace))(candidate.url);
+  } catch (err) {
+    logger.warn(
+      { competitorId, err: err instanceof Error ? err.message : err },
+      "Direct listing candidate scrape failed",
+    );
+    return reject("scrape-failed");
+  }
+  if (!scraped?.price || scraped.price <= 0) return reject("no-price");
+
+  const ownName = cleanProductTitle(competitor.trackedProduct?.productName ?? "");
+  const cardTitle = cleanProductTitle(competitor.competitorName ?? "");
+  if (!ownName || !verifyDirectPage(ownName, cardTitle, scraped.name, candidate.url)) {
+    return reject("title-mismatch");
+  }
+  const isAutomated =
+    competitor.matchScore !== null && readMatchReview(competitor.matchAttributes) !== "confirmed";
+  const ownPrice = competitor.trackedProduct?.currentPrice
+    ? Number(competitor.trackedProduct.currentPrice)
+    : 0;
+  if (isAutomated && ownPrice > 0 && !withinPriceBand(ownPrice, scraped.price)) {
+    return reject("price-out-of-band");
+  }
+
+  // Aynı sayfa bu arada ayrı bir rakip olarak eklendiyse taşıma yapılmaz;
+  // bir sonraki arama birleştirme kararını verir.
+  const candidateKey = competitorUrlKey(candidate.url);
+  const siblings = await prisma.competitor.findMany({
+    where: { trackedProductId: competitor.trackedProductId, id: { not: competitor.id } },
+    select: { competitorUrl: true },
+  });
+  if (siblings.some((c) => competitorUrlKey(c.competitorUrl) === candidateKey)) {
+    await prisma.competitor.update({
+      where: { id: competitor.id },
+      data: {
+        matchAttributes: withoutDirectCandidate(competitor.matchAttributes) as Prisma.JsonObject,
+      },
+    });
+    return { success: false };
+  }
+
+  const now = new Date();
+  const attributes = {
+    ...withGoogleKeys(withoutDirectCandidate(competitor.matchAttributes), [
+      competitorUrlKey(competitor.competitorUrl),
+    ]),
+    directVerifiedAt: now.toISOString(),
+  };
+  await prisma.competitor.update({
+    where: { id: competitor.id },
+    data: {
+      competitorUrl: candidate.url,
+      currentPrice: scraped.price,
+      lastScrapedAt: now,
+      ...(scraped.name ? { competitorName: scraped.name.slice(0, 200) } : {}),
+      matchAttributes: attributes as Prisma.JsonObject,
+    },
+  });
+  // Fiyat ikizi: competitor_prices ve price_history aynı scrapedAt ve fiyatla.
+  await prisma.competitorPrice.create({
+    data: {
+      competitorId: competitor.id,
+      price: scraped.price,
+      currency: scraped.currency || "TRY",
+      inStock: scraped.inStock ?? true,
+      scrapedAt: now,
+    },
+  });
+  const retailer = extractRetailer(candidate.url);
+  await prisma.priceHistory.create({
+    data: {
+      trackedProductId: competitor.trackedProductId,
+      price: scraped.price,
+      currency: scraped.currency || "TRY",
+      inStock: scraped.inStock ?? true,
+      sellerName:
+        retailer.name !== "Diğer"
+          ? retailer.name
+          : (readCompetitorSeller(competitor.matchAttributes) ?? scraped.sellerName ?? "Rakip"),
+      scrapedAt: now,
+    },
+  });
+  logger.info(
+    { competitorId, url: candidate.url.slice(0, 120), price: scraped.price },
+    "Google-hosted competitor verified and linked to the seller's product page",
   );
   return { success: true, price: scraped.price };
 }
