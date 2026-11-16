@@ -147,6 +147,18 @@ export async function resolveDirectListings(
       );
 
       if (!picked) {
+        // Teşhis: "N arandı, 0 bağlandı" turlarında hangi sayfaların neden
+        // elendiği görülebilsin (sonuç yok / kimlik / başlık / belirsizlik).
+        logger.info(
+          {
+            productId,
+            competitorId: target.id,
+            site: site.domain,
+            results: results.length,
+            titles: results.slice(0, 3).map((r) => r.title.slice(0, 80)),
+          },
+          "Direct listing lookup: no acceptable page",
+        );
         await markLookedUp(target);
         continue;
       }
