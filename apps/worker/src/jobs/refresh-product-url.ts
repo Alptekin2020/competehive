@@ -26,7 +26,11 @@ import {
 } from "../utils/stale-competitors";
 import { competitorQueue } from "./processor";
 import { resolveDirectListings } from "./direct-listing";
-import { readGoogleKey } from "../utils/direct-listing";
+import {
+  needsAliasDirectRefresh,
+  partitionAliasHits,
+  readGoogleKeys,
+} from "../utils/direct-listing";
 import { readCompetitorSeller, readMatchReview, withCompetitorSeller } from "../utils/match-review";
 import { hasScrapeFailureMarks, withScrapeSuccess } from "../utils/dead-listing";
 
@@ -277,10 +281,11 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           matchAttributes: c.matchAttributes,
         });
         competitorByUrl.set(urlKey, list);
-        // Gerçek ürün sayfasına taşınmış rakip, Google'ın ürün kartı anahtarıyla
-        // da bulunur: fiyatı bu turda Google sonucundan güncellenmeye devam eder.
-        const googleKey = readGoogleKey(c.matchAttributes);
-        if (googleKey && googleKey !== urlKey) {
+        // Gerçek ürün sayfasına taşınmış rakip, Google'ın ürün kartı
+        // anahtarlarından herhangi biriyle de tanınır. Fiyatı/adı Google'dan
+        // YAZILMAZ (sayfadan okunur); kart görülünce sayfa doğrudan taranır.
+        for (const googleKey of readGoogleKeys(c.matchAttributes)) {
+          if (googleKey === urlKey) continue;
           const aliasList = competitorByUrl.get(googleKey) ?? [];
           aliasList.push(list[list.length - 1]);
           competitorByUrl.set(googleKey, aliasList);
@@ -408,9 +413,16 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     const updatedCompetitorIds = new Set<string>();
     const competitorMovesBySibling = new Map<string, CompetitorMove[]>();
 
+    // Takma anahtarla (Google kartı) görülen, gerçek sayfaya taşınmış kayıtlar.
+    const aliasDirectRows = new Map<string, { id: string; lastScrapedAt: Date | null }>();
+
     for (const result of serperResults) {
-      const matchingCompetitors = competitorByUrl.get(competitorUrlKey(result.link));
-      if (!matchingCompetitors || matchingCompetitors.length === 0) continue;
+      const resultKey = competitorUrlKey(result.link);
+      const allMatching = competitorByUrl.get(resultKey);
+      if (!allMatching || allMatching.length === 0) continue;
+      const { direct, viaGoogle: matchingCompetitors } = partitionAliasHits(allMatching, resultKey);
+      for (const c of direct) aliasDirectRows.set(c.id, c);
+      if (matchingCompetitors.length === 0) continue;
 
       const price = parsePrice(result.price);
       if (!price || price <= 0) continue;
@@ -555,6 +567,22 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     );
     const hourBucket = Math.floor(now.getTime() / (60 * 60 * 1000));
     let directScrapesQueued = 0;
+    // Gerçek sayfaya taşınmış ve kartı bu turda görülen kayıtlar: fiyat
+    // sayfadan okunur (Google'ın fiyatı yazılmaz). Bayat olanları tara.
+    const staleIds = new Set(staleTargets.map((t) => t.id));
+    for (const row of aliasDirectRows.values()) {
+      if (staleIds.has(row.id) || !needsAliasDirectRefresh(row.lastScrapedAt, now)) continue;
+      try {
+        await competitorQueue.add(
+          "scrape-competitor",
+          { competitorId: row.id },
+          { jobId: `alias-direct-${row.id}-${hourBucket}`, attempts: 1 },
+        );
+        directScrapesQueued++;
+      } catch (err) {
+        console.error(`Gerçek sayfa taraması kuyruğa alınamadı (${row.id}):`, err);
+      }
+    }
     for (const target of staleTargets) {
       try {
         await competitorQueue.add(
