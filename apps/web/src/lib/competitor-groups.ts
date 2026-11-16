@@ -23,6 +23,7 @@ export interface GroupableCompetitor {
   lastScrapedAt: string | Date | null;
   createdAt?: string | Date | null;
   review?: "pending" | "confirmed" | null;
+  deadAt?: string | null;
 }
 
 export function isPendingReview(competitor: { review?: string | null }): boolean {
@@ -51,6 +52,7 @@ export function decisionCandidates<T extends GroupableCompetitor>(
       price: parsePrice(c.currentPrice),
       matchScore: c.matchScore ?? null,
       lastScrapedAt: c.lastScrapedAt,
+      deadAt: c.deadAt ?? null,
     })),
   };
 }

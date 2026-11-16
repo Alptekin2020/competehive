@@ -11,11 +11,19 @@
 
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
-import { getScraper } from "../scrapers";
+import { Prisma } from "@prisma/client";
+import { getScraper, isListingGoneError, isProductUnavailableError } from "../scrapers";
 import { extractRetailer, isGoogleHostedLink } from "../serper";
 import { MIN_MATCH_SCORE, withinPriceBand } from "../utils/competitor-quality";
 import { readMatchReview } from "../utils/match-review";
 import { hasPackOrSpecConflict } from "../utils/title-similarity";
+import {
+  hasScrapeFailureMarks,
+  readScrapeHealth,
+  withScrapeAttempt,
+  withScrapeFailure,
+  withScrapeSuccess,
+} from "../utils/dead-listing";
 import { alertQueue } from "./processor";
 
 export interface CompetitorScrapeJobData {
@@ -54,8 +62,8 @@ export async function processCompetitorScrapeJob(
   const isAutomated =
     competitor.matchScore !== null && readMatchReview(competitor.matchAttributes) !== "confirmed";
   const neverPriced = competitor.currentPrice === null;
-  const dropIfUnpriced = async (reason: string) => {
-    if (!isAutomated || !neverPriced) return;
+  const dropIfUnpriced = async (reason: string): Promise<boolean> => {
+    if (!isAutomated || !neverPriced) return false;
     await prisma.competitor.delete({ where: { id: competitor.id } }).catch((err) => {
       logger.warn({ competitorId, err }, "Unpriced discovery competitor delete failed");
     });
@@ -63,6 +71,37 @@ export async function processCompetitorScrapeJob(
       { competitorId, reason, url: competitor.competitorUrl.slice(0, 120) },
       "Unpriced discovery competitor removed",
     );
+    return true;
+  };
+
+  // Başarısız taramayı satıra yaz (ölü ilan / art arda hata sayacı): satır
+  // işaretsiz kalırsa bayat seçimi onu her 6 saatlik turda yeniden seçiyordu.
+  // Manuel ve onaylı satırlar da işaretlenir ama asla silinmez.
+  const markFailure = async (failure: { gone: boolean; reason: string } | null) => {
+    const now = new Date();
+    const next = failure
+      ? withScrapeFailure(competitor.matchAttributes, failure, now)
+      : withScrapeAttempt(competitor.matchAttributes, now);
+    await prisma.competitor
+      .update({
+        where: { id: competitor.id },
+        data: { matchAttributes: next as Prisma.InputJsonObject },
+      })
+      .catch((err) => {
+        logger.warn({ competitorId, err }, "Competitor scrape failure mark failed");
+      });
+    const health = readScrapeHealth(next);
+    if (health.deadAt) {
+      logger.info(
+        {
+          competitorId,
+          reason: health.deadReason,
+          failures: health.scrapeFailures,
+          url: competitor.competitorUrl.slice(0, 120),
+        },
+        "Competitor listing marked dead",
+      );
+    }
   };
 
   // Google'ın ürün kartı bağlantısı bir satıcı sayfası değildir: scraper'a
@@ -78,12 +117,31 @@ export async function processCompetitorScrapeJob(
   try {
     scraped = await scraper(competitor.competitorUrl);
   } catch (err) {
-    await dropIfUnpriced("scrape-failed");
+    const gone = isListingGoneError(err);
+    if (await dropIfUnpriced(gone ? "listing-gone" : "scrape-failed")) {
+      if (gone) return { success: false };
+      throw err;
+    }
+    if (isProductUnavailableError(err)) {
+      // Sayfa yüklendi, teklif yok: ilan yaşıyor — hata sayılmaz.
+      await markFailure(null);
+      return { success: false };
+    }
+    await markFailure({
+      gone,
+      reason: gone
+        ? "listing-gone"
+        : (err instanceof Error ? err.message : String(err)).slice(0, 80),
+    });
+    // Kalkmış ilanı yeniden denemek boşuna (retryable=false).
+    if (gone) return { success: false };
     throw err;
   }
 
   if (!scraped?.price || scraped.price <= 0) {
-    await dropIfUnpriced("no-price");
+    if (!(await dropIfUnpriced("no-price"))) {
+      await markFailure({ gone: false, reason: "no-price" });
+    }
     throw new Error(
       `Competitor scrape returned no price: ${competitor.competitorUrl.slice(0, 80)}`,
     );
@@ -136,6 +194,10 @@ export async function processCompetitorScrapeJob(
       currentPrice: scraped.price,
       lastScrapedAt: now,
       ...(isPlaceholderName && scraped.name ? { competitorName: scraped.name.slice(0, 200) } : {}),
+      // Taze fiyat: ölü işareti ve hata sayacı temizlenir.
+      matchAttributes: (hasScrapeFailureMarks(competitor.matchAttributes)
+        ? withScrapeSuccess(competitor.matchAttributes, now)
+        : withScrapeAttempt(competitor.matchAttributes, now)) as Prisma.InputJsonObject,
     },
   });
 

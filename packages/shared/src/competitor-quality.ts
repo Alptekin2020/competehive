@@ -109,7 +109,27 @@ export function isPackagingListing(candidateTitle: string, sourceTitle?: string)
 // Rakip kullanılabilirlik değerlendirmesi
 // ============================================
 
-export type CompetitorIssue = "no-price" | "low-score" | "out-of-band" | "stale" | "peer-outlier";
+export type CompetitorIssue =
+  | "no-price"
+  | "low-score"
+  | "out-of-band"
+  | "stale"
+  | "peer-outlier"
+  | "dead";
+
+/**
+ * İlanın yayından kalktığı işaret (worker `scrape-competitor` işi yazar:
+ * `matchAttributes.deadAt`, ISO zaman). Kategori sayfasına yönlenen / 404 dönen
+ * ya da üst üste 3 kez taranamayan ilan; taze bir fiyat işareti temizler.
+ */
+export function readCompetitorDeadAt(matchAttributes: unknown): string | null {
+  if (!matchAttributes || typeof matchAttributes !== "object" || Array.isArray(matchAttributes)) {
+    return null;
+  }
+  const deadAt = (matchAttributes as Record<string, unknown>).deadAt;
+  if (typeof deadAt !== "string" || !deadAt) return null;
+  return Number.isFinite(new Date(deadAt).getTime()) ? deadAt : null;
+}
 
 export interface CompetitorAssessmentInput {
   /** Parse edilmiş güncel fiyat; null/0 geçersiz sayılır. */
@@ -118,6 +138,8 @@ export interface CompetitorAssessmentInput {
   matchScore: number | null;
   /** Son fiyat alınma zamanı; null = hiç alınmamış. */
   lastScrapedAt: Date | string | null;
+  /** İlan kaldırılmış işareti (`readCompetitorDeadAt`); doluysa karar dışı. */
+  deadAt?: Date | string | null;
 }
 
 export interface CompetitorAssessmentOptions {
@@ -173,6 +195,9 @@ export function assessCompetitor(
     const ageHours = (now.getTime() - scrapedAt.getTime()) / (1000 * 60 * 60);
     if (!Number.isFinite(ageHours) || ageHours > maxAgeHours) issues.push("stale");
   }
+
+  // Yayından kalkmış ilanın son fiyatı 72 saat dolmadan da karara girmemeli.
+  if (input.deadAt) issues.push("dead");
 
   return { usable: issues.length === 0, issues };
 }

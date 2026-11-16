@@ -135,16 +135,21 @@ export interface DormantCheckInput {
   createdAt?: string | Date | null;
   matchScore: number | null;
   review?: "pending" | "confirmed" | null;
+  /** İlan yayından kalktı işareti (worker `matchAttributes.deadAt`). */
+  deadAt?: string | Date | null;
 }
 
 /**
  * Uzun süredir fiyatı alınamayan OTOMATİK rakip kaydı mı? Bu kayıtlar zaten
  * hesaplara girmez (72 saat kuralı); listede ve "N rakip" sayısında durmaları
  * güncel rakip sayısını olduğundan büyük gösterir. Elle eklenen (skor null) ve
- * kullanıcının onayladığı kayıtlar asla uykuda sayılmaz.
+ * kullanıcının onayladığı kayıtlar asla uykuda sayılmaz. İlanı kaldırılmış
+ * (`deadAt`) otomatik kayıt hemen uykuda sayılır.
  */
 export function isDormantCompetitor(input: DormantCheckInput, now: Date = new Date()): boolean {
   if (input.matchScore === null || input.review === "confirmed") return false;
+  // Yayından kalktığı tespit edilen otomatik ilan 30 günü beklemeden uykuya alınır.
+  if (input.deadAt) return true;
   const reference = input.lastScrapedAt ?? input.createdAt ?? null;
   if (!reference) return false;
   const time = new Date(reference).getTime();

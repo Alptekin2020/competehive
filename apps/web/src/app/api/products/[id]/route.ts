@@ -8,7 +8,11 @@ import { updateProductSchema } from "@/lib/validation";
 import { classifyOwnPriceHistory } from "@/lib/price-history";
 import { buildPriceEvents } from "@/lib/product-insights";
 import { chartHiddenCompetitorIds, chartHiddenHistoryFlags } from "@/lib/competitor-groups";
-import { getMarketplaceInfo, getRetailerInfoFromDomain } from "@competehive/shared";
+import {
+  getMarketplaceInfo,
+  getRetailerInfoFromDomain,
+  readCompetitorDeadAt,
+} from "@competehive/shared";
 
 // Ürün URL'sinin pazaryeri görünen adı ("Trendyol", "Amazon TR"). Worker kendi
 // fiyat satırlarını bu adla yazar; bilinmeyen alan adlarında null döner.
@@ -243,6 +247,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
           review: readMatchReview(competitor.matchAttributes),
           // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
           seller: readCompetitorSeller(competitor.matchAttributes),
+          // İlan yayından kalktıysa (worker işareti): karar dışı, otomatikse uykuda.
+          deadAt: readCompetitorDeadAt(competitor.matchAttributes),
           createdAt: competitor.createdAt,
           inStock: latestStock.get(competitor.id)?.inStock ?? null,
         }),

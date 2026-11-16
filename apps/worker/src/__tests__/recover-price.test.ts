@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   leftProductPage,
   looksLikeListingPage,
   parsePriceFromJsonLd,
+  recoverPriceLightweight,
 } from "../utils/recover-price";
 
 const ld = (data: unknown) =>
@@ -59,5 +60,36 @@ describe("parsePriceFromJsonLd", () => {
 
   it("ignores offers on non-product nodes", () => {
     expect(parsePriceFromJsonLd(ld({ "@type": "WebPage", offers: { price: 126.65 } }))).toBeNull();
+  });
+});
+
+// Amazon TR'nin hafif isteğe döndürdüğü ~4 KB robot kontrolü sayfasının iskeleti.
+const AMAZON_CHALLENGE = `<!doctype html><html lang="tr"><head><title>Amazon.com.tr</title></head>
+<body><div class="a-container"><form method="get" action="/errors/validateCaptcha" name="">
+<h4>Robot olmadığınızı doğrulamak için aşağıdaki karakterleri girin</h4>
+<img src="https://images-na.ssl-images-amazon.com/captcha/abc/Captcha_xyz.jpg">
+</form><p>Otomatik erişim için lütfen api-services-support@amazon.com adresiyle iletişime geçin.</p>
+${"<!-- padding -->".repeat(200)}</div></body></html>`;
+
+describe("recoverPriceLightweight bot challenge", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("labels the Amazon robot-check page bot-challenge instead of none", async () => {
+    expect(AMAZON_CHALLENGE.length).toBeGreaterThan(3000);
+    const url = "https://www.amazon.com.tr/Philips-EP3347-90-Espresso/dp/B0C1234567";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const res = new Response(AMAZON_CHALLENGE, { status: 200 });
+        Object.defineProperty(res, "url", { value: url });
+        return res;
+      }),
+    );
+    await expect(recoverPriceLightweight(url)).resolves.toEqual({
+      price: null,
+      source: "bot-challenge",
+    });
   });
 });

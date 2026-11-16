@@ -82,6 +82,8 @@ interface CompetitorEntry {
   review?: "pending" | "confirmed" | null;
   // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
   seller?: string | null;
+  // İlan yayından kalktı (worker işareti); karar hesaplarına girmez.
+  deadAt?: string | null;
   createdAt?: string;
   // Son taramadaki stok durumu (bilinmiyorsa null).
   inStock?: boolean | null;

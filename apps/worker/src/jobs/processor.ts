@@ -6,7 +6,7 @@ import { sendAlerts, sendScrapeFailureAlert } from "../services/notifications";
 import { logger } from "../utils/logger";
 import { normalizeProductImage } from "../utils/normalize-product-image";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { assessCompetitorList } from "../utils/competitor-quality";
+import { assessCompetitorList, readCompetitorDeadAt } from "../utils/competitor-quality";
 import { isOnCooldown, markCooldown } from "../utils/alert-cooldown";
 import { getAlertConditionState, setAlertConditionState } from "../utils/alert-state";
 import { recoverOwnPriceViaSerper } from "../utils/recover-own-price";
@@ -694,7 +694,13 @@ export const alertWorker = new Worker(
     ) {
       const competitors = await prisma.competitor.findMany({
         where: { trackedProductId: productId, currentPrice: { gt: 0 } },
-        select: { competitorName: true, currentPrice: true, matchScore: true, lastScrapedAt: true },
+        select: {
+          competitorName: true,
+          currentPrice: true,
+          matchScore: true,
+          lastScrapedAt: true,
+          matchAttributes: true,
+        },
       });
       const ownPrice = Number(currentPrice);
       const mapped = competitors.map((c) => ({
@@ -702,6 +708,7 @@ export const alertWorker = new Worker(
         price: Number(c.currentPrice),
         matchScore: c.matchScore,
         lastScrapedAt: c.lastScrapedAt,
+        deadAt: readCompetitorDeadAt(c.matchAttributes),
       }));
       const assessments = assessCompetitorList(mapped, { ownPrice });
       const usable = mapped.filter((_, i) => assessments[i].usable);
