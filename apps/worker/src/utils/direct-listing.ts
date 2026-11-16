@@ -49,6 +49,14 @@ export const DIRECT_CANDIDATE_TTL_HOURS = 24;
 /** Reddedilen gerçek sayfa adayları (kayıt başına, en yenileri). */
 export const MAX_DIRECT_REJECTED = 10;
 
+/**
+ * Doğrulama taraması geçici bir hatayla (429, zaman aşımı, 5xx) düştüyse aday
+ * reddedilmez: bu kadar saat sonra yeniden önerilir. Aynı sayfa üst üste
+ * MAX_DIRECT_TRANSIENT_FAILURES kez taranamazsa reddedilir.
+ */
+export const DIRECT_TRANSIENT_RETRY_HOURS = 24;
+export const MAX_DIRECT_TRANSIENT_FAILURES = 3;
+
 /** Kayıt başına saklanan Google ürün kartı anahtarı sayısı (en yenileri). */
 export const MAX_GOOGLE_KEYS = 10;
 
@@ -303,6 +311,51 @@ export function withDirectRejected(matchAttributes: unknown, url: string): Recor
   };
 }
 
+interface DirectTransient {
+  key: string;
+  count: number;
+  retryAt: string;
+}
+
+function readDirectTransient(matchAttributes: unknown): DirectTransient | null {
+  const value = asObject(asObject(matchAttributes).directTransient);
+  return typeof value.key === "string" &&
+    typeof value.count === "number" &&
+    typeof value.retryAt === "string"
+    ? { key: value.key, count: value.count, retryAt: value.retryAt }
+    : null;
+}
+
+/**
+ * Doğrulama taraması geçici hatayla düştü (Boyner 429 gibi). Aday kalıcı
+ * reddedilmez: bekleyen aday kaldırılır, DIRECT_TRANSIENT_RETRY_HOURS sonra
+ * arama yeniden yapılır. Aynı sayfa MAX_DIRECT_TRANSIENT_FAILURES kez üst üste
+ * taranamazsa directRejected'a yazılır.
+ */
+export function withDirectTransientFailure(
+  matchAttributes: unknown,
+  url: string,
+  now: Date,
+): { attributes: Record<string, unknown>; rejected: boolean; failures: number } {
+  const key = competitorUrlKey(url);
+  const previous = readDirectTransient(matchAttributes);
+  const failures = previous && previous.key === key ? previous.count + 1 : 1;
+  if (failures >= MAX_DIRECT_TRANSIENT_FAILURES) {
+    const rest = withDirectRejected(matchAttributes, url);
+    delete rest.directTransient;
+    return { attributes: rest, rejected: true, failures };
+  }
+  const retryAt = new Date(now.getTime() + DIRECT_TRANSIENT_RETRY_HOURS * HOUR_MS);
+  return {
+    attributes: {
+      ...withoutDirectCandidate(matchAttributes),
+      directTransient: { key, count: failures, retryAt: retryAt.toISOString() },
+    },
+    rejected: false,
+    failures,
+  };
+}
+
 /** Bu kayıt için gerçek sayfa araması şimdi yapılmalı mı? */
 export function isDirectLookupDue(matchAttributes: unknown, now: Date): boolean {
   const candidate = readDirectCandidate(matchAttributes);
@@ -315,6 +368,14 @@ export function isDirectLookupDue(matchAttributes: unknown, now: Date): boolean 
   const last = readDirectLookupAt(matchAttributes);
   if (!last) return true;
   if (candidate) return true; // aday süresi doldu: doğrulama işi kayboldu
+  const transient = readDirectTransient(matchAttributes);
+  if (transient) {
+    const retryAt = new Date(transient.retryAt).getTime();
+    // Yalnızca hatadan sonra henüz yeniden aranmadıysa (aksi halde her tur aranırdı).
+    if (Number.isFinite(retryAt) && now.getTime() >= retryAt && last.getTime() < retryAt) {
+      return true;
+    }
+  }
   return now.getTime() - last.getTime() > DIRECT_LOOKUP_RETRY_DAYS * DAY_MS;
 }
 

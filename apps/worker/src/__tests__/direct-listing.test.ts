@@ -8,7 +8,9 @@ import {
 } from "../serper";
 import {
   DIRECT_LOOKUP_RETRY_DAYS,
+  DIRECT_TRANSIENT_RETRY_HOURS,
   MAX_DIRECT_REJECTED,
+  MAX_DIRECT_TRANSIENT_FAILURES,
   decideDirectMerge,
   isDirectLookupDue,
   isFreshEnoughForLookup,
@@ -25,6 +27,7 @@ import {
   withDirectCandidate,
   withDirectLookup,
   withDirectRejected,
+  withDirectTransientFailure,
   withGoogleKeys,
 } from "../utils/direct-listing";
 import { competitorUrlKey } from "../utils/url-match";
@@ -120,6 +123,58 @@ describe("gerçek sayfa araması durumu", () => {
     const again = withGoogleKeys(merged, ["google.com/shopping?catalogid=1"]);
     expect(readGoogleKeys(again)).toHaveLength(2);
     expect(readGoogleKeys(withDirectLookup({}, now))).toEqual([]);
+  });
+
+  it("geçici tarama hatası (Boyner 429) adayı reddetmez, bir gün sonra yeniden dener", () => {
+    const url =
+      "https://www.boyner.com.tr/note-loose-powder-01-invisible-makyaj-sabitleyici-matlastirici-toz-pudra-p-12345";
+    const hour = 3_600_000;
+    const pending = withDirectCandidate({ seller: "Boyner" }, url, now);
+    const first = withDirectTransientFailure(pending, url, now);
+    expect(first.rejected).toBe(false);
+    expect(first.failures).toBe(1);
+    expect(readDirectCandidate(first.attributes)).toBeNull();
+    expect(readDirectRejected(first.attributes)).toEqual([]);
+    // 7 günlük bekleme yerine DIRECT_TRANSIENT_RETRY_HOURS sonra yeniden aranır.
+    expect(isDirectLookupDue(first.attributes, new Date(now.getTime() + hour))).toBe(false);
+    const retryTime = new Date(now.getTime() + (DIRECT_TRANSIENT_RETRY_HOURS + 1) * hour);
+    expect(isDirectLookupDue(first.attributes, retryTime)).toBe(true);
+    // Yeniden arama yapıldıktan sonra her turda aranmaz.
+    const retried = withDirectCandidate(first.attributes, url, retryTime);
+    const afterRetry = withDirectTransientFailure(retried, url, retryTime);
+    expect(afterRetry.failures).toBe(2);
+    const searchedAgain = withDirectLookup(
+      afterRetry.attributes,
+      new Date(retryTime.getTime() + (DIRECT_TRANSIENT_RETRY_HOURS + 1) * hour),
+    );
+    expect(
+      isDirectLookupDue(
+        searchedAgain,
+        new Date(retryTime.getTime() + (DIRECT_TRANSIENT_RETRY_HOURS + 2) * hour),
+      ),
+    ).toBe(false);
+  });
+
+  it("aynı sayfa üst üste taranamazsa sonunda reddedilir; farklı sayfa sayacı sıfırlar", () => {
+    const url = "https://www.boyner.com.tr/note-loose-powder-p-12345";
+    let attrs: Record<string, unknown> = {};
+    let result = withDirectTransientFailure(attrs, url, now);
+    for (let i = 1; i < MAX_DIRECT_TRANSIENT_FAILURES; i++) {
+      attrs = result.attributes;
+      result = withDirectTransientFailure(attrs, url, now);
+    }
+    expect(result.rejected).toBe(true);
+    expect(readDirectRejected(result.attributes)).toEqual([competitorUrlKey(url)]);
+    expect(result.attributes.directTransient).toBeUndefined();
+
+    const a = withDirectTransientFailure({}, url, now);
+    const b = withDirectTransientFailure(
+      a.attributes,
+      "https://www.n11.com/urun/note-pudra-1",
+      now,
+    );
+    expect(b.failures).toBe(1);
+    expect(b.rejected).toBe(false);
   });
 
   it("doğrulama bekleyen aday yeni aramayı 24 saat bekletir; reddedilen aday listede kalır", () => {
