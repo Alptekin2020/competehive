@@ -4,6 +4,7 @@ import {
   withinPriceBand,
   isPackagingListing,
   assessCompetitor,
+  readCompetitorDeadAt,
   isUsableCompetitor,
   extractProductCodes,
   sharesStrongProductCode,
@@ -553,5 +554,29 @@ describe("assessCompetitorList (iki geçişli liste değerlendirmesi)", () => {
     expect(assessments[dupIdx].usable).toBe(true);
     expect(assessments[dupIdx + 1].usable).toBe(true);
     expect(assessments[dupIdx + 2].usable).toBe(true);
+  });
+});
+
+describe("dead listings (matchAttributes.deadAt)", () => {
+  const now = new Date("2026-11-16T03:26:00Z");
+  it("excludes a row whose listing is gone even while its price is fresh", () => {
+    const deadAt = readCompetitorDeadAt({ deadAt: "2026-11-16T00:00:00Z", deadReason: "gone" });
+    expect(deadAt).toBe("2026-11-16T00:00:00Z");
+    const result = assessCompetitor(
+      { price: 2499, matchScore: 88, lastScrapedAt: now, deadAt },
+      { now, ownPrice: 2600 },
+    );
+    expect(result.usable).toBe(false);
+    expect(result.issues).toEqual(["dead"]);
+  });
+
+  it("ignores missing or malformed marks", () => {
+    expect(readCompetitorDeadAt({})).toBeNull();
+    expect(readCompetitorDeadAt({ deadAt: 5 })).toBeNull();
+    expect(readCompetitorDeadAt([])).toBeNull();
+    expect(
+      assessCompetitor({ price: 2499, matchScore: 88, lastScrapedAt: now, deadAt: null }, { now })
+        .usable,
+    ).toBe(true);
   });
 });

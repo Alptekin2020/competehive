@@ -2,12 +2,13 @@ import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import type { Page } from "puppeteer";
 import { logger } from "../utils/logger";
-import { getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
+import { cacheGet, cacheSet, getCachedScrapeResult, setCachedScrapeResult } from "../utils/cache";
 import { getProxyConfig } from "../utils/proxy";
 import { cleanProductTitle } from "../utils/search-queries";
 import { assertPublicHttpUrl, UnsafeUrlError } from "../utils/url-guard";
 import { isGenericStoreMarketplace } from "../shared";
 import { parseAvailability } from "../utils/availability";
+import { isMarketplaceProductUrl } from "../serper";
 
 // ============================================
 // Scraper Types
@@ -75,6 +76,68 @@ export const PRODUCT_UNAVAILABLE_CODE = "PRODUCT_UNAVAILABLE";
 
 export function isProductUnavailableError(error: unknown): boolean {
   return error instanceof ScraperError && error.code === PRODUCT_UNAVAILABLE_CODE;
+}
+
+/**
+ * İlan yayından kalkmış: sayfa 404/410 döndü ya da pazaryeri ürün URL'si
+ * kategori/arama/ana sayfaya yönlendi (Hepsiburada ölü `-pm-` ilanlarını
+ * kategoriye gönderir). Yeniden denemek ve Puppeteer'a düşmek boşunadır.
+ */
+export const LISTING_GONE_CODE = "LISTING_GONE";
+
+export function isListingGoneError(error: unknown): boolean {
+  return error instanceof ScraperError && error.code === LISTING_GONE_CODE;
+}
+
+export function createListingGoneError(url: string, reason: string): ScraperError {
+  return new ScraperError(`İlan yayından kalkmış (${reason}): ${url.slice(0, 120)}`, {
+    code: LISTING_GONE_CODE,
+    retryable: false,
+  });
+}
+
+/**
+ * İstek ürün sayfasından başka bir yere mi yönlendi? Bilinen pazaryerlerinde
+ * ürün URL kalıbı kaybolduysa (kategori/arama/ana sayfa) fiyat okunmaz.
+ */
+export function leftProductPage(
+  requestedUrl: string,
+  finalUrl: string | null | undefined,
+): boolean {
+  if (!finalUrl || finalUrl === requestedUrl) return false;
+  return isMarketplaceProductUrl(requestedUrl) && !isMarketplaceProductUrl(finalUrl);
+}
+
+function bareHost(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 404/410 ya da ürün sayfasından kopan yönlendirme → LISTING_GONE nedeni; yoksa
+ * null. Yönlendirme yalnızca AYNI sitede kategori/arama sayfasına düştüyse ölü
+ * sayılır: başka bir alan adına (bot kontrolü, giriş sayfası) ya da bot
+ * challenge sayfasına düşmek "ilan kalktı" demek değildir.
+ */
+export function listingGoneReason(
+  requestedUrl: string,
+  status: number | null | undefined,
+  finalUrl: string | null | undefined,
+  html?: string,
+): string | null {
+  if (html && detectBotChallenge(html)) return null;
+  if (status === 404 || status === 410) return `http-${status}`;
+  if (
+    finalUrl &&
+    bareHost(finalUrl) === bareHost(requestedUrl) &&
+    leftProductPage(requestedUrl, finalUrl)
+  ) {
+    return `redirected:${finalUrl.slice(0, 100)}`;
+  }
+  return null;
 }
 
 export function createUnsupportedMarketplaceError(marketplace: string): ScraperError {
@@ -164,6 +227,7 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
       };
 
       let response: Response;
+      let finalUrl = url;
       if (config.untrustedHost) {
         // Yönlendirmeler elle izlenir; her sıçrama yeniden doğrulanır — aksi
         // halde genel bir site 302 ile iç ağa (169.254.169.254) yönlendirebilir.
@@ -181,25 +245,33 @@ async function fetchWithRetry(url: string, config: ScraperConfig, retries = 3): 
           if (++hops > MAX_REDIRECTS) throw new UnsafeUrlError("Too many redirects");
           currentUrl = new URL(location, currentUrl).toString();
         }
+        finalUrl = currentUrl;
       } else {
         response = await fetch(url, {
           headers,
           signal: controller.signal,
           redirect: "follow",
         });
+        finalUrl = response.url || url;
       }
 
       clearTimeout(timeout);
+
+      const body = await response.text();
+      const goneReason = listingGoneReason(url, response.status, finalUrl, body);
+      if (goneReason) throw createListingGoneError(url, goneReason);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return await response.text();
+      return body;
     } catch (error) {
       logger.warn(`Fetch attempt ${attempt}/${retries} failed for ${url}: ${errorMessage(error)}`);
       // Güvenlik reddi kalıcıdır — yeniden denemek yalnızca süre harcar.
-      if (attempt === retries || error instanceof UnsafeUrlError) throw error;
+      if (attempt === retries || error instanceof UnsafeUrlError || isListingGoneError(error)) {
+        throw error;
+      }
 
       // Exponential backoff
       await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
@@ -382,6 +454,8 @@ interface PuppeteerFetchResult {
   html: string;
   finalUrl: string | null;
   title: string | null;
+  /** Ana gezinme yanıtının HTTP durumu (bilinmiyorsa null). */
+  status: number | null;
 }
 
 async function scrapeWithPuppeteer(
@@ -408,7 +482,7 @@ async function scrapeWithPuppeteer(
       }
     });
 
-    await page.goto(url, {
+    const navResponse = await page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: config.timeout || 30000,
     });
@@ -419,7 +493,7 @@ async function scrapeWithPuppeteer(
     const html = await readPageHtml(page);
     const finalUrl = page.url() || null;
     const title = await page.title().catch(() => null);
-    return { html, finalUrl, title };
+    return { html, finalUrl, title, status: navResponse?.status() ?? null };
   } finally {
     await releasePage(page);
   }
@@ -666,6 +740,10 @@ type TrendyolPuppeteerErrorShape = {
   stack?: string;
 };
 
+/** API+HTML 403 devre kesicisinin Redis anahtarı ve süresi. */
+export const TRENDYOL_DIRECT_BLOCKED_KEY = "trendyol-direct-blocked";
+const TRENDYOL_BLOCK_TTL_S = 60 * 60;
+
 export async function scrapeTrendyol(
   url: string,
   config: ScraperConfig = {},
@@ -674,6 +752,16 @@ export async function scrapeTrendyol(
   if (cached) return cached;
 
   logger.info(`Scraping Trendyol: ${url}`);
+
+  // Devre kesici: API ve HTML aynı anda 403 verdiyse (Cloudflare bu IP'yi
+  // engelliyor) bir saat boyunca ikisi de atlanır — her taramada ~3,6 sn
+  // boşa gidiyordu. Redis'e ulaşılamazsa cacheGet null döner (fail-open).
+  const directBlocked = (await cacheGet<unknown>(TRENDYOL_DIRECT_BLOCKED_KEY)) !== null;
+  if (directBlocked) {
+    logger.info("Trendyol direct paths blocked (circuit breaker) — going straight to Puppeteer");
+  }
+  let apiBlocked403 = false;
+  let htmlBlocked403 = false;
 
   let lastApiError: TrendyolFetchErrorShape | null = null;
   let lastHtmlError: TrendyolFetchErrorShape | null = null;
@@ -691,7 +779,7 @@ export async function scrapeTrendyol(
   // ENOTFOUND'un nedeni buydu). Aynı productgw servisi apigw üzerinden sunuluyor.
   const contentId = extractTrendyolContentId(url);
   const merchantId = extractTrendyolMerchantId(url);
-  if (contentId) {
+  if (contentId && !directBlocked) {
     const apiUrl = `https://apigw.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}${
       merchantId ? `?merchantId=${merchantId}` : ""
     }`;
@@ -740,7 +828,10 @@ export async function scrapeTrendyol(
         // 401/403 = bot duvarı. Aynı IP'den hemen tekrar denemek sonucu
         // değiştirmiyor (prod: her üründe 2 API + 3 HTML denemesi 403, ~15 sn
         // boşa) — doğrudan sıradaki yönteme geç.
-        if (/HTTP 40[13]\b/.test(errMsg)) break;
+        if (/HTTP 40[13]\b/.test(errMsg)) {
+          apiBlocked403 = true;
+          break;
+        }
         if (attempt < apiRetries) {
           await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
         }
@@ -845,7 +936,7 @@ export async function scrapeTrendyol(
   }
 
   // Strategy 2: Direct HTML fetch
-  const htmlRetries = 3;
+  const htmlRetries = directBlocked ? 0 : 3;
   let html = "";
   for (let attempt = 1; attempt <= htmlRetries; attempt++) {
     const controller = new AbortController();
@@ -897,6 +988,9 @@ export async function scrapeTrendyol(
           `snippet="${htmlSnippetRaw.slice(0, 200)}"`,
       );
 
+      const goneReason = listingGoneReason(url, response.status, response.url || url, body);
+      if (goneReason) throw createListingGoneError(url, goneReason);
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -905,15 +999,19 @@ export async function scrapeTrendyol(
       break;
     } catch (err) {
       clearTimeout(timeout);
+      if (isListingGoneError(err)) throw err;
       const e = err as TrendyolFetchErrorShape;
       lastHtmlError = e;
       const cause = e?.cause;
       const errCode = e?.code || cause?.code || "unknown";
       const errMsg = (e?.message || cause?.message || "no-message").slice(0, 150);
       logger.warn(`Trendyol HTML fetch threw attempt=${attempt}: code=${errCode} msg="${errMsg}"`);
-      // İkinci 403'ten sonra üçüncüyü deneme: Cloudflare bu IP'yi engelliyor,
-      // bekleyip yeniden denemek yalnızca süre harcıyor — Puppeteer'a geç.
-      if (/HTTP 40[13]\b/.test(errMsg) && attempt >= 2) break;
+      // İlk 403'te dur: Cloudflare bu IP'yi engelliyor, bekleyip yeniden
+      // denemek sonucu değiştirmiyor (prod: 91 HTML denemesi, 0 başarı).
+      if (/HTTP 40[13]\b/.test(errMsg)) {
+        htmlBlocked403 = true;
+        break;
+      }
       if (attempt < htmlRetries) {
         await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
       }
@@ -947,6 +1045,15 @@ export async function scrapeTrendyol(
     }
 
     logger.warn("Trendyol HTML fetch returned no product data, trying Puppeteer");
+  }
+
+  if (!directBlocked && htmlBlocked403 && (apiBlocked403 || !contentId)) {
+    await cacheSet(
+      TRENDYOL_DIRECT_BLOCKED_KEY,
+      { at: new Date().toISOString() },
+      TRENDYOL_BLOCK_TTL_S,
+    );
+    logger.warn("Trendyol API and HTML both 403 — circuit breaker set for 1h");
   }
 
   // Strategy 3: Puppeteer (handles JS-rendered pages and bot protection)
@@ -1063,6 +1170,12 @@ export async function scrapeTrendyol(
       await releasePage(page);
     }
 
+    const goneReason = listingGoneReason(url, null, puppeteerFinalUrl, pageHtml);
+    if (goneReason) {
+      logger.info(`Trendyol Puppeteer: ilan yayından kalkmış (${goneReason})`);
+      throw createListingGoneError(url, goneReason);
+    }
+
     if (pageHtml) {
       const product = parseTrendyolHtml(pageHtml);
       if (product && product.price > 0) {
@@ -1074,6 +1187,7 @@ export async function scrapeTrendyol(
       }
     }
   } catch (err) {
+    if (isListingGoneError(err)) throw err;
     const e = err as TrendyolPuppeteerErrorShape;
     if (!lastPuppeteerError) lastPuppeteerError = e;
     logger.warn(`Trendyol Puppeteer scrape failed: ${errorMessage(err)}`);
@@ -1168,7 +1282,7 @@ async function scrapeWithFallback(
         `parsed=${product ? `name=${!!product.name},price=${product.price}` : "null"} — trying Puppeteer`,
     );
   } catch (error) {
-    if (isProductUnavailableError(error)) throw error;
+    if (isProductUnavailableError(error) || isListingGoneError(error)) throw error;
     htmlFailSummary = errorMessage(error).slice(0, 80);
     logger.warn(`${marketplaceName} HTML fetch failed: ${errorMessage(error)}, trying Puppeteer`);
   }
@@ -1182,7 +1296,14 @@ async function scrapeWithFallback(
   }
   try {
     logger.info(`Attempting ${marketplaceName} scrape with Puppeteer`);
-    const { html, finalUrl, title } = await scrapeWithPuppeteer(url, config);
+    const { html, finalUrl, title, status } = await scrapeWithPuppeteer(url, config);
+    const goneReason = listingGoneReason(url, status, finalUrl, html);
+    if (goneReason) {
+      logger.info(
+        `${marketplaceName} Puppeteer [${urlTail}]: ilan yayından kalkmış (${goneReason})`,
+      );
+      throw createListingGoneError(url, goneReason);
+    }
     const challenge = detectBotChallenge(html);
     const product = challenge ? null : parseHtml(html);
 
@@ -1209,7 +1330,7 @@ async function scrapeWithFallback(
       ? `challenge=${challenge},len=${html.length}`
       : `parse-fail,len=${html.length},finalUrl=${finalUrl?.slice(0, 80) ?? "none"}`;
   } catch (error) {
-    if (isProductUnavailableError(error)) throw error;
+    if (isProductUnavailableError(error) || isListingGoneError(error)) throw error;
     puppeteerFailSummary = errorMessage(error).slice(0, 100);
     logger.warn(`${marketplaceName} Puppeteer scrape failed: ${errorMessage(error)}`);
   }
@@ -1612,6 +1733,14 @@ export async function scrapeHepsiburada(
         break;
       }
 
+      // Yayından kalkmış `-pm-` ilanı kategori sayfasına yönlenir (prod: her
+      // 6 saatlik turda aynı ölü satır ~12 sn Puppeteer harcıyordu).
+      const goneReason = listingGoneReason(url, response.status, response.url || url, body);
+      if (goneReason) {
+        logger.info(`Hepsiburada HTML [${urlTail}]: ilan yayından kalkmış (${goneReason})`);
+        throw createListingGoneError(url, goneReason);
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -1620,6 +1749,7 @@ export async function scrapeHepsiburada(
       break;
     } catch (err) {
       clearTimeout(timeout);
+      if (isListingGoneError(err)) throw err;
       const e = err as HepsiburadaFetchErrorShape;
       lastHtmlError = e;
       const cause = e?.cause;
@@ -1729,6 +1859,12 @@ export async function scrapeHepsiburada(
       await releasePage(page);
     }
 
+    const goneReason = listingGoneReason(url, null, puppeteerFinalUrl, pageHtml);
+    if (goneReason) {
+      logger.info(`Hepsiburada Puppeteer: ilan yayından kalkmış (${goneReason})`);
+      throw createListingGoneError(url, goneReason);
+    }
+
     if (pageHtml) {
       const product = parseHepsiburadaHtml(pageHtml);
       if (product && product.price > 0) {
@@ -1743,6 +1879,7 @@ export async function scrapeHepsiburada(
       );
     }
   } catch (err) {
+    if (isListingGoneError(err)) throw err;
     const e = err as HepsiburadaPuppeteerErrorShape;
     if (!lastPuppeteerError) lastPuppeteerError = e;
     logger.warn(`Hepsiburada Puppeteer scrape failed: ${errorMessage(err)}`);

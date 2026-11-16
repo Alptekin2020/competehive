@@ -14,6 +14,7 @@ export {
   isPackagingListing,
   assessCompetitor,
   isUsableCompetitor,
+  readCompetitorDeadAt,
   extractProductCodes,
   sharesStrongProductCode,
   hasConflictingSpecs,

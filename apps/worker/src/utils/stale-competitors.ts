@@ -19,6 +19,7 @@
 //    (scrape-competitor işi) yönlendirir.
 
 import { MIN_MATCH_SCORE } from "./competitor-quality";
+import { DEAD_REPROBE_DAYS, readScrapeHealth } from "./dead-listing";
 
 export interface CompetitorMove {
   competitorName: string | null;
@@ -35,6 +36,8 @@ export interface KnownCompetitorSnapshot {
   lastScrapedAt: Date | null;
   /** Varsa: Google ürün kartı bağlantıları doğrudan taranamaz, seçilmez. */
   competitorUrl?: string | null;
+  /** Varsa: `deadAt` / `lastAttemptAt` işaretleri (utils/dead-listing). */
+  matchAttributes?: unknown;
 }
 
 /** Bağlantı Google'ın kendi sayfası mı (satıcı sayfası değil → taranamaz)? */
@@ -106,6 +109,21 @@ export function pickStaleCompetitorsForDirectScrape(
   const staleHours = opts.staleHours ?? STALE_DIRECT_SCRAPE_HOURS;
   const max = opts.max ?? MAX_DIRECT_SCRAPES_PER_URL;
   const cutoff = now.getTime() - staleHours * 60 * 60 * 1000;
+  const reprobeCutoff = now.getTime() - DEAD_REPROBE_DAYS * 24 * 60 * 60 * 1000;
+  // Prod: kategori sayfasına yönlenen ölü bir Hepsiburada ilanı "en bayat"
+  // olduğu için 6 turun 6'sında slot aldı. Ölü satır 7 gün sonra bir kez
+  // yeniden yoklanır; son 24 saatte denenmiş satır (başarısız olsa da) atlanır.
+  const notRecentlyFailed = (c: KnownCompetitorSnapshot): boolean => {
+    const health = readScrapeHealth(c.matchAttributes);
+    if (health.deadAt) {
+      // Yoklama aralığı son denemeden sayılır: başarısız yeniden yoklama
+      // ölü satırı bir 7 gün daha dinlendirir (her gün yoklanmaz).
+      const lastProbe = new Date(health.lastAttemptAt ?? health.deadAt).getTime();
+      if (lastProbe > reprobeCutoff) return false;
+    }
+    if (health.lastAttemptAt && new Date(health.lastAttemptAt).getTime() > cutoff) return false;
+    return true;
+  };
 
   return (
     competitors
@@ -116,7 +134,44 @@ export function pickStaleCompetitorsForDirectScrape(
       .filter((c) => !isGoogleHostedUrl(c.competitorUrl))
       .filter((c) => c.matchScore === null || c.matchScore >= MIN_MATCH_SCORE)
       .filter((c) => c.lastScrapedAt === null || c.lastScrapedAt.getTime() < cutoff)
+      .filter(notRecentlyFailed)
       .sort((a, b) => (a.lastScrapedAt?.getTime() ?? 0) - (b.lastScrapedAt?.getTime() ?? 0))
       .slice(0, Math.max(0, max))
   );
+}
+
+export interface StaleTrustedCounts {
+  /** Güvenilir (skor null ya da ≥ MIN) ve fiyatı 72 saatten eski rakip sayısı. */
+  stale: number;
+  /** Bunlardan Google ürün kartına bağlı olanlar (doğrudan taranamaz). */
+  googleHosted: number;
+  /** Bunlardan ölü işaretli olanlar. */
+  dead: number;
+  /** Değerlendirilen güvenilir rakip sayısı. */
+  trusted: number;
+}
+
+/**
+ * Tur sonunda tazelik ölçümü: karar hesaplarından bayatlık yüzünden düşen
+ * (72 saat, COMPETITOR_STALE_HOURS) güvenilir rakipleri sayar. Bu turda
+ * güncellenenler taze sayılır.
+ */
+export function countStaleTrustedCompetitors(
+  competitors: KnownCompetitorSnapshot[],
+  updatedIds: Set<string>,
+  now: Date,
+  staleHours = 72,
+): StaleTrustedCounts {
+  const cutoff = now.getTime() - staleHours * 60 * 60 * 1000;
+  const counts: StaleTrustedCounts = { stale: 0, googleHosted: 0, dead: 0, trusted: 0 };
+  for (const c of competitors) {
+    if (c.matchScore !== null && c.matchScore < MIN_MATCH_SCORE) continue;
+    counts.trusted++;
+    if (updatedIds.has(c.id)) continue;
+    if (c.lastScrapedAt !== null && c.lastScrapedAt.getTime() >= cutoff) continue;
+    counts.stale++;
+    if (isGoogleHostedUrl(c.competitorUrl)) counts.googleHosted++;
+    if (readScrapeHealth(c.matchAttributes).deadAt) counts.dead++;
+  }
+  return counts;
 }

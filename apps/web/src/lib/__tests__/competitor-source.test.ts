@@ -85,3 +85,28 @@ describe("readCompetitorSeller", () => {
     expect(readCompetitorSeller(null)).toBeNull();
   });
 });
+
+describe("isDormantCompetitor dead listings", () => {
+  const now = new Date("2026-11-16T03:26:00Z");
+  it("treats an automated row whose listing is gone as dormant right away", () => {
+    expect(
+      isDormantCompetitor(
+        { lastScrapedAt: "2026-11-15T10:00:00Z", matchScore: 88, deadAt: "2026-11-16T00:00:00Z" },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("never hides manual or confirmed rows, even when dead", () => {
+    const deadAt = "2026-11-16T00:00:00Z";
+    expect(
+      isDormantCompetitor({ lastScrapedAt: "2026-11-15T10:00:00Z", matchScore: null, deadAt }, now),
+    ).toBe(false);
+    expect(
+      isDormantCompetitor(
+        { lastScrapedAt: "2026-11-15T10:00:00Z", matchScore: 100, review: "confirmed", deadAt },
+        now,
+      ),
+    ).toBe(false);
+  });
+});

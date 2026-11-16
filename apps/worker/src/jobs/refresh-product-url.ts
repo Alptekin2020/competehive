@@ -17,6 +17,7 @@ import { maybeEnqueueAlerts } from "./processor";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
 import {
+  countStaleTrustedCompetitors,
   detectCompetitorMove,
   pickStaleCompetitorsForDirectScrape,
   type CompetitorMove,
@@ -26,6 +27,7 @@ import { competitorQueue } from "./processor";
 import { resolveDirectListings } from "./direct-listing";
 import { readGoogleKey } from "../utils/direct-listing";
 import { readCompetitorSeller, readMatchReview, withCompetitorSeller } from "../utils/match-review";
+import { hasScrapeFailureMarks, withScrapeSuccess } from "../utils/dead-listing";
 
 interface RefreshUrlJobData {
   productUrl: string;
@@ -403,6 +405,19 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
           },
         });
 
+        // Google'dan taze fiyat geldi: ilan yaşıyor — ölü işareti ve hata
+        // sayacı temizlenir (bellekteki kopya da, aşağıdaki satıcı yazımı
+        // eski işareti geri yazmasın diye).
+        for (const c of matchingCompetitors) {
+          if (!hasScrapeFailureMarks(c.matchAttributes)) continue;
+          const cleared = withScrapeSuccess(c.matchAttributes) as Prisma.JsonObject;
+          await prisma.competitor.update({
+            where: { id: c.id },
+            data: { matchAttributes: cleared },
+          });
+          c.matchAttributes = cleared;
+        }
+
         // Google ürün kartına bağlanan kayıtlarda gerçek satıcıyı da yaz: bu
         // tur bilinen rakiplerin çoğunu günceller, keşif turunu beklemeden
         // rozet "Google Alışveriş" yerine satıcının adını göstersin.
@@ -482,9 +497,12 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     // 7.5. Google'ın bu turda döndürmediği bilinen rakipler: bayatlamaya
     // başlayanları (24 saat+) worker'ın doğrudan scraper zincirine ver. Bu işler
     // kendi fiyat geçmişini yazar ve hareket varsa kendi uyarısını kuyruğa alır.
+    // Takma anahtarlar aynı kaydı iki kez listeler; kimliğe göre tekilleştir.
+    const uniqueKnown = [
+      ...new Map([...competitorByUrl.values()].flat().map((c) => [c.id, c])).values(),
+    ];
     const staleTargets = pickStaleCompetitorsForDirectScrape(
-      // Takma anahtarlar aynı kaydı iki kez listeler; kimliğe göre tekilleştir.
-      [...new Map([...competitorByUrl.values()].flat().map((c) => [c.id, c])).values()],
+      uniqueKnown,
       updatedCompetitorIds,
       now,
     );
@@ -506,6 +524,13 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
         console.error(`Bayat rakip tarama kuyruğa alınamadı (${target.id}):`, err);
       }
     }
+
+    // Tazelik ölçümü: karar hesaplarından 72 saat kuralıyla düşen güvenilir
+    // rakip sayısı (zaman içinde izlenebilsin diye her turda loglanır).
+    const freshness = countStaleTrustedCompetitors(uniqueKnown, updatedCompetitorIds, now);
+    console.log(
+      `🧊 Rakip tazeliği (${productUrl}): ${freshness.stale}/${freshness.trusted} güvenilir rakip 72 saatten eski (Google kartı: ${freshness.googleHosted}, ölü: ${freshness.dead}), ${directScrapesQueued} doğrudan taramaya`,
+    );
 
     // 7.6. Google ürün kartına bağlı rakipleri satıcının gerçek ürün sayfasına
     // taşı (ürün başına tur başına sınırlı arama). Hatası turu bozmaz.
