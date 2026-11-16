@@ -23,10 +23,16 @@ export {
   detectPeerPriceOutlier,
   assessCompetitorList,
   PEER_OUTLIER_MIN_PEERS,
-  PEER_OUTLIER_LOW_RATIO,
-  PEER_OUTLIER_LOW_GAP,
-  PEER_OUTLIER_HIGH_RATIO,
-  PEER_OUTLIER_HIGH_GAP,
+  PEER_OUTLIER_MAX_RATIO,
+  TITLE_PRICE_BAND_MIN_RATIO,
+  TITLE_PRICE_BAND_MAX_RATIO,
+  readMatchBasis,
+  priceBandForBasis,
+  withinPriceBandForBasis,
+  isPendingReview,
+  competitorMatchBasis,
+  priceMedian,
+  trustedPeerMedian,
 } from "./competitor-quality";
 export type {
   CompetitorIssue,
@@ -35,6 +41,9 @@ export type {
   CompetitorAssessmentOptions,
   ProductCodeRelation,
   PeerOutlierKind,
+  MatchBasis,
+  PriceBand,
+  PeerMedianResult,
 } from "./competitor-quality";
 export {
   THIN_MARGIN_PCT,

@@ -21,6 +21,7 @@ import {
   computeMargin,
   priceForMargin,
   type CompetitorAssessment,
+  type MatchBasis,
   type MarginBand,
 } from "@competehive/shared";
 import { formatPctTR, parseTrNumber } from "@/lib/format";
@@ -77,6 +78,8 @@ interface CompetitorEntry {
   matchReason: string | null;
   // "pending" = AI emin olamadı, onayınızı bekliyor; "confirmed" = siz onayladınız.
   review?: "pending" | "confirmed" | null;
+  // Eşleşme dayanağı (fiyat bandı genişliği): model-code / title / manual / confirmed.
+  matchBasis?: MatchBasis | null;
   // Google Alışveriş bağlantılı rakiplerde fiyatı veren gerçek satıcı.
   seller?: string | null;
   createdAt?: string;
@@ -755,6 +758,8 @@ export default function ProductDetailPage() {
       price: safePrice(c.currentPrice),
       matchScore: c.matchScore ?? null,
       lastScrapedAt: c.lastScrapedAt,
+      review: c.review ?? null,
+      matchBasis: c.matchBasis ?? null,
     })),
     { ownPrice, now },
   );

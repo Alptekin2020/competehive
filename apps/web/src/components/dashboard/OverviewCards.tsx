@@ -260,6 +260,7 @@ export function MarketPositionCard({ counts }: { counts: Record<MarketPosition, 
 
 const OPPORTUNITY_STYLE: Record<OpportunityKind, { tag: string; tagClass: string }> = {
   loss: { tag: "Zarar", tagClass: "bg-rose-500/15 text-rose-300" },
+  "check-price": { tag: "Fiyatı kontrol et", tagClass: "bg-orange-500/15 text-orange-300" },
   "competitor-out-of-stock": { tag: "Stok fırsatı", tagClass: "bg-blue-500/15 text-blue-300" },
   raise: { tag: "Kârı artır", tagClass: "bg-emerald-500/15 text-emerald-300" },
   undercut: { tag: "En ucuz ol", tagClass: "bg-amber-500/15 text-amber-300" },
