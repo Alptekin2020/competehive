@@ -21,6 +21,7 @@ import {
   scraperMarketplaceFor,
   verifyDirectPage,
   withDirectRejected,
+  withDirectTransientFailure,
   withGoogleKeys,
   withoutDirectCandidate,
 } from "../utils/direct-listing";
@@ -405,7 +406,30 @@ async function processDirectVerifyJob(
       { competitorId, err: err instanceof Error ? err.message : err },
       "Direct listing candidate scrape failed",
     );
-    return reject("scrape-failed");
+    // Yayından kalkmış sayfa kesin ret; diğer hatalar (429, zaman aşımı,
+    // proxy) geçicidir: aday bir gün sonra yeniden denenir.
+    if (isListingGoneError(err)) return reject("listing-gone");
+    const transient = withDirectTransientFailure(
+      competitor.matchAttributes,
+      candidate.url,
+      new Date(),
+    );
+    await prisma.competitor.update({
+      where: { id: competitor.id },
+      data: { matchAttributes: transient.attributes as Prisma.JsonObject },
+    });
+    logger.info(
+      {
+        competitorId,
+        failures: transient.failures,
+        rejected: transient.rejected,
+        url: candidate.url.slice(0, 120),
+      },
+      transient.rejected
+        ? "Direct listing candidate rejected after repeated scrape failures — Google row kept"
+        : "Direct listing candidate scrape failed transiently — will retry",
+    );
+    return { success: false };
   }
   if (!scraped?.price || scraped.price <= 0) return reject("no-price");
 
