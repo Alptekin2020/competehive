@@ -15,6 +15,7 @@ import {
 import {
   hasPackOrSpecConflict,
   isNearIdenticalTitle,
+  isSourceSubsetTitle,
   isStrongTitleOverlap,
   urlSlugText,
 } from "./utils/title-similarity";
@@ -42,7 +43,7 @@ function getOpenAIClient(): OpenAI | null {
 // ascii yazımlar kapsanır. Kural 14 backstop'u yalnızca deterministik spec/adet
 // kontrolü de temizse devreye girer — gerçek çelişkiler asla geri çevrilmez.
 const MISSING_INFO_REJECTION_RE =
-  /belirtilmemi|belirtilmedi|eksik bilgi|bilgi yok|bilgi verilmemi|yazmıyor|yazmiyor|not specified|unspecified|kapasite fark|hacim fark|boyut fark|miktar fark|renk fark/i;
+  /belirtilmemi|belirtilmedi|eksik bilgi|bilgi yok|bilgi verilmemi|yazmıyor|yazmiyor|not specified|unspecified|kapasite fark|hacim fark|boyut fark|miktar fark|renk fark|farkl[ıi]\s+(?:hacim|miktar|boyut|kapasite|gramaj)/i;
 
 // AI'ın FİYATI ürün kimliği kanıtı sayan red kalıpları ("Farklı fiyat ve model
 // bilgisi", "fiyat aralığı farklı"). Fiyat artık prompt'a hiç verilmiyor; bu
@@ -123,7 +124,10 @@ export function reevaluateUncertainMatch(
     },
   });
 
-  if (isNearIdenticalTitle(cleanedSource, cleanedCandidate)) {
+  if (
+    isNearIdenticalTitle(cleanedSource, cleanedCandidate) ||
+    isSourceSubsetTitle(cleanedSource, cleanedCandidate)
+  ) {
     return accept(88, NEAR_IDENTICAL_REASON);
   }
   if (
@@ -324,7 +328,12 @@ export async function verifyProductMatch(
   // yolunda durur ("…100-g-7-li-paket"). URL çelişki gösteriyorsa deterministik
   // kabul yapılmaz, karar AI'a kalır.
   const urlConflict = hasPackOrSpecConflict(cleanedSource, urlSlugText(candidate.url));
-  if (!urlConflict && priceInBand && isNearIdenticalTitle(cleanedSource, cleanedCandidate)) {
+  if (
+    !urlConflict &&
+    priceInBand &&
+    (isNearIdenticalTitle(cleanedSource, cleanedCandidate) ||
+      isSourceSubsetTitle(cleanedSource, cleanedCandidate))
+  ) {
     return {
       isMatch: true,
       score: 88,

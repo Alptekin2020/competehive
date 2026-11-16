@@ -14,17 +14,40 @@
 // YENİ rakipleri keşfeder — "7/24 rakip izleme" davranışı. Serper sonuçları 30 dk
 // cache'li olduğundan manuel "Rakipleri Tara" ile çakışma maliyet doğurmaz.
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { logger } from "../utils/logger";
 import { runCompetitorDiscovery } from "./competitor-processor";
-import { FREE_REFRESH_AFTER_HOURS, paidUserWhere } from "../utils/plan-cadence";
+import { PAID_REFRESH_AFTER_HOURS } from "../utils/plan-cadence";
+import { selectDueForDiscovery, withDiscoveredAt } from "../utils/discovery-schedule";
 
 // Bu süreden daha eski "tamamlanmış" ürünler yeniden taranır. Görüntüleme
 // tarafının 72 saatlik bayatlık eşiğinin altında tutuyoruz ki rakipler "Eski"ye
 // düşmeden tazelensin.
 // Bu değer ÜCRETLİ planlar içindir; ücretsiz plan günde 1 kez taranır
 // (FREE_REFRESH_AFTER_HOURS, utils/plan-cadence.ts).
-export const REFRESH_AFTER_HOURS = 6;
+export const REFRESH_AFTER_HOURS = PAID_REFRESH_AFTER_HOURS;
+
+// Vadesi gelen ürünler bellekte seçilir (JSON alanına göre sıralama Prisma'da
+// yok); taranacak aday satır sayısının güvenlik sınırı.
+const MAX_CANDIDATE_SCAN = 5000;
+
+/**
+ * Keşfin son çalışma zamanını metadata.discoveredAt'e yazar (diğer alanlar
+ * korunur). Başarısız tur da işaretlenir: aksi halde hata veren ürün her
+ * 30 dakikada bir yeniden Serper/AI maliyeti üretirdi.
+ */
+export async function markDiscovered(productId: string, at: Date): Promise<void> {
+  const current = await prisma.trackedProduct.findUnique({
+    where: { id: productId },
+    select: { metadata: true },
+  });
+  if (!current) return;
+  await prisma.trackedProduct.update({
+    where: { id: productId },
+    data: { metadata: withDiscoveredAt(current.metadata, at) as Prisma.InputJsonObject },
+  });
+}
 
 export interface CompetitorRefreshStats {
   candidates: number;
@@ -64,31 +87,29 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
   const maxRunMs = options.maxRunMs ?? 8 * 60 * 1000;
   const now = options.now ?? new Date();
   const startedAt = Date.now();
-  const cutoff = new Date(now.getTime() - refreshAfterHours * 60 * 60 * 1000);
-  const freeCutoff = new Date(
-    now.getTime() - Math.max(refreshAfterHours, FREE_REFRESH_AFTER_HOURS) * 60 * 60 * 1000,
-  );
 
-  // En uzun süredir taranmamış (veya hiç taranmamış) ürünler önce. Plan kapısı:
-  // süresi dolmuş ücretli planların ürünleri için Serper maliyeti üretme.
-  const products = await prisma.trackedProduct.findMany({
+  // Keşif vakti KENDİ zaman damgasına (metadata.discoveredAt) göre belirlenir.
+  // refreshCompletedAt'i 6 saatlik URL turu da yazıyor; ona bakınca ücretli
+  // ürünlerde keşif hiç vadesine gelmiyordu. Plan kapısı: süresi dolmuş ücretli
+  // planların ürünleri için Serper maliyeti üretme.
+  const rows = await prisma.trackedProduct.findMany({
     where: {
       status: { in: ["ACTIVE", "OUT_OF_STOCK"] },
       user: {
         OR: [{ planExpiresAt: null }, { planExpiresAt: { gte: now } }],
       },
-      // Plana göre sıklık: ücretli kullanıcıların ürünleri 6 saatte bir,
-      // diğer herkes (ücretsiz) günde bir yeniden taranır.
-      OR: [
-        { refreshCompletedAt: null },
-        { refreshCompletedAt: { lt: freeCutoff } },
-        { refreshCompletedAt: { lt: cutoff }, user: paidUserWhere(now) },
-      ],
     },
-    orderBy: { refreshCompletedAt: { sort: "asc", nulls: "first" } },
-    take: batchSize,
-    select: { id: true, productName: true, productUrl: true },
+    take: MAX_CANDIDATE_SCAN,
+    select: {
+      id: true,
+      productName: true,
+      productUrl: true,
+      metadata: true,
+      refreshCompletedAt: true,
+      user: { select: { plan: true, planStatus: true, planExpiresAt: true } },
+    },
   });
+  const products = selectDueForDiscovery(rows, now, refreshAfterHours, batchSize);
 
   const stats: CompetitorRefreshStats = {
     candidates: products.length,
@@ -123,6 +144,11 @@ async function runRefresh(options: RefreshOptions): Promise<CompetitorRefreshSta
     } catch (err) {
       stats.failed++;
       logger.error({ productId: product.id, err }, "Competitor refresh: discovery failed");
+    }
+    try {
+      await markDiscovered(product.id, new Date());
+    } catch (err) {
+      logger.error({ productId: product.id, err }, "Competitor refresh: discoveredAt write failed");
     }
   }
 

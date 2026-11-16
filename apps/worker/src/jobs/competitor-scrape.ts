@@ -139,6 +139,17 @@ export async function processCompetitorScrapeJob(
     },
   });
 
+  // Onay bekleyen aday (keşfin fiyatsız kaydettiği "pending" satır): yalnızca
+  // güncel fiyatı tutulur; kullanıcı onaylayana kadar fiyat geçmişine ve
+  // alarmlara girmez (keşif yolundaki aday davranışıyla aynı).
+  if (readMatchReview(competitor.matchAttributes) === "pending") {
+    logger.info(
+      { competitorId, price: scraped.price },
+      "Pending candidate priced by direct scrape",
+    );
+    return { success: true };
+  }
+
   await prisma.competitorPrice.create({
     data: {
       competitorId: competitor.id,
