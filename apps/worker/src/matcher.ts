@@ -20,6 +20,7 @@ import {
 } from "./utils/model-identity";
 import { isGoogleHostedUrl } from "./utils/stale-competitors";
 import {
+  canonicalBrandToken,
   hasPackOrSpecConflict,
   isNearIdenticalTitle,
   isSourceSubsetTitle,
@@ -253,6 +254,16 @@ function fallbackTokens(s: string): string[] {
     .filter((t) => t.length >= 3);
 }
 
+/** Kaynağın ilk tokenı (marka) adayda var mı? Marka eş adları (Luxell = Kumtel) eşit sayılır. */
+function sharesLeadingBrand(srcTokens: string[], candidateTokens: Set<string>): boolean {
+  if (srcTokens.length === 0) return false;
+  const brand = canonicalBrandToken(srcTokens[0]);
+  for (const token of candidateTokens) {
+    if (canonicalBrandToken(token) === brand) return true;
+  }
+  return false;
+}
+
 // AI kullanılamadığında token örtüşmesine dayalı deterministik tahmin.
 // Eski davranış (başlığın %60'lık ön ekinin adayda AYNEN geçmesi) gerçek
 // pazaryeri başlıklarında pratikte hiç tutmuyordu: kelime sırası değişince tüm
@@ -269,7 +280,7 @@ function fallbackMatch(
   const cndSet = new Set(fallbackTokens(candidateTitle));
   const overlap =
     srcTokens.length === 0 ? 0 : srcTokens.filter((t) => cndSet.has(t)).length / srcTokens.length;
-  const brandShared = srcTokens.length > 0 && cndSet.has(srcTokens[0]);
+  const brandShared = sharesLeadingBrand(srcTokens, cndSet);
   const specsConflict = hasConflictingSpecs(sourceTitle, candidateTitle);
   // Model kimliği doğrulanamıyorsa (kaynakta kod var, adayda yok) başlık
   // benzerliği tek başına "muhtemelen aynı" demeye yetmez.
@@ -412,9 +423,12 @@ export async function verifyProductMatch(
     }
     // Kısa model kodu (5-9 karakter) barkod kadar benzersiz değildir; marka
     // teyidi + fiyat bandı sağlamasıyla kabul edilir, sağlanmazsa karar AI'a kalır.
-    const srcTokens = fallbackTokens(sourceProduct.title);
-    const brandShared =
-      srcTokens.length > 0 && new Set(fallbackTokens(candidate.title)).has(srcTokens[0]);
+    // Marka eş adları sayılır: "Luxell LX-6331" ↔ "Kumtel LX-6331" (canlıda AI
+    // aynı kodlu Luxell kartlarını "farklı marka" diye 30 puanla reddediyordu).
+    const brandShared = sharesLeadingBrand(
+      fallbackTokens(sourceProduct.title),
+      new Set(fallbackTokens(candidate.title)),
+    );
     const priceOk =
       typeof sourceProduct.price !== "number" ||
       sourceProduct.price <= 0 ||

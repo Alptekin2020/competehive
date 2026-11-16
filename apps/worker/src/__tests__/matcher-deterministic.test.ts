@@ -136,3 +136,41 @@ describe("verifyProductMatch — alt-SKU / konfigürasyon varyantı (Lenovo prod
     expect(result.score).toBe(95);
   });
 });
+
+describe("verifyProductMatch — marka eş adı + ortak model kodu (Kumtel/Luxell canlı vakası)", () => {
+  const KUMTEL_SOURCE = "Kumtel LX-6331 2000 W Fanlı";
+
+  it("accepts a Luxell card with the same LX-6331 code without asking the AI", async () => {
+    for (const title of ["Luxell Fanlı Isıtıcı Lx-6331", "Luxell LX-6331 Fanlı Isıtıcı"]) {
+      const result = await verifyProductMatch(
+        { title: KUMTEL_SOURCE, price: 1010.23 },
+        { title, price: 1099 },
+      );
+      expect(result.isMatch).toBe(true);
+      expect(result.score).toBe(90);
+      expect(result.attributes.matchBasis).toBe("model-code");
+    }
+  });
+
+  it("still rejects a Luxell card with a different code (LX-6335, LX-2831)", async () => {
+    for (const title of [
+      "Kumtel Lx-6335 Fanlı Isıtıcı",
+      "Luxell Delux Elektrikli Soba Siyah LX-2831",
+    ]) {
+      const result = await verifyProductMatch(
+        { title: KUMTEL_SOURCE, price: 1010.23 },
+        { title, price: 1099 },
+      );
+      expect(result.isMatch).toBe(false);
+      expect(result.score).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it("does not treat an unrelated brand with the same code as a brand match", async () => {
+    const result = await verifyProductMatch(
+      { title: KUMTEL_SOURCE, price: 1010.23 },
+      { title: "Sinbo LX-6331 Fanlı Isıtıcı", price: 1099 },
+    );
+    expect(result.score).toBeLessThan(90);
+  });
+});

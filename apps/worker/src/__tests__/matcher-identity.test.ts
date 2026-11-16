@@ -226,15 +226,21 @@ describe("matchAttributes.matchBasis", () => {
     );
     expect(near.attributes.matchBasis).toBe("title");
 
-    aiSays({ ...UNCERTAIN, score: 85, reason: "Aynı ürün" });
-    const ai = await verifyProductMatch(
+    // Luxell = Kumtel eş adı + ortak kod: AI'sız model kodu kabulü.
+    const alias = await verifyProductMatch(
       { title: "Kumtel LX-6331 Fanlı Isıtıcı" },
       { title: "Luxell LX-6331 Fanlı Isıtıcı" },
     );
+    expect(alias.attributes.matchBasis).toBe("model-code");
+
+    create.mockReset();
+    aiSays({ ...UNCERTAIN, score: 85, reason: "Aynı ürün" });
+    const ai = await verifyProductMatch(
+      { title: "Siveno Sivrisinek ve Kene Kovucu Losyon Bitkisel 50 ml" },
+      { title: "Siveno Bitkisel Kene ve Sivrisinek Losyonu Tüm Vücut 50 ml Seyahat Boy" },
+    );
     expect(ai.attributes.matchBasis).toBe("title");
 
-    // Luxell = Kumtel takma adıyla bu çift AI'sız da kabul edilebilir; kullanılmayan
-    // yanıt bir sonraki çağrıya sızmasın.
     create.mockReset();
     aiSays({ ...UNCERTAIN, score: 20, categoryMatch: false, reason: "Farklı ürün" });
     const rejected = await verifyProductMatch(
