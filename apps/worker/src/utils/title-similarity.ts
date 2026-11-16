@@ -182,6 +182,10 @@ export function titleTokens(title: string): string[] {
     // 98", 98 inç, 98 inch → "98inch" (ekran boyutu tek token; '98"' ile
     // "98 inç" aynı yazılır, "inc" fazlalık sözcüğü üretmez).
     .replace(/(\d{2,3})\s*(?:"|”|''|inch\b|inc\b)/g, "$1inch ")
+    // "Air Fryer" ↔ "Airfryer" aynı ürün tipidir; ayrı yazılınca "air" varyant
+    // sözcüğü (MacBook Air) sanılıp kod eşleşmesi reddediliyordu (prod 16 Kasım:
+    // HD9650/90 Trendyol sayfası).
+    .replace(/\bair\s*-?\s*fryer\b/g, "airfryer")
     // "100gr", "60adet" → sayı ile birimi ayır; model kodlarına (ep3347) dokunma.
     .replace(/(\d)(gr|g|ml|lt|l|kg|mg|adet|tablet|kapsul)\b/g, "$1 $2");
   const out: string[] = [];

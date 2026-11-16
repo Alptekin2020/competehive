@@ -16,7 +16,12 @@ import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
 import { maybeEnqueueAlerts } from "./processor";
 import { competitorUrlKey, urlMatchKey } from "../utils/url-match";
 import { guardOwnPriceUpdate } from "./own-price-guard";
-import { readMatchBasis, withinPriceBandForBasis } from "../utils/competitor-quality";
+import {
+  COMPETITOR_STALE_HOURS,
+  MIN_MATCH_SCORE,
+  readMatchBasis,
+  withinPriceBandForBasis,
+} from "../utils/competitor-quality";
 import {
   countStaleTrustedCompetitors,
   detectCompetitorMove,
@@ -30,6 +35,7 @@ import {
   needsAliasDirectRefresh,
   partitionAliasHits,
   readGoogleKeys,
+  unlinkableGoogleSellers,
 } from "../utils/direct-listing";
 import { readCompetitorSeller, readMatchReview, withCompetitorSeller } from "../utils/match-review";
 import { hasScrapeFailureMarks, withScrapeSuccess } from "../utils/dead-listing";
@@ -606,6 +612,24 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     console.log(
       `🧊 Rakip tazeliği (${productUrl}): ${freshness.stale}/${freshness.trusted} güvenilir rakip 72 saatten eski (Google kartı: ${freshness.googleHosted}, ölü: ${freshness.dead}), ${directScrapesQueued} doğrudan taramaya`,
     );
+    // Teşhis: bayat Google kartlarından gerçek sayfası aranamayanların
+    // satıcıları (bilinmeyen satıcı sitesi). Yeni satıcı alan adı buradan eklenir.
+    const staleCutoff = now.getTime() - COMPETITOR_STALE_HOURS * 3_600_000;
+    const unlinkable = unlinkableGoogleSellers(
+      uniqueKnown.filter(
+        (c) =>
+          (c.matchScore === null || c.matchScore >= MIN_MATCH_SCORE) &&
+          !updatedCompetitorIds.has(c.id) &&
+          (c.lastScrapedAt === null || c.lastScrapedAt.getTime() < staleCutoff),
+      ),
+    );
+    if (unlinkable.length > 0) {
+      console.log(
+        `🧭 Gerçek sayfası aranamayan bayat Google kartları (${productUrl}): ${unlinkable
+          .map((u) => `${u.seller} x${u.count}`)
+          .join(", ")}`,
+      );
+    }
 
     // 7.6. Google ürün kartına bağlı rakipleri satıcının gerçek ürün sayfasına
     // taşı (ürün başına tur başına sınırlı arama). Hatası turu bozmaz.

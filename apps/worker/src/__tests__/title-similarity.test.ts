@@ -204,3 +204,11 @@ describe("multipack guards (Tambol prod false positive)", () => {
     expect(result.isMatch).toBe(true);
   });
 });
+
+describe("titleTokens: Air Fryer", () => {
+  it("'Air Fryer', 'Air-Fryer' ve 'Airfryer' tek token olur", () => {
+    expect(titleTokens("Philips Air Fryer XXL")).toContain("airfryer");
+    expect(titleTokens("Philips Air-Fryer XXL")).toContain("airfryer");
+    expect(titleTokens("Philips Air Fryer XXL")).not.toContain("air");
+  });
+});

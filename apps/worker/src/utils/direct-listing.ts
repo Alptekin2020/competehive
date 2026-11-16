@@ -29,6 +29,8 @@ import {
   isStrongTitleOverlap,
   urlSlugText,
 } from "./title-similarity";
+import { readCompetitorSeller } from "./match-review";
+import { isGoogleHostedUrl } from "./stale-competitors";
 import { competitorUrlKey, isSameListing } from "./url-match";
 
 /** Ürün başına tur başına en fazla bu kadar gerçek sayfa araması (Serper kredisi). */
@@ -187,6 +189,33 @@ export function sellerSiteDomain(
 }
 
 /**
+ * Teşhis: gerçek sayfası hiçbir sitede aranamayan Google kartlarının satıcı
+ * adları (sayısıyla, çoktan aza). SELLER_SITE_DOMAINS'e eklenecek satıcılar
+ * buradan görülür; "Satıcı bilinmiyor" kartlar "(bilinmiyor)" olarak sayılır.
+ */
+export function unlinkableGoogleSellers(
+  competitors: Array<{
+    competitorUrl?: string | null;
+    marketplace: string;
+    matchAttributes?: unknown;
+  }>,
+  limit = 5,
+): Array<{ seller: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const c of competitors) {
+    if (!isGoogleHostedUrl(c.competitorUrl)) continue;
+    const seller = readCompetitorSeller(c.matchAttributes);
+    if (sellerSiteDomain(c.marketplace, seller)) continue;
+    const key = seller?.trim() || "(bilinmiyor)";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([seller, count]) => ({ seller, count }))
+    .sort((a, b) => b.count - a.count || a.seller.localeCompare(b.seller))
+    .slice(0, limit);
+}
+
+/**
  * Bu pazaryerinin kaydı hangi scraper ile taranır? Özel scraper'ı olanlar
  * kendi adıyla; diğer her şey (enum'daki satıcı siteleri dahil) bağımsız mağaza
  * yolu ("CUSTOM"): her yönlendirmede SSRF denetimi, Puppeteer yok.
@@ -259,9 +288,28 @@ export function readDirectLookupAt(matchAttributes: unknown): Date | null {
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
-/** Arama denendiğini mevcut alanları koruyarak yazar. */
+/**
+ * Eşleştirme kurallarının sürümü. Kurallar yanlış retleri düzeltecek şekilde
+ * değiştiğinde artırılır: eski sürümle aranmış kayıtlar 7 günü beklemeden
+ * yeniden aranır ve eski kurallarla verilmiş retler (directRejected,
+ * directTransient) yok sayılır (prod 16 Kasım: "Air Fryer" ↔ "Airfryer" ve
+ * "Renkli" ↔ "Kapasiteli" yüzünden doğru sayfalar reddedilmişti).
+ */
+export const DIRECT_RULES_VERSION = 2;
+
+export function readDirectRulesVersion(matchAttributes: unknown): number {
+  const value = asObject(matchAttributes).directRulesV;
+  return typeof value === "number" && Number.isFinite(value) ? value : 1;
+}
+
+/** Arama denendiğini mevcut alanları koruyarak yazar (kural sürümüyle). */
 export function withDirectLookup(matchAttributes: unknown, now: Date): Record<string, unknown> {
-  return { ...asObject(matchAttributes), directLookupAt: now.toISOString() };
+  const rest = { ...asObject(matchAttributes) };
+  if (readDirectRulesVersion(matchAttributes) < DIRECT_RULES_VERSION) {
+    delete rest.directRejected;
+    delete rest.directTransient;
+  }
+  return { ...rest, directLookupAt: now.toISOString(), directRulesV: DIRECT_RULES_VERSION };
 }
 
 export interface DirectCandidate {
@@ -296,6 +344,8 @@ export function withoutDirectCandidate(matchAttributes: unknown): Record<string,
 
 /** Doğrulamada reddedilen sayfaların anahtarları (competitorUrlKey). */
 export function readDirectRejected(matchAttributes: unknown): string[] {
+  // Eski kural sürümüyle verilmiş retler geçersizdir.
+  if (readDirectRulesVersion(matchAttributes) < DIRECT_RULES_VERSION) return [];
   const raw = asObject(matchAttributes).directRejected;
   return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
 }
@@ -308,6 +358,7 @@ export function withDirectRejected(matchAttributes: unknown, url: string): Recor
   return {
     ...withoutDirectCandidate(matchAttributes),
     directRejected: list.slice(-MAX_DIRECT_REJECTED),
+    directRulesV: DIRECT_RULES_VERSION,
   };
 }
 
@@ -367,7 +418,9 @@ export function isDirectLookupDue(matchAttributes: unknown, now: Date): boolean 
   }
   const last = readDirectLookupAt(matchAttributes);
   if (!last) return true;
-  if (candidate) return true; // aday süresi doldu: doğrulama işi kayboldu
+  if (candidate) return true;
+  // Kurallar değişti: eski sürümle aranmış kayıt hemen yeniden aranır.
+  if (readDirectRulesVersion(matchAttributes) < DIRECT_RULES_VERSION) return true; // aday süresi doldu: doğrulama işi kayboldu
   const transient = readDirectTransient(matchAttributes);
   if (transient) {
     const retryAt = new Date(transient.retryAt).getTime();
@@ -510,8 +563,33 @@ export function hasColourConflict(sourceText: string, candidateText: string): bo
 // Aroma/koku/çeşit sıfatları ("Çilekli", "Fıstıklı"): ikisinde de farklı biri
 // varsa aynı kod/marka altında farklı çeşittir. Ortak "-li" sözcükler ve renk
 // sözcükleri sayılmaz.
+// Çeşit bildirmeyen genel "-li/-lu" sözcükler ("Bakır Renkli", "4 Fincan
+// Kapasiteli"): bunlar yer değiştirse de aynı üründür (prod 16 Kasım: Vatan'daki
+// Arzum OK004 sayfası "renkli" ↔ "kapasiteli" yüzünden reddedildi).
+const GENERIC_DESCRIPTOR_WORDS = new Set([
+  "renkli",
+  "kapasiteli",
+  "ozellikli",
+  "fonksiyonlu",
+  "sistemli",
+  "garantili",
+  "faturali",
+  "kutulu",
+  "teknolojili",
+  "tasarimli",
+  "modelli",
+  "ayarli",
+  "kademeli",
+  "gostergeli",
+  "ekranli",
+]);
+
 function descriptorWords(text: string): Set<string> {
-  return new Set(words(text).filter((w) => w.length >= 5 && /(li|lu)$/.test(w)));
+  return new Set(
+    words(text).filter(
+      (w) => w.length >= 5 && /(li|lu)$/.test(w) && !GENERIC_DESCRIPTOR_WORDS.has(w),
+    ),
+  );
 }
 
 export function hasSwappedDescriptor(sourceText: string, candidateText: string): boolean {
