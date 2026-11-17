@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import { shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
 import {
   extractMerchantListingFromHtml,
+  extractHepsiburadaListingsFromHtml,
   extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
+  hepsiburadaMagazaFromUrl,
+  hepsiburadaSellersFromListings,
   isOtherSellerUrl,
+  sameListingSellerUrl,
   isSameListingSellerRow,
   resolveRequestedSeller,
   sameListingAttributes,
@@ -333,5 +337,90 @@ describe("extractMerchantListingFromHtml (prod 17 Kasım: kaçışlı merchantLi
   it("returns null without a merchant", () => {
     expect(extractMerchantListingFromHtml("<html></html>")).toBeNull();
     expect(extractMerchantListingFromHtml('{"merchantListing":{"winnerVariant":{}}}')).toBeNull();
+  });
+});
+
+// Prod 17 Kasım "Hepsiburada seller diagnostics": satıcılar kaçışlı durum
+// dizgisindeki "listings" dizisinde (merchantId uuid, merchantName, prices).
+describe("Hepsiburada same-listing sellers", () => {
+  const state = JSON.stringify({
+    hasMoreListings: true,
+    listings: [
+      {
+        merchantId: "1d59f362-fd41-4bcc-a67c-d14576a64062",
+        listingId: "1db8f2b0",
+        merchantName: "PORGATECH",
+        isSalable: true,
+        prices: [{ currency: "TRY", value: 989.9 }],
+      },
+      {
+        merchantId: "959ab87e-8f7d-4480-92fd-4f8a1d8424e6",
+        merchantName: "Kumtel Türkiye",
+        isSalable: true,
+        prices: [{ currency: "TRY", value: 1043.33 }],
+      },
+      {
+        merchantId: "aa",
+        merchantName: "Stoksuz Mağaza",
+        isSalable: false,
+        prices: [{ value: 900 }],
+      },
+      { merchantId: "bb", merchantName: "Fiyatsız", prices: [] },
+    ],
+  });
+  const html = `<script>window.__STATE__ = "${state.replace(/"/g, '\\"')}";</script>`;
+  const url =
+    "https://www.hepsiburada.com/kumtel-lx-6331-2000-w-fanli-isitici-p-EVKUMTELLX6331?magaza=Kumtel%20T%C3%BCrkiye";
+
+  it("reads the escaped listings array", () => {
+    const listings = extractHepsiburadaListingsFromHtml(html);
+    expect(listings).toHaveLength(4);
+    expect(listings[0].merchantName).toBe("PORGATECH");
+  });
+
+  it("drops the own store, unsellable and priceless entries", () => {
+    const own = hepsiburadaMagazaFromUrl(url);
+    expect(own).toBe("Kumtel Türkiye");
+    const sellers = hepsiburadaSellersFromListings(extractHepsiburadaListingsFromHtml(html), own);
+    expect(sellers).toEqual([
+      { merchantId: "1d59f362-fd41-4bcc-a67c-d14576a64062", sellerName: "PORGATECH", price: 989.9 },
+    ]);
+  });
+
+  it("reads other price shapes", () => {
+    const sellers = hepsiburadaSellersFromListings(
+      [
+        { merchantId: "x", merchantName: "A", price: { amount: 120 } },
+        { merchantId: "y", merchantName: "B", prices: [{ finalPrice: 130 }] },
+        { merchantId: "z", merchantName: "C", price: "1.299,90 TL" },
+      ],
+      null,
+    );
+    expect(sellers.map((s) => s.price)).toEqual([120, 130, 1299.9]);
+  });
+
+  it("builds a magaza URL and treats it as another seller of the own listing", () => {
+    const sellerUrl = sameListingSellerUrl(url, {
+      merchantId: "1d59",
+      sellerName: "PORGATECH",
+      price: 989.9,
+    });
+    expect(sellerUrl).toBe(
+      "https://www.hepsiburada.com/kumtel-lx-6331-2000-w-fanli-isitici-p-EVKUMTELLX6331?magaza=PORGATECH",
+    );
+    expect(isOtherSellerUrl(sellerUrl, url)).toBe(true);
+    expect(isOtherSellerUrl(url, url)).toBe(false);
+    // Kendi mağaza adını bilmiyorsak koruma yok (kendi ilanımız olabilir).
+    expect(isOtherSellerUrl(sellerUrl, url.split("?")[0])).toBe(false);
+  });
+
+  it("keeps Trendyol merchantId URLs", () => {
+    expect(
+      sameListingSellerUrl("https://www.trendyol.com/x/y-p-123?boutiqueId=61", {
+        merchantId: "555",
+        sellerName: "S",
+        price: 1,
+      }),
+    ).toBe("https://www.trendyol.com/x/y-p-123?merchantId=555");
   });
 });

@@ -41,6 +41,13 @@ export function findOtherMerchantsContainer(
 
 function readPriceValue(price: unknown): number {
   if (typeof price === "number") return price;
+  if (Array.isArray(price)) {
+    for (const item of price.slice(0, 5)) {
+      const value = readPriceValue(item);
+      if (value > 0) return value;
+    }
+    return 0;
+  }
   if (typeof price === "string") {
     const n = Number(
       price
@@ -53,7 +60,15 @@ function readPriceValue(price: unknown): number {
   if (!price || typeof price !== "object") return 0;
   const p = price as Record<string, unknown>;
   if (typeof p.value === "number" && p.value > 0) return p.value;
-  for (const key of ["discountedPrice", "sellingPrice", "originalPrice"]) {
+  for (const key of [
+    "discountedPrice",
+    "finalPrice",
+    "salePrice",
+    "sellingPrice",
+    "amount",
+    "price",
+    "originalPrice",
+  ]) {
     const node = p[key];
     if (typeof node === "number" && node > 0) return node;
     if (node && typeof node === "object") {
@@ -169,8 +184,14 @@ export function isOtherSellerUrl(
   productUrl: string | null | undefined,
 ): boolean {
   const theirs = merchantIdFromUrl(competitorUrl);
-  if (!theirs) return false;
-  return theirs !== merchantIdFromUrl(productUrl);
+  if (theirs) return theirs !== merchantIdFromUrl(productUrl);
+  const theirMagaza = hepsiburadaMagazaFromUrl(competitorUrl);
+  if (!theirMagaza) return false;
+  const ownMagaza = hepsiburadaMagazaFromUrl(productUrl);
+  // Kendi mağaza adını bilmiyorsak keşfin bulduğu `?magaza=` satırı kendi
+  // ilanımız olabilir; korumayı yalnızca senkronun yazdığı satırlar
+  // (isSameListingSellerRow) alır.
+  return !!ownMagaza && foldSellerName(theirMagaza) !== foldSellerName(ownMagaza);
 }
 
 /** `start` konumundaki `[`/`{` ile eşleşen kapanışa kadar olan JSON değerini okur. */
@@ -325,4 +346,99 @@ export function resolveRequestedSeller(
   const winnerId = winner?.id !== undefined && winner?.id !== null ? String(winner.id) : null;
   if (!winnerId || winnerId === merchantId || all.length === 0) return { kind: "unknown" };
   return { kind: "reject" };
+}
+
+// ============================================
+// Hepsiburada "Diğer satıcılar"
+// ============================================
+
+/**
+ * Hepsiburada ürün sayfası (prod 17 Kasım tanı logu): satıcılar kaçışlı durum
+ * dizgisindeki `"listings":[{"merchantId":"<uuid>","listingId":…,
+ * "merchantName":"PORGATECH",…,"prices":[…]}]` dizisinde durur
+ * (`hasMoreListings` ile birlikte). Satıcı kimliği + adı taşıyan ilk dizi döner.
+ */
+export function extractHepsiburadaListingsFromHtml(html: string): Record<string, unknown>[] {
+  for (const text of htmlTextVariants(html)) {
+    for (const arr of jsonValuesAfterKey(text, "listings", "[")) {
+      if (!Array.isArray(arr)) continue;
+      const entries = arr.filter(
+        (item): item is Record<string, unknown> =>
+          !!item &&
+          typeof item === "object" &&
+          typeof (item as Record<string, unknown>).merchantName === "string",
+      );
+      if (entries.length > 0) return entries;
+    }
+  }
+  return [];
+}
+
+function foldSellerName(name: string): string {
+  return name.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+}
+
+/** Hepsiburada URL'sindeki `magaza` (satıcı adı) parametresi. */
+export function hepsiburadaMagazaFromUrl(url: string | null | undefined): string | null {
+  try {
+    const value = new URL(url ?? "").searchParams.get("magaza");
+    return value && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function listingEntryPrice(entry: Record<string, unknown>): number {
+  for (const [key, value] of Object.entries(entry)) {
+    if (!/^(price|prices|finalPrice|priceInfo)$/i.test(key)) continue;
+    const price = readPriceValue(value);
+    if (price > 0) return price;
+  }
+  return 0;
+}
+
+/**
+ * `listings` girdilerinden satıcılar. Kendi mağazamız (ürün URL'sindeki
+ * `magaza`, yoksa sayfanın gösterdiği satıcı) listeden çıkarılır; fiyatı
+ * okunamayan girdi atlanır.
+ */
+export function hepsiburadaSellersFromListings(
+  listings: Record<string, unknown>[],
+  ownSellerName: string | null,
+): SameListingSeller[] {
+  const own = ownSellerName ? foldSellerName(ownSellerName) : null;
+  const sellers: SameListingSeller[] = [];
+  const seen = new Set<string>();
+  for (const entry of listings) {
+    const name = typeof entry.merchantName === "string" ? entry.merchantName.trim() : "";
+    if (!name) continue;
+    if (own && foldSellerName(name) === own) continue;
+    const idRaw = entry.merchantId;
+    const merchantId =
+      typeof idRaw === "string" || typeof idRaw === "number" ? String(idRaw) : foldSellerName(name);
+    if (seen.has(merchantId)) continue;
+    if (entry.isSalable === false) continue;
+    const price = listingEntryPrice(entry);
+    if (!(price > 0)) continue;
+    seen.add(merchantId);
+    sellers.push({ merchantId, sellerName: name, price });
+  }
+  return sellers;
+}
+
+/**
+ * Aynı ilanın diğer satıcısının rakip URL'si: Trendyol `?merchantId=<id>`,
+ * Hepsiburada `?magaza=<satıcı adı>` (Hepsiburada satıcıyı adıyla seçer).
+ */
+export function sameListingSellerUrl(productUrl: string, seller: SameListingSeller): string | null {
+  try {
+    const parsed = new URL(productUrl);
+    const base = `${parsed.origin}${parsed.pathname}`;
+    if (/(^|\.)hepsiburada\.com$/i.test(parsed.hostname)) {
+      return seller.sellerName ? `${base}?magaza=${encodeURIComponent(seller.sellerName)}` : null;
+    }
+    return `${base}?merchantId=${seller.merchantId}`;
+  } catch {
+    return null;
+  }
 }
