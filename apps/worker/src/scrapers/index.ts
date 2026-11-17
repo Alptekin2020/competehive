@@ -9,7 +9,11 @@ import { assertPublicHttpUrl, UnsafeUrlError } from "../utils/url-guard";
 import { isGenericStoreMarketplace } from "../shared";
 import { parseAvailability } from "../utils/availability";
 import { isMarketplaceProductUrl } from "../serper";
-import { findOtherMerchantsContainer, sellersFromProductDetail } from "../utils/same-listing";
+import {
+  extractOtherMerchantsFromHtml,
+  findOtherMerchantsContainer,
+  sellersFromProductDetail,
+} from "../utils/same-listing";
 
 // ============================================
 // Scraper Types
@@ -598,6 +602,31 @@ export function parseTrendyolOtherMerchants(
 // Parse HTML for Trendyol product data
 // ============================================
 
+/** Tanı: "Diğer Satıcılar" verisinin sayfada hangi adla durduğunu bulmak için sayaçlar. */
+export function trendyolSellerMarkers(html: string): Record<string, number> {
+  const keys = [
+    "otherMerchants",
+    "otherSellers",
+    "merchantListing",
+    "merchantId",
+    "Diğer Satıcılar",
+    "diger-saticilar",
+    "sellerId",
+    "__envoy",
+  ];
+  const out: Record<string, number> = {};
+  for (const key of keys) {
+    let count = 0;
+    let idx = html.indexOf(key);
+    while (idx !== -1 && count < 999) {
+      count++;
+      idx = html.indexOf(key, idx + key.length);
+    }
+    if (count > 0) out[key] = count;
+  }
+  return out;
+}
+
 export function parseTrendyolHtml(html: string): ScrapedProduct | null {
   const $ = cheerio.load(html);
 
@@ -778,6 +807,8 @@ export async function scrapeTrendyol(
   let sellerContainer: Record<string, unknown> | null = null;
   let jsonResponseCount = 0;
   let inPageDetailStatus: number | null = null;
+  let inPageDetailError: string | null = null;
+  const jsonResponsePaths: string[] = [];
 
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
   // NOT: public.trendyol.com DNS'ten kaldırıldı (NXDOMAIN — üretimde kalıcı
@@ -1096,6 +1127,14 @@ export async function scrapeTrendyol(
         const contentType = res.headers()["content-type"] ?? "";
         if (!contentType.includes("json")) return;
         jsonResponseCount++;
+        if (jsonResponsePaths.length < 25) {
+          try {
+            const u = new URL(res.url());
+            jsonResponsePaths.push(`${u.host}${u.pathname}`.slice(0, 90));
+          } catch (err) {
+            logger.debug(`Trendyol response url unreadable: ${errorMessage(err)}`);
+          }
+        }
         res
           .text()
           .then((text) => {
@@ -1161,25 +1200,40 @@ export async function scrapeTrendyol(
         puppeteerContentLength = pageHtml.length;
         puppeteerHasInitialState = pageHtml.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
 
+        // Liste HTML'e gömülü olabilir (SSR).
+        if (pageHtml && !sellerContainer) {
+          sellerContainer = extractOtherMerchantsFromHtml(pageHtml);
+          if (sellerContainer) inPageDetailStatus = -2;
+        }
         // XHR'larda liste yoksa productDetail'i sayfanın içinden çağır: istek
         // tarayıcının çerezleri ve TLS parmak iziyle gider.
         if (pageHtml && !sellerContainer && contentId) {
           const detailUrl = `https://apigw.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}${
             merchantId ? `?merchantId=${merchantId}` : ""
           }`;
-          const inPage = await page
-            .evaluate(async (u: string) => {
-              try {
-                const r = await fetch(u, {
-                  credentials: "include",
-                  headers: { Accept: "application/json" },
-                });
-                return { status: r.status, body: await r.text() };
-              } catch (e) {
-                return { status: 0, body: String(e).slice(0, 200) };
-              }
-            }, detailUrl)
-            .catch((err: unknown) => ({ status: -1, body: errorMessage(err) }));
+          // Önce çerezsiz (CORS kimlik bilgisi istemez), olmazsa çerezli dene.
+          let inPage = { status: 0, body: "" };
+          for (const credentials of ["omit", "include"] as const) {
+            inPage = await page
+              .evaluate(
+                async (u: string, cred: "omit" | "include") => {
+                  try {
+                    const r = await fetch(u, {
+                      credentials: cred,
+                      headers: { Accept: "application/json" },
+                    });
+                    return { status: r.status, body: await r.text() };
+                  } catch (e) {
+                    return { status: 0, body: String(e).slice(0, 200) };
+                  }
+                },
+                detailUrl,
+                credentials,
+              )
+              .catch((err: unknown) => ({ status: -1, body: errorMessage(err) }));
+            if (inPage.status === 200) break;
+            inPageDetailError = `${credentials}:${inPage.status}:${inPage.body.slice(0, 120)}`;
+          }
           inPageDetailStatus = inPage.status;
           if (inPage.status === 200) {
             try {
@@ -1236,9 +1290,22 @@ export async function scrapeTrendyol(
       logger.info(
         {
           sellers: sameListing.length,
-          source: sellerContainer ? (inPageDetailStatus === null ? "xhr" : "in-page") : "none",
+          source: sellerContainer
+            ? inPageDetailStatus === null
+              ? "xhr"
+              : inPageDetailStatus === -2
+                ? "html"
+                : "in-page"
+            : "none",
           jsonResponses: jsonResponseCount,
           inPageStatus: inPageDetailStatus,
+          ...(sellerContainer
+            ? {}
+            : {
+                inPageError: inPageDetailError,
+                jsonPaths: jsonResponsePaths,
+                htmlMarkers: trendyolSellerMarkers(pageHtml),
+              }),
         },
         "Trendyol other sellers",
       );
