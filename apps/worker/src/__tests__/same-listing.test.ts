@@ -8,6 +8,7 @@ import {
   isSameListingSellerRow,
   resolveRequestedSeller,
   sameListingAttributes,
+  sellerDataSnippets,
   sellersFromProductDetail,
 } from "../utils/same-listing";
 import { countFreshDirectCompetitors, shouldSearchMarketplacePages } from "../utils/second-source";
@@ -257,5 +258,18 @@ describe("resolveRequestedSeller (prod 17 Kasım: kendi ürünü 3 kez reddedild
     });
     expect(resolveRequestedSeller(container, "100")).toMatchObject({ kind: "price", price: 50 });
     expect(resolveRequestedSeller(container, "77").kind).toBe("reject");
+  });
+});
+
+describe("sellerDataSnippets", () => {
+  it("returns the context around each key", () => {
+    const html = `${"x".repeat(200)}"merchantListing":{"a":1} ... Diğer Satıcılar (3)`;
+    const out = sellerDataSnippets(html, ["merchantListing", "Diğer Satıcılar", "yok"], 2, 30);
+    expect(Object.keys(out)).toEqual(["merchantListing", "Diğer Satıcılar"]);
+    expect(out.merchantListing[0]).toContain('"merchantListing":{"a":1}');
+  });
+
+  it("ignores the empty otherMerchantsVariants flag", () => {
+    expect(extractOtherMerchantsFromHtml('{\\"otherMerchantsVariants\\":[]}')).toBeNull();
   });
 });

@@ -226,14 +226,33 @@ export function extractOtherMerchantsFromHtml(html: string): Record<string, unkn
   return null;
 }
 
-/** Tanı: HTML'deki ilk `otherMerchants` geçişinin çevresi (tek satır). */
-export function otherMerchantsSnippet(html: string, length = 400): string | null {
-  const idx = html.indexOf("otherMerchants");
-  if (idx === -1) return null;
-  return html
-    .slice(Math.max(0, idx - 40), idx + length)
-    .replace(/\s+/g, " ")
-    .trim();
+/**
+ * Tanı: satıcı verisinin sayfada nerede durduğunu görmek için anahtar
+ * geçişlerinin çevresi (prod 17 Kasım: tek `otherMerchants` geçişi aslında
+ * boş `otherMerchantsVariants` bayrağıydı; liste `merchantListing` altında olabilir).
+ */
+export function sellerDataSnippets(
+  html: string,
+  keys: readonly string[] = ["merchantListing", "Diğer Satıcılar"],
+  perKey = 2,
+  length = 500,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const key of keys) {
+    const found: string[] = [];
+    let idx = html.indexOf(key);
+    while (idx !== -1 && found.length < perKey) {
+      found.push(
+        html
+          .slice(Math.max(0, idx - 80), idx + length)
+          .replace(/\s+/g, " ")
+          .trim(),
+      );
+      idx = html.indexOf(key, idx + key.length);
+    }
+    if (found.length > 0) out[key] = found;
+  }
+  return out;
 }
 
 export type RequestedSellerResult =
