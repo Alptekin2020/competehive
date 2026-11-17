@@ -508,6 +508,13 @@ const COLOUR_WORDS = new Set([
   "lilac",
   "mint",
   "nude",
+  // Küçük ev aletlerinde renk adı (prod 17 Kasım: Arzum OK004 "Bakır" ürüne
+  // "Nar", "Siyah" ve "Sorgul Buğdayı" ilanları bağlandı).
+  "nar",
+  "sorgul",
+  "sampanya",
+  "inci",
+  "titanyum",
 ]);
 
 const SHADE_RE = /\b(?:no|ton|shade|renk)\s*[:.]?\s*(\d{1,3})\b/g;

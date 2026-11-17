@@ -587,3 +587,16 @@ describe("pickDirectListing: aynı ürünün birden çok ilanı (prod 16 Kasım)
     expect(picked).toBeNull();
   });
 });
+
+describe("pickDirectListing: renk varyantı (prod 17 Kasım)", () => {
+  const own = "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Bakır";
+  it.each([
+    "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-kapasiteli-nar-p-185831",
+    "https://www.vatanbilgisayar.com/arzum-ok004-siyah-okka-minio-turk-kahvesi-makinesi.html",
+    "https://www.teknosa.com/arzum-ok004-okka-minio-4-fincan-kapasiteli-sorgul-bugdayi-turk-kahvesi-makinesi-p-786922064",
+  ])("başka renk ilanı seçilmez: %s", (link) => {
+    expect(
+      pickDirectListing(own, "", [{ title: "Arzum OK004 Okka Minio Türk Kahvesi Makinesi", link }]),
+    ).toBeNull();
+  });
+});

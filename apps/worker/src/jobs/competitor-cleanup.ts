@@ -29,7 +29,11 @@ import { logger } from "../utils/logger";
 import { MIN_MATCH_SCORE, isPackagingListing } from "../utils/competitor-quality";
 import { readMatchReview } from "../utils/match-review";
 import { hasPackOrSpecConflict, urlSlugText } from "../utils/title-similarity";
-import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
+import {
+  analyzeModelIdentity,
+  hasColourOrShadeConflict,
+  isModelIdentityMismatch,
+} from "../utils/model-identity";
 import { isGoogleHostedUrl } from "../utils/stale-competitors";
 import { isSameListing } from "../utils/url-match";
 
@@ -434,4 +438,60 @@ export async function backfillCompetitorMarketplaces(): Promise<{ updated: numbe
   if (updated > 0)
     logger.info({ updated, scanned: rows.length }, "Competitor marketplace backfill completed");
   return { updated };
+}
+
+// ============================================
+// Yanlış renk ilanına bağlanmış Google kartları (prod 17 Kasım)
+// ============================================
+//
+// Renk listesinde "bakır"/"nar" olmadığı için Arzum OK004 "Bakır" ürününe
+// "Nar" renkli Trendyol ilanı doğrulanıp bağlandı. Gerçek sayfaya taşınmış
+// (directVerifiedAt) ve kullanıcının onaylamadığı satırlar kendi başlıkla renk
+// açısından yeniden denetlenir; çelişen satır SİLİNMEZ, skoru 30'a indirilir
+// (karar hesaplarından çıkar, "Diğer rakipler"de görünür). Idempotent.
+
+export const WRONG_COLOUR_DOWNGRADE_SCORE = 30;
+export const WRONG_COLOUR_REASON = "Gerçek ürün sayfası farklı renk";
+
+/** Gerçek sayfaya taşınmış, onaylanmamış satır kendi ürünle renk açısından çelişiyor mu? */
+export function isWrongColourDirectLink(
+  ownTitle: string,
+  row: { competitorName: string | null; competitorUrl: string; matchAttributes: unknown },
+): boolean {
+  const attrs = row.matchAttributes as Record<string, unknown> | null;
+  if (typeof attrs?.directVerifiedAt !== "string") return false;
+  if (readMatchReview(row.matchAttributes) === "confirmed") return false;
+  if (!ownTitle) return false;
+  return (
+    hasColourOrShadeConflict(ownTitle, row.competitorName ?? "") ||
+    hasColourOrShadeConflict(ownTitle, urlSlugText(row.competitorUrl))
+  );
+}
+
+export async function downgradeWrongColourDirectLinks(): Promise<number> {
+  const rows = await prisma.competitor.findMany({
+    where: { matchScore: { gte: MIN_MATCH_SCORE } },
+    select: {
+      id: true,
+      competitorName: true,
+      competitorUrl: true,
+      matchAttributes: true,
+      trackedProduct: { select: { productName: true } },
+    },
+  });
+  const wrong = rows.filter((r) => isWrongColourDirectLink(r.trackedProduct?.productName ?? "", r));
+  for (const r of wrong) {
+    await prisma.competitor.update({
+      where: { id: r.id },
+      data: { matchScore: WRONG_COLOUR_DOWNGRADE_SCORE, matchReason: WRONG_COLOUR_REASON },
+    });
+    logger.info(
+      { competitorId: r.id, name: (r.competitorName ?? "").slice(0, 80) },
+      "Direct-linked competitor downgraded: different colour",
+    );
+  }
+  if (wrong.length > 0) {
+    logger.info({ downgraded: wrong.length }, "Wrong-colour direct links downgraded");
+  }
+  return wrong.length;
 }
