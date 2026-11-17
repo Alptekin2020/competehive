@@ -36,6 +36,7 @@ import {
 } from "../utils/model-identity";
 import { isGoogleHostedUrl } from "../utils/stale-competitors";
 import { isSameListing } from "../utils/url-match";
+import { ownColourText } from "../utils/direct-listing";
 
 // Silme bandı — görüntüleme bandından bilinçli olarak daha geniş.
 export const PURGE_BAND_MIN_RATIO = 0.2;
@@ -456,15 +457,18 @@ export const WRONG_COLOUR_REASON = "Gerçek ürün sayfası farklı renk";
 /** Gerçek sayfaya taşınmış, onaylanmamış satır kendi ürünle renk açısından çelişiyor mu? */
 export function isWrongColourDirectLink(
   ownTitle: string,
+  ownUrl: string | null | undefined,
   row: { competitorName: string | null; competitorUrl: string; matchAttributes: unknown },
 ): boolean {
   const attrs = row.matchAttributes as Record<string, unknown> | null;
   if (typeof attrs?.directVerifiedAt !== "string") return false;
   if (readMatchReview(row.matchAttributes) === "confirmed") return false;
   if (!ownTitle) return false;
+  // Kendi rengi başlıkta yazmayabilir; kendi ilan URL'sinin slug'ı da sayılır.
+  const own = ownColourText(ownTitle, ownUrl);
   return (
-    hasColourOrShadeConflict(ownTitle, row.competitorName ?? "") ||
-    hasColourOrShadeConflict(ownTitle, urlSlugText(row.competitorUrl))
+    hasColourOrShadeConflict(own, row.competitorName ?? "") ||
+    hasColourOrShadeConflict(own, urlSlugText(row.competitorUrl))
   );
 }
 
@@ -476,10 +480,12 @@ export async function downgradeWrongColourDirectLinks(): Promise<number> {
       competitorName: true,
       competitorUrl: true,
       matchAttributes: true,
-      trackedProduct: { select: { productName: true } },
+      trackedProduct: { select: { productName: true, productUrl: true } },
     },
   });
-  const wrong = rows.filter((r) => isWrongColourDirectLink(r.trackedProduct?.productName ?? "", r));
+  const wrong = rows.filter((r) =>
+    isWrongColourDirectLink(r.trackedProduct?.productName ?? "", r.trackedProduct?.productUrl, r),
+  );
   for (const r of wrong) {
     await prisma.competitor.update({
       where: { id: r.id },

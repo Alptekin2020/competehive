@@ -84,7 +84,7 @@ describe("isWrongColourDirectLink (prod 17 Kasım: Arzum OK004 Bakır)", () => {
 
   it("gerçek sayfaya taşınmış farklı renk ilanını yakalar (URL yolu dahil)", () => {
     expect(
-      isWrongColourDirectLink(own, {
+      isWrongColourDirectLink(own, null, {
         competitorName: "OK004 Okka Minio Türk Kahvesi Makinesi",
         competitorUrl:
           "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-4-fincan-kapasiteli-nar-p-185831",
@@ -99,19 +99,42 @@ describe("isWrongColourDirectLink (prod 17 Kasım: Arzum OK004 Bakır)", () => {
       competitorUrl: "https://www.trendyol.com/arzum/ok004-bakir-p-146157",
       matchAttributes: verified,
     };
-    expect(isWrongColourDirectLink(own, sameColour)).toBe(false);
+    expect(isWrongColourDirectLink(own, null, sameColour)).toBe(false);
     expect(
-      isWrongColourDirectLink(own, {
+      isWrongColourDirectLink(own, null, {
         ...sameColour,
         competitorName: "Arzum OK004 Siyah",
         matchAttributes: { ...verified, review: "confirmed" },
       }),
     ).toBe(false);
     expect(
-      isWrongColourDirectLink(own, {
+      isWrongColourDirectLink(own, null, {
         ...sameColour,
         competitorName: "Arzum OK004 Siyah",
         matchAttributes: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("kendi başlığı rengi yazmıyorsa kendi URL'sindeki renk esas alınır (gerçek prod satırı)", () => {
+    const prodTitle =
+      "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli";
+    const ownUrl =
+      "https://www.hepsiburada.com/arzum-ok004-okka-minio-turk-kahvesi-makinesi-bakir-p-HBV000001ALSP";
+    const nar = {
+      competitorName:
+        "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli, Nar",
+      competitorUrl:
+        "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-tasma-onleyici-sistem-4-fincan-kapasiteli-nar-p-185831",
+      matchAttributes: verified,
+    };
+    expect(isWrongColourDirectLink(prodTitle, null, nar)).toBe(false);
+    expect(isWrongColourDirectLink(prodTitle, ownUrl, nar)).toBe(true);
+    expect(
+      isWrongColourDirectLink(prodTitle, ownUrl, {
+        ...nar,
+        competitorName: nar.competitorName.replace("Nar", "Bakır"),
+        competitorUrl: nar.competitorUrl.replace("nar-p-185831", "bakir-p-146157"),
       }),
     ).toBe(false);
   });
