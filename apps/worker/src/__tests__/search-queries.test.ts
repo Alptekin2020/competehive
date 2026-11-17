@@ -4,6 +4,7 @@ import {
   isGenericQuery,
   extractSearchKeywords,
   stripSearchNoise,
+  stripMarketplaceSkus,
 } from "../utils/search-queries";
 
 describe("isGenericQuery", () => {
@@ -164,5 +165,19 @@ describe("isGenericQuery — placeholder türevleri (prod vakası)", () => {
   it("keeps real product names that merely contain a marketplace word", () => {
     expect(isGenericQuery("Trendyol Collection Kadın Elbise")).toBe(false);
     expect(isGenericQuery("Arzum OK004 Okka Minio")).toBe(false);
+  });
+});
+
+describe("stripMarketplaceSkus", () => {
+  it("drops Hepsiburada listing codes from AI keywords", () => {
+    expect(stripMarketplaceSkus("Doganay HB00000PNLXY Musluk Bataryası")).toBe(
+      "Doganay Musluk Bataryası",
+    );
+    expect(stripMarketplaceSkus("Sprenda HBC00007JDIE9")).toBe("Sprenda");
+  });
+
+  it("keeps real model codes", () => {
+    expect(stripMarketplaceSkus("Philips EP3347/90")).toBe("Philips EP3347/90");
+    expect(stripMarketplaceSkus("Samsung HW-Q600C")).toBe("Samsung HW-Q600C");
   });
 });
