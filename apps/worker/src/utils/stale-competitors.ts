@@ -25,6 +25,7 @@ import {
   withinPriceBandForBasis,
 } from "./competitor-quality";
 import { DEAD_REPROBE_DAYS, readScrapeHealth } from "./dead-listing";
+import { isSameListingSellerRow } from "./same-listing";
 
 export interface CompetitorMove {
   competitorName: string | null;
@@ -148,6 +149,9 @@ export function pickStaleCompetitorsForDirectScrape(
       // Prod: pazaryeri TRENDYOL kayıtlı ama bağlantısı google.com olan rakip her
       // turda Trendyol scraper'ına gidip Google'ın bot sayfasında boşa düşüyordu.
       .filter((c) => !isGoogleHostedUrl(c.competitorUrl))
+      // Aynı ilanın diğer satıcıları kendi ürün taramasıyla tazelenir; ayrı
+      // taranırsa sayfanın buybox fiyatı o satıcıya yazılabilir.
+      .filter((c) => !isSameListingSellerRow(c.matchAttributes))
       .filter((c) => c.matchScore === null || c.matchScore >= MIN_MATCH_SCORE)
       .filter((c) => c.lastScrapedAt === null || c.lastScrapedAt.getTime() < cutoff)
       .filter(notRecentlyFailed)

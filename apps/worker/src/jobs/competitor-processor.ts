@@ -41,7 +41,12 @@ import { alertQueue, competitorQueue } from "./processor";
 import { resolveDirectListings } from "./direct-listing";
 import { readGoogleKeys } from "../utils/direct-listing";
 import type { CompetitorPriceMove } from "./alert-rules";
-import { MAX_DIRECT_SCRAPES_PER_ROUND, shouldSearchMarketplacePages } from "../utils/second-source";
+import {
+  countFreshDirectCompetitors,
+  MAX_DIRECT_SCRAPES_PER_ROUND,
+  shouldSearchMarketplacePages,
+} from "../utils/second-source";
+import { isGoogleHostedUrl } from "../utils/stale-competitors";
 import {
   isCacheableRejection,
   readCachedRejection,
@@ -260,6 +265,8 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
     const now = new Date();
     let savedCount = 0;
+    // Bu turda kaydedilen Google kartı OLMAYAN rakipler (ikinci kaynak eşiği).
+    let savedDirectCount = 0;
     let priceFilteredCount = 0;
     let aiRejectedCount = 0;
     let aiUnavailableCount = 0;
@@ -294,6 +301,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         currentPrice: true,
         matchScore: true,
         matchAttributes: true,
+        lastScrapedAt: true,
       },
     });
     // Kullanıcının "bu aynı ürün değil" dediği URL'ler: bir daha getirilmez.
@@ -691,6 +699,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               promotedCandidateCount++;
               pendingCandidateCount = Math.max(0, pendingCandidateCount - 1);
               savedCount++;
+              if (!isGoogleHostedUrl(result.link)) savedDirectCount++;
               console.log(
                 `🟢 Onay bekleyen aday otomatik kabul edildi (skor ${known.matchScore} → ${promoted.score}): ${result.title.slice(0, 50)}`,
               );
@@ -917,6 +926,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           });
 
           savedCount++;
+          if (!isGoogleHostedUrl(competitorUrl)) savedDirectCount++;
           if (detectedMove) competitorMoves.push(detectedMove);
         } catch (err) {
           console.error(`Competitor kaydetme hatası (${result.link}):`, err);
@@ -957,13 +967,16 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // sayfalarını Google web aramasıyla doğrudan ara. Shopping'e ürün beslemesi
     // vermeyen satıcılar/pazaryerleri (niş ürünlerde çoğunluk) yalnızca böyle
     // bulunur. Ürün başına tur başına tek ek Serper çağrısı (30 dk önbellekli).
-    const trustedKnownCount = knownCompetitors.filter(
-      (c) => readMatchReview(c.matchAttributes) !== "pending",
-    ).length;
+    // Yalnızca taze ve taranabilir rakipler sayılır: bayat Google kartları
+    // sayılırsa (prod: EP3347'de 34'ün 29'u) ikinci kaynak hiç çalışmaz.
+    const trustedKnownCount = countFreshDirectCompetitors(knownCompetitors, new Date());
+    console.log(
+      `🌐 İkinci kaynak eşiği: bu tur ${savedDirectCount} taranabilir kayıt, ${trustedKnownCount} taze taranabilir bilinen rakip`,
+    );
     // En iyi iki sorgu denenir: kod varsa ilk sorgu "marka + tam kod", ikincisi
     // canlı ad — biri tutmayınca diğeri farklı ürün sayfalarını bulur.
     for (const webQuery of queries.slice(0, 2)) {
-      if (!shouldSearchMarketplacePages(savedCount, trustedKnownCount)) break;
+      if (!shouldSearchMarketplacePages(savedDirectCount, trustedKnownCount)) break;
       const webOutcome = await searchSingleKeyword(webQuery, seenUrls, searchMarketplacePages);
       if (webOutcome.errored) {
         // İkinci kaynak yardımcıdır: hatası turu başarısız saymaz, yalnızca loglanır.
