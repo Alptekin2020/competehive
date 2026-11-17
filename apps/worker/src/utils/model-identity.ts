@@ -327,6 +327,27 @@ export function slugModelText(url: string | null | undefined): string {
   return parts.join(" ").trim();
 }
 
+/** Arama sonucu başlığı "..." / "…" ile kesilmiş mi? */
+export function isTruncatedTitle(title: string | null | undefined): boolean {
+  return typeof title === "string" && /(?:\.{3}|…)\s*$/.test(title.trim());
+}
+
+/**
+ * Kısaltılmış başlık için ilan adresindeki ürün adı. Web arama sonuçlarının
+ * başlığı kesik gelir ("Multi Vitamin Hair Cocktail ... Bakım ..."); adet/hacim
+ * bilgisi çoğu zaman yalnızca URL yolunda kalır ("...-2ml-x-10-ampul-111492082").
+ * AI bunu görmeyince aynı ürünü "farklı miktar" diye reddediyordu (prod 17 Kasım,
+ * N11). Google kartlarında ve başlık kesik değilse null döner.
+ */
+export function truncatedTitleSlugHint(
+  title: string | null | undefined,
+  url: string | null | undefined,
+): string | null {
+  if (!isTruncatedTitle(title)) return null;
+  const slug = slugModelText(url);
+  return slug.length >= 8 ? slug : null;
+}
+
 // ============================================
 // Karşılaştırma
 // ============================================

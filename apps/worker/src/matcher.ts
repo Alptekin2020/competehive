@@ -17,6 +17,7 @@ import {
   hasColourOrShadeConflict,
   type ModelIdentity,
   type ModelIdentityAnalysis,
+  truncatedTitleSlugHint,
 } from "./utils/model-identity";
 import { isGoogleHostedUrl } from "./utils/stale-competitors";
 import {
@@ -508,6 +509,7 @@ export async function verifyProductMatch(
     // Pazaryeri SEO ekleri ("... Fiyatları ve Özellikleri") ürün kimliği değildir.
     const sourceTitle = cleanedSource;
     const candidateTitle = cleanedCandidate;
+    const candidateSlugHint = truncatedTitleSlugHint(candidate.title, candidate.url);
 
     // FİYAT BİLEREK VERİLMEZ. Bu aracın işi aynı ürünü FARKLI fiyatla satan
     // rakibi bulmaktır; fiyatı gören model farkı "farklı ürün" kanıtı sayıyordu
@@ -523,7 +525,7 @@ ${sourceProduct.marketplace ? `- Marketplace: ${sourceProduct.marketplace}` : ""
 
 ADAY ÜRÜN:
 - Başlık: "${candidateTitle}"
-${candidate.marketplace ? `- Marketplace: ${candidate.marketplace}` : ""}
+${candidateSlugHint ? `- İlan adresindeki ürün adı (başlık kısaltılmış): "${candidateSlugHint}"\n` : ""}${candidate.marketplace ? `- Marketplace: ${candidate.marketplace}` : ""}
 
 KURALLAR:
 1. AYNI ÜRÜN = aynı marka + aynı model + aynı boyut/hacim/miktar/kapasite. Renk farkı önemli değildir (aynı üründür); ama BOYUT/HACİM/MİKTAR/KAPASİTE farkı FARKLI ÜRÜNDÜR — 10ml ≠ 20ml, 50cm ≠ 70cm, 128GB ≠ 256GB, tekli ≠ 2'li paket, 1L ≠ 2L.
@@ -544,6 +546,7 @@ KURALLAR:
 
 16. "X'i 1 ARADA" MİKTAR DEĞİLDİR: "2'si 1 arada", "3'ü 1 arada", "2in1", "3 in 1", "5 Tip" gibi ifadeler ürünün ÖZELLİĞİDİR; hacim, adet veya paket bilgisi DEĞİLDİR. Bunları "farklı hacim/miktar" gerekçesi yapma; yalnızca gerçek ölçüler (ml, gr, tablet, adet) karşılaştırılır.
 17. ÜRETİCİ + ÜRÜN MARKASI: Bazı ilanlar ürün markasının önüne üretici/firma adını yazar ("Doctamin iCollagen 60 Tablet" ↔ "iCollagen 60 Tablet", "Eczacıbaşı Selpak" ↔ "Selpak"). Kaynaktaki marka adı aday başlığında da geçiyorsa, adaydaki ek üretici adı "farklı marka" DEĞİLDİR; brandMatch=true ver ve ürünü diğer kurallara göre değerlendir.
+18. KISALTILMIŞ BAŞLIK: Aday başlığı "..." ile bitiyorsa arama sonucu tarafından kesilmiştir. "İlan adresindeki ürün adı" verilmişse başlığın eksik kalan kısmıdır (Türkçe karakterleri ve marka adı olmayabilir); boyut/hacim/adet bilgisini oradan oku ve başlığın parçası say. Kesik başlıkta yazmayan bilgi Kural 14 gereği fark değildir.
 
 SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 

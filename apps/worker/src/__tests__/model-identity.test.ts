@@ -6,6 +6,7 @@ import {
   hasColourOrShadeConflict,
   parseModelCodes,
   slugModelText,
+  truncatedTitleSlugHint,
 } from "../utils/model-identity";
 
 const OWNER_SOURCE = {
@@ -326,5 +327,28 @@ describe("canlı yanlış silmeler (16 Kasım)", () => {
         },
       ),
     ).toBe("none");
+  });
+});
+
+describe("truncatedTitleSlugHint", () => {
+  it("returns the URL product name for a cut title", () => {
+    expect(
+      truncatedTitleSlugHint(
+        "Multi Vitamin Hair Cocktail Bakım …",
+        "https://www.n11.com/urun/multi-vitamin-hair-cocktail-serumu-2ml-x-10-ampul-111492082",
+      ),
+    ).toBe("multi vitamin hair cocktail serumu 2ml x 10 ampul");
+  });
+
+  it("ignores complete titles and Google cards", () => {
+    expect(
+      truncatedTitleSlugHint("Tam başlık", "https://www.n11.com/urun/tam-baslik-2ml-111492082"),
+    ).toBeNull();
+    expect(
+      truncatedTitleSlugHint(
+        "Kesik başlık ...",
+        "https://www.google.com/search?ibp=oshop&q=x&prds=pid:1",
+      ),
+    ).toBeNull();
   });
 });

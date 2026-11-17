@@ -238,6 +238,19 @@ export function extractSearchKeywords(metadata: unknown): string[] {
   return raw.filter((k): k is string => typeof k === "string" && k.trim().length > 0);
 }
 
+/**
+ * AI anahtar kelimelerinden pazaryeri ilan numaralarını siler. AI, Hepsiburada
+ * ilan kodunu model kodu sanıp sorguya koyuyordu (prod 17 Kasım: "Doganay
+ * HB00000PNLXY Musluk Bataryası"); bu kod başka hiçbir satıcıda geçmez ve
+ * sorguyu boşa harcar.
+ */
+export function stripMarketplaceSkus(keyword: string): string {
+  return keyword
+    .replace(/\bHB[CV]?0{2,}[0-9A-Z]{5,}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Marketplace placeholder adları ("Trendyol ürünü", "Hepsiburada", "Diğer" ...).
 const GENERIC_NAME_RE =
   /^(trendyol|hepsiburada|amazon(\s*tr)?|n11|pazarama|teknosa|vatan|media\s*markt|mediamarkt|decathlon|ptt\s*avm|çiçeksepeti|ciceksepeti|akakçe|akakce|cimri|epey|boyner|gratis|watsons|kitapyurdu|sephora|koçtaş|koctas|itopya|diğer|diger)\s*(ürünü|urunu|product)?$/i;
@@ -501,7 +514,9 @@ export function buildSearchQueries(
   //    keyword'ü ele). Ad jenerikse token kümesi boş kabul edilir → keyword'ler
   //    olduğu gibi denenir (placeholder ada takılıp keyword'leri kaybetme).
   const liveTokens = nameIsGeneric ? new Set<string>() : new Set(meaningfulTokens(liveName));
-  for (const kw of extractSearchKeywords(metadata)) {
+  for (const rawKw of extractSearchKeywords(metadata)) {
+    const kw = stripMarketplaceSkus(rawKw);
+    if (kw.length === 0) continue;
     const shares = liveTokens.size === 0 || meaningfulTokens(kw).some((t) => liveTokens.has(t));
     if (shares) push(kw);
   }

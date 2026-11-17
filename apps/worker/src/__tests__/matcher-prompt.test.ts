@@ -75,3 +75,45 @@ describe("verifyProductMatch — price is not product identity", () => {
     expect(result.isMatch).toBe(false);
   });
 });
+
+// Prod (17 Kasım): N11 web sonucu "Multi Vitamin Hair Cocktail Dökülme Karşıtı
+// Saç/kaş Bakım ..." kesik geldi; "2ml x 10 ampul" yalnızca URL'deydi ve AI
+// aynı ürünü "Farklı hacim/miktar" diye 40 puanla reddetti.
+describe("verifyProductMatch — truncated candidate titles", () => {
+  beforeEach(() => {
+    create.mockReset();
+    process.env.OPENAI_API_KEY = "test-key";
+  });
+
+  const source = {
+    title:
+      "Evde Aesthetic Multi Vitamin Hair Cocktail Saç Bölgesi Serum 2ml X 10 Ampul 8681677004991",
+    marketplace: "TRENDYOL",
+  };
+  const n11Url =
+    "https://www.n11.com/urun/multi-vitamin-hair-cocktail-dokulme-karsiti-sackas-bakim-serumu-2ml-x-10-ampul-vitamin-kompleksi-peptid-icerikli-111492082";
+
+  it("shows the listing URL's product name when the title is cut", async () => {
+    aiAnswer({ score: 80, brandMatch: true, modelMatch: true, categoryMatch: true, reason: "ok" });
+    await verifyProductMatch(source, {
+      title: "Multi Vitamin Hair Cocktail Dökülme Karşıtı Saç/kaş Bakım ...",
+      url: n11Url,
+      marketplace: "N11",
+    });
+    const prompt = String(create.mock.calls[0][0].messages[0].content);
+    expect(prompt).toContain("İlan adresindeki ürün adı (başlık kısaltılmış)");
+    expect(prompt).toContain("2ml x 10 ampul");
+    expect(prompt).not.toContain("111492082");
+  });
+
+  it("adds nothing for a complete title", async () => {
+    aiAnswer({ score: 80, brandMatch: true, modelMatch: true, categoryMatch: true, reason: "ok" });
+    await verifyProductMatch(source, {
+      title: "Evde Aesthetic Multi Vitamin Hair Cocktail Serum 2ml x 10 Ampul",
+      url: n11Url,
+      marketplace: "N11",
+    });
+    const prompt = String(create.mock.calls[0][0].messages[0].content);
+    expect(prompt).not.toContain("İlan adresindeki ürün adı (başlık");
+  });
+});
