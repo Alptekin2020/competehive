@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
+import { isWrongColourDirectLink, shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
 
 const slipper = {
   productName: "Havaianas Top Tiras Kadın Gümüş Terlik 4137428-5178 Gümüş - Gri",
@@ -75,5 +75,44 @@ describe("shouldPurgeCompetitor", () => {
         { productName: "Avantajpack Koli 20x15x10 25 Adet", ownPrice: 10 },
       ),
     ).toBeNull();
+  });
+});
+
+describe("isWrongColourDirectLink (prod 17 Kasım: Arzum OK004 Bakır)", () => {
+  const own = "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Bakır";
+  const verified = { directVerifiedAt: "2026-11-17T03:40:43Z" };
+
+  it("gerçek sayfaya taşınmış farklı renk ilanını yakalar (URL yolu dahil)", () => {
+    expect(
+      isWrongColourDirectLink(own, {
+        competitorName: "OK004 Okka Minio Türk Kahvesi Makinesi",
+        competitorUrl:
+          "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-4-fincan-kapasiteli-nar-p-185831",
+        matchAttributes: verified,
+      }),
+    ).toBe(true);
+  });
+
+  it("aynı renk, onaylı satır ve taşınmamış satır dokunulmaz", () => {
+    const sameColour = {
+      competitorName: "Arzum OK004 Okka Minio Bakır",
+      competitorUrl: "https://www.trendyol.com/arzum/ok004-bakir-p-146157",
+      matchAttributes: verified,
+    };
+    expect(isWrongColourDirectLink(own, sameColour)).toBe(false);
+    expect(
+      isWrongColourDirectLink(own, {
+        ...sameColour,
+        competitorName: "Arzum OK004 Siyah",
+        matchAttributes: { ...verified, review: "confirmed" },
+      }),
+    ).toBe(false);
+    expect(
+      isWrongColourDirectLink(own, {
+        ...sameColour,
+        competitorName: "Arzum OK004 Siyah",
+        matchAttributes: {},
+      }),
+    ).toBe(false);
   });
 });

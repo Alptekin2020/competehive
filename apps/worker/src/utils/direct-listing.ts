@@ -21,7 +21,11 @@ import {
   isPackagingListing,
   sharesStrongProductCode,
 } from "./competitor-quality";
-import { compareModelIdentity, isModelIdentityMismatch } from "./model-identity";
+import {
+  compareModelIdentity,
+  hasColourOrShadeConflict,
+  isModelIdentityMismatch,
+} from "./model-identity";
 import {
   compareTitles,
   hasPackOrSpecConflict,
@@ -519,6 +523,16 @@ const COLOUR_WORDS: Record<string, string> = {
   bronz: "bronz",
   bordo: "bordo",
   turkuaz: "turkuaz",
+  bakir: "bakir",
+  copper: "bakir",
+  krem: "krem",
+  cream: "krem",
+  ekru: "ekru",
+  nar: "nar",
+  sorgul: "sorgul",
+  sampanya: "sampanya",
+  inci: "inci",
+  titanyum: "titanyum",
 };
 
 function words(text: string): string[] {
@@ -625,7 +639,12 @@ export function directListingRejectReason(
   if (hasBundleSignal(ownTitle, title) || hasBundleSignal(ownTitle, slug)) return "bundle";
   // Renk: kaynak renk yazmıyorsa Google kartının rengi esas alınır.
   const colourSource = colours(ownTitle).size > 0 ? ownTitle : competitorTitle;
-  if (hasColourConflict(colourSource, title) || hasColourConflict(colourSource, slug)) {
+  if (
+    hasColourConflict(colourSource, title) ||
+    hasColourConflict(colourSource, slug) ||
+    hasColourOrShadeConflict(colourSource, title) ||
+    hasColourOrShadeConflict(colourSource, slug)
+  ) {
     return "colour";
   }
   const codeRelation = compareProductCodes(ownTitle, title);

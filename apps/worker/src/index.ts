@@ -12,6 +12,7 @@ import {
   cleanupJunkCompetitors,
   purgeRecoveryBugCompetitors,
   purgeTitleAcceptMismatches,
+  downgradeWrongColourDirectLinks,
 } from "./jobs/competitor-cleanup";
 import { refreshStaleCompetitorPrices } from "./jobs/competitor-price-refresh";
 import { processRefreshJob } from "./jobs/refresh-product";
@@ -219,6 +220,7 @@ async function start() {
     await cleanupJunkCompetitors();
     await purgeRecoveryBugCompetitors();
     await purgeTitleAcceptMismatches();
+    await downgradeWrongColourDirectLinks();
   } catch (err) {
     logger.error({ err }, "Junk-competitor cleanup failed — continuing");
   }
