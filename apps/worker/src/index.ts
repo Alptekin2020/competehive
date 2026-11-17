@@ -19,6 +19,7 @@ import { processRefreshJob } from "./jobs/refresh-product";
 import { processRefreshUrlJob } from "./jobs/refresh-product-url";
 import { pruneOldPriceHistory } from "./jobs/history-retention";
 import { DAILY_DIGEST_CHECK_MS, runDailyDigestIfDue } from "./jobs/daily-digest";
+import { COVERAGE_REPORT_INTERVAL_MS, logCompetitorCoverage } from "./jobs/coverage-report";
 import { prisma } from "./db";
 import { runMigrations } from "./migrate";
 import { logger } from "./utils/logger";
@@ -317,6 +318,11 @@ async function start() {
     }
   };
   setInterval(() => void runRefreshUrlCycleIfDue(), REFRESH_CYCLE_CHECK_MS);
+
+  // Rakip bulma kapsamı (en az 3 güvenilir taze rakibi olan ürün oranı):
+  // açılıştan 5 dk sonra ve 3 saatte bir loglanır ("📊 Rakip kapsamı").
+  setInterval(() => void logCompetitorCoverage(), COVERAGE_REPORT_INTERVAL_MS);
+  setTimeout(() => void logCompetitorCoverage(), 5 * 60 * 1000);
   // Açılıştan 3 dk sonra ilk kontrol: deploy sırasında vakti geçmiş bir tur
   // varsa 6 saat daha beklemeden çalışır.
   setTimeout(() => void runRefreshUrlCycleIfDue(), 3 * 60 * 1000);
