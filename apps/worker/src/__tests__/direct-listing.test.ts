@@ -600,3 +600,29 @@ describe("pickDirectListing: renk varyantı (prod 17 Kasım)", () => {
     ).toBeNull();
   });
 });
+
+describe("pickDirectListing: kendi rengi yalnızca kendi URL'sinde (prod 17 Kasım)", () => {
+  const prodTitle =
+    "Arzum OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli";
+  const ownUrl =
+    "https://www.hepsiburada.com/arzum-ok004-okka-minio-turk-kahvesi-makinesi-bakir-p-HBV000001ALSP";
+  const nar = {
+    title: "OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli, Nar",
+    link: "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-tasma-onleyici-sistem-4-fincan-kapasiteli-nar-p-185831",
+  };
+  const bakir = {
+    title:
+      "OK004 Okka Minio Türk Kahvesi Makinesi Taşma Önleyici Sistem, 4 Fincan Kapasiteli, Bakır",
+    link: "https://www.trendyol.com/arzum/ok004-okka-minio-turk-kahvesi-makinesi-tasma-onleyici-sistem-4-fincan-kapasiteli-bakir-p-146157",
+  };
+
+  it("nar ilanı reddedilir, bakır ilanı seçilir", () => {
+    expect(pickDirectListing(prodTitle, "", [nar], ownUrl)).toBeNull();
+    expect(pickDirectListing(prodTitle, "", [nar, bakir], ownUrl)?.link).toBe(bakir.link);
+  });
+
+  it("doğrulamada da kendi URL'sindeki renk sayılır", () => {
+    expect(verifyDirectPage(prodTitle, "", nar.title, nar.link, ownUrl)).toBe(false);
+    expect(verifyDirectPage(prodTitle, "", bakir.title, bakir.link, ownUrl)).toBe(true);
+  });
+});

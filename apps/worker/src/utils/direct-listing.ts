@@ -300,7 +300,7 @@ export function readDirectLookupAt(matchAttributes: unknown): Date | null {
  * directTransient) yok sayılır (prod 16 Kasım: "Air Fryer" ↔ "Airfryer" ve
  * "Renkli" ↔ "Kapasiteli" yüzünden doğru sayfalar reddedilmişti).
  */
-export const DIRECT_RULES_VERSION = 3;
+export const DIRECT_RULES_VERSION = 4;
 
 export function readDirectRulesVersion(matchAttributes: unknown): number {
   const value = asObject(matchAttributes).directRulesV;
@@ -624,6 +624,7 @@ export function directListingRejectReason(
   ownTitle: string,
   competitorTitle: string,
   candidate: DirectListingCandidate,
+  ownUrl?: string | null,
 ): string | null {
   const title = candidate.title;
   const slug = urlSlugText(candidate.link);
@@ -637,8 +638,12 @@ export function directListingRejectReason(
     return "spec";
   }
   if (hasBundleSignal(ownTitle, title) || hasBundleSignal(ownTitle, slug)) return "bundle";
-  // Renk: kaynak renk yazmıyorsa Google kartının rengi esas alınır.
-  const colourSource = colours(ownTitle).size > 0 ? ownTitle : competitorTitle;
+  // Renk: kendi ürünün rengi başlıkta ya da kendi URL'sinde ("…-bakir-p-HBV…")
+  // yazar; ikisinde de yoksa Google kartının rengi esas alınır (prod 17 Kasım:
+  // "Arzum OK004 … 4 Fincan Kapasiteli" başlığı rengi yazmıyordu, bakır ürün
+  // Trendyol'daki nar ilanına bağlandı).
+  const ownText = ownColourText(ownTitle, ownUrl);
+  const colourSource = colours(ownText).size > 0 ? ownText : competitorTitle;
   if (
     hasColourConflict(colourSource, title) ||
     hasColourConflict(colourSource, slug) ||
@@ -653,6 +658,12 @@ export function directListingRejectReason(
   if (codeRelation === "color-variant") return "colour-code";
   if (hasSwappedDescriptor(ownTitle, title)) return "swapped-descriptor";
   return null;
+}
+
+/** Kendi ürünün renk metni: başlık + kendi ilan URL'sinin slug'ı. */
+export function ownColourText(ownTitle: string, ownUrl?: string | null): string {
+  const slug = ownUrl ? urlSlugText(ownUrl) : "";
+  return slug ? `${ownTitle} ${slug}` : ownTitle;
 }
 
 export interface ScoredDirectCandidate {
@@ -671,11 +682,12 @@ export function scoreDirectCandidate(
   ownTitle: string,
   competitorTitle: string,
   candidate: DirectListingCandidate,
+  ownUrl?: string | null,
 ): ScoredDirectCandidate | null {
   const title = candidate.title?.trim();
   if (!title || !candidate.link) return null;
   const normalized = { title, link: candidate.link };
-  if (directListingRejectReason(ownTitle, competitorTitle, normalized)) return null;
+  if (directListingRejectReason(ownTitle, competitorTitle, normalized, ownUrl)) return null;
 
   const sim = compareTitles(ownTitle, title);
   const coverage = 5 * sim.sourceCoverage + 5 * sim.candidateCoverage;
@@ -740,7 +752,7 @@ export function pickDirectListing(
       );
       return !isModelIdentityMismatch(identity) && identity !== "unknown";
     })
-    .map((c) => scoreDirectCandidate(ownTitle, competitorTitle, c))
+    .map((c) => scoreDirectCandidate(ownTitle, competitorTitle, c, ownUrl))
     .filter((s): s is ScoredDirectCandidate => s !== null)
     .sort((a, b) => b.score - a.score);
   if (scored.length === 0) return null;
@@ -764,12 +776,16 @@ export function verifyDirectPage(
   competitorTitle: string,
   pageTitle: string | null | undefined,
   url: string,
+  ownUrl?: string | null,
 ): boolean {
   if (!pageTitle || pageTitle.trim().length < 3) return false;
   if (hasPackOrSpecConflict(ownTitle, pageTitle)) return false;
   const identity = compareModelIdentity({ title: ownTitle }, { title: pageTitle, url });
   if (isModelIdentityMismatch(identity)) return false;
-  return scoreDirectCandidate(ownTitle, competitorTitle, { title: pageTitle, link: url }) !== null;
+  return (
+    scoreDirectCandidate(ownTitle, competitorTitle, { title: pageTitle, link: url }, ownUrl) !==
+    null
+  );
 }
 
 // ============================================

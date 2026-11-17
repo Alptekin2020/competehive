@@ -364,7 +364,7 @@ async function processDirectVerifyJob(
       trackedProductId: true,
       matchScore: true,
       matchAttributes: true,
-      trackedProduct: { select: { currentPrice: true, productName: true } },
+      trackedProduct: { select: { currentPrice: true, productName: true, productUrl: true } },
     },
   });
   if (!competitor) return { success: false };
@@ -435,7 +435,16 @@ async function processDirectVerifyJob(
 
   const ownName = cleanProductTitle(competitor.trackedProduct?.productName ?? "");
   const cardTitle = cleanProductTitle(competitor.competitorName ?? "");
-  if (!ownName || !verifyDirectPage(ownName, cardTitle, scraped.name, candidate.url)) {
+  if (
+    !ownName ||
+    !verifyDirectPage(
+      ownName,
+      cardTitle,
+      scraped.name,
+      candidate.url,
+      competitor.trackedProduct?.productUrl,
+    )
+  ) {
     return reject("title-mismatch");
   }
   const isAutomated =
