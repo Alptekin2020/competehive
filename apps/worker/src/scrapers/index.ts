@@ -12,6 +12,8 @@ import { isMarketplaceProductUrl } from "../serper";
 import {
   extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
+  otherMerchantsSnippet,
+  resolveRequestedSeller,
   sellersFromProductDetail,
 } from "../utils/same-listing";
 
@@ -1300,8 +1302,11 @@ export async function scrapeTrendyol(
           jsonResponses: jsonResponseCount,
           inPageStatus: inPageDetailStatus,
           ...(sellerContainer
-            ? {}
+            ? sameListing.length === 0
+              ? { sample: JSON.stringify(sellerContainer.otherMerchants ?? null).slice(0, 600) }
+              : {}
             : {
+                snippet: otherMerchantsSnippet(pageHtml),
                 inPageError: inPageDetailError,
                 jsonPaths: jsonResponsePaths,
                 htmlMarkers: trendyolSellerMarkers(pageHtml),
@@ -1314,15 +1319,11 @@ export async function scrapeTrendyol(
       // listede de buybox'ta da yoksa (satmayı bırakmış) sonuç reddedilir.
       // Liste okunamadıysa eski davranış (sayfa fiyatı) sürer.
       if (product && merchantId && sellerContainer) {
-        const requested = sellersFromProductDetail(sellerContainer, "__none__").find(
-          (s) => s.merchantId === merchantId,
-        );
-        const winner = sellerContainer.merchant as Record<string, unknown> | undefined;
-        const winnerIsRequested = winner?.id !== undefined && String(winner.id) === merchantId;
-        if (requested) {
+        const requested = resolveRequestedSeller(sellerContainer, merchantId);
+        if (requested.kind === "price") {
           product.price = requested.price;
           product.sellerName = requested.sellerName ?? product.sellerName;
-        } else if (!winnerIsRequested) {
+        } else if (requested.kind === "reject") {
           logger.warn(
             `Trendyol Puppeteer: istenen satıcı (merchantId=${merchantId}) sayfada doğrulanamadı — sonuç reddedildi`,
           );
