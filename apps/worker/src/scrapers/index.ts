@@ -10,6 +10,7 @@ import { isGenericStoreMarketplace } from "../shared";
 import { parseAvailability } from "../utils/availability";
 import { isMarketplaceProductUrl } from "../serper";
 import {
+  extractMerchantListingFromHtml,
   extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
   resolveRequestedSeller,
@@ -1204,6 +1205,10 @@ export async function scrapeTrendyol(
 
         // Liste HTML'e gömülü olabilir (SSR).
         if (pageHtml && !sellerContainer) {
+          sellerContainer = extractMerchantListingFromHtml(pageHtml);
+          if (sellerContainer) inPageDetailStatus = -3;
+        }
+        if (pageHtml && !sellerContainer) {
           sellerContainer = extractOtherMerchantsFromHtml(pageHtml);
           if (sellerContainer) inPageDetailStatus = -2;
         }
@@ -1292,12 +1297,19 @@ export async function scrapeTrendyol(
       logger.info(
         {
           sellers: sameListing.length,
+          listed: Array.isArray(sellerContainer?.otherMerchants)
+            ? sellerContainer.otherMerchants.length
+            : null,
+          pageMerchant:
+            (sellerContainer?.merchant as Record<string, unknown> | undefined)?.id ?? null,
           source: sellerContainer
             ? inPageDetailStatus === null
               ? "xhr"
-              : inPageDetailStatus === -2
-                ? "html"
-                : "in-page"
+              : inPageDetailStatus === -3
+                ? "listing"
+                : inPageDetailStatus === -2
+                  ? "html"
+                  : "in-page"
             : "none",
           jsonResponses: jsonResponseCount,
           inPageStatus: inPageDetailStatus,
