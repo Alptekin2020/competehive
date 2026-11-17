@@ -41,13 +41,62 @@ export function findOtherMerchantsContainer(
 
 function readPriceValue(price: unknown): number {
   if (typeof price === "number") return price;
+  if (typeof price === "string") {
+    const n = Number(
+      price
+        .replace(/[^\d.,]/g, "")
+        .replace(/\.(?=\d{3}(\D|$))/g, "")
+        .replace(",", "."),
+    );
+    return Number.isFinite(n) ? n : 0;
+  }
   if (!price || typeof price !== "object") return 0;
   const p = price as Record<string, unknown>;
+  if (typeof p.value === "number" && p.value > 0) return p.value;
   for (const key of ["discountedPrice", "sellingPrice", "originalPrice"]) {
-    const node = p[key] as Record<string, unknown> | undefined;
-    if (node && typeof node.value === "number" && node.value > 0) return node.value;
+    const node = p[key];
+    if (typeof node === "number" && node > 0) return node;
+    if (node && typeof node === "object") {
+      const value = (node as Record<string, unknown>).value;
+      if (typeof value === "number" && value > 0) return value;
+    }
   }
   return 0;
+}
+
+const ID_KEYS = ["merchantId", "sellerId", "id"] as const;
+const NAME_KEYS = ["merchantName", "sellerName", "name"] as const;
+const PRICE_KEYS = ["price", "prices", "discountedPrice", "sellingPrice"] as const;
+
+/** Bir otherMerchants girdisinden satıcı kimliği, adı ve fiyatı (birden çok biçim). */
+function readEntry(entry: Record<string, unknown>): {
+  id: unknown;
+  name: unknown;
+  price: unknown;
+} {
+  const merchant =
+    entry.merchant && typeof entry.merchant === "object"
+      ? (entry.merchant as Record<string, unknown>)
+      : entry.seller && typeof entry.seller === "object"
+        ? (entry.seller as Record<string, unknown>)
+        : null;
+  const pick = (keys: readonly string[]) => {
+    for (const key of keys) {
+      if (merchant && merchant[key] !== undefined && merchant[key] !== null) return merchant[key];
+    }
+    for (const key of keys) {
+      if (entry[key] !== undefined && entry[key] !== null) return entry[key];
+    }
+    return undefined;
+  };
+  let price: unknown;
+  for (const key of PRICE_KEYS) {
+    if (readPriceValue(entry[key]) > 0) {
+      price = entry[key];
+      break;
+    }
+  }
+  return { id: pick(ID_KEYS), name: pick(NAME_KEYS), price };
 }
 
 /**
@@ -61,29 +110,27 @@ export function sellersFromProductDetail(
 ): SameListingSeller[] {
   const sellers: SameListingSeller[] = [];
   const seen = new Set<string>();
-  const push = (merchant: unknown, idFallback: unknown, price: unknown) => {
-    const m = merchant && typeof merchant === "object" ? (merchant as Record<string, unknown>) : {};
-    const idRaw = m.id ?? idFallback;
-    if (idRaw === null || idRaw === undefined || idRaw === "") return;
+  const push = (idRaw: unknown, nameRaw: unknown, price: unknown) => {
+    if (idRaw === null || idRaw === undefined || idRaw === "" || typeof idRaw === "object") return;
     const merchantId = String(idRaw);
     if (seen.has(merchantId)) return;
     const value = readPriceValue(price);
     if (!value || value <= 0) return;
     seen.add(merchantId);
-    const name = typeof m.name === "string" && m.name.trim() ? m.name.trim() : null;
+    const name = typeof nameRaw === "string" && nameRaw.trim() ? nameRaw.trim() : null;
     sellers.push({ merchantId, sellerName: name, price: value });
   };
 
   const winner = container.merchant as Record<string, unknown> | undefined;
   const winnerId = winner?.id !== undefined && winner?.id !== null ? String(winner.id) : null;
   const own = ownMerchantId ?? winnerId;
-  if (winnerId && winnerId !== own) push(winner, null, container.price);
+  if (winnerId && winnerId !== own) push(winnerId, winner?.name, container.price);
 
   const raw = Array.isArray(container.otherMerchants) ? container.otherMerchants : [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
-    const entry = item as Record<string, unknown>;
-    push(entry.merchant, entry.merchantId, entry.price);
+    const entry = readEntry(item as Record<string, unknown>);
+    push(entry.id, entry.name, entry.price);
   }
   return sellers.filter((s) => s.merchantId !== own);
 }
@@ -126,18 +173,12 @@ export function isOtherSellerUrl(
   return theirs !== merchantIdFromUrl(productUrl);
 }
 
-/**
- * Sayfa HTML'ine gömülü `"otherMerchants":[...]` dizisini köşeli parantez
- * eşleştirerek çıkarır (SSR durumunda liste XHR'a hiç gitmeyebilir).
- */
-export function extractOtherMerchantsFromHtml(html: string): Record<string, unknown> | null {
-  const marker = html.search(/"otherMerchants"\s*:\s*\[/);
-  if (marker === -1) return null;
-  const start = html.indexOf("[", marker);
+/** `start` konumundaki `[` ile eşleşen `]`'ye kadar olan JSON dizisini okur. */
+function readJsonArrayAt(text: string, start: number): unknown[] | null {
   let depth = 0;
   let inString = false;
-  for (let i = start; i < html.length && i - start < 500_000; i++) {
-    const ch = html[i];
+  for (let i = start; i < text.length && i - start < 500_000; i++) {
+    const ch = text[i];
     if (inString) {
       if (ch === "\\") i++;
       else if (ch === '"') inString = false;
@@ -149,8 +190,8 @@ export function extractOtherMerchantsFromHtml(html: string): Record<string, unkn
       depth--;
       if (depth === 0) {
         try {
-          const arr = JSON.parse(html.slice(start, i + 1)) as unknown;
-          return Array.isArray(arr) && arr.length > 0 ? { otherMerchants: arr } : null;
+          const arr = JSON.parse(text.slice(start, i + 1)) as unknown;
+          return Array.isArray(arr) ? arr : null;
         } catch {
           return null;
         }
@@ -158,4 +199,67 @@ export function extractOtherMerchantsFromHtml(html: string): Record<string, unkn
     }
   }
   return null;
+}
+
+/**
+ * Sayfa HTML'ine gömülü `"otherMerchants":[...]` dizisini köşeli parantez
+ * eşleştirerek çıkarır (SSR durumunda liste XHR'a hiç gitmeyebilir). Durum
+ * bir JS dizgisi içinde kaçışlı (`\\"otherMerchants\\":[`) da olabilir.
+ */
+export function extractOtherMerchantsFromHtml(html: string): Record<string, unknown> | null {
+  const plain = /"otherMerchants"\s*:\s*\[/g;
+  for (let m = plain.exec(html); m; m = plain.exec(html)) {
+    const arr = readJsonArrayAt(html, html.indexOf("[", m.index));
+    if (arr && arr.length > 0) return { otherMerchants: arr };
+  }
+  const escaped = /\\"otherMerchants\\"\s*:\s*\[/g;
+  for (let m = escaped.exec(html); m; m = escaped.exec(html)) {
+    const start = html.indexOf("[", m.index);
+    const unescaped = html
+      .slice(start, start + 500_000)
+      .split("\\\\")
+      .map((part) => part.replace(/\\"/g, '"'))
+      .join("\\");
+    const arr = readJsonArrayAt(unescaped, 0);
+    if (arr && arr.length > 0) return { otherMerchants: arr };
+  }
+  return null;
+}
+
+/** Tanı: HTML'deki ilk `otherMerchants` geçişinin çevresi (tek satır). */
+export function otherMerchantsSnippet(html: string, length = 400): string | null {
+  const idx = html.indexOf("otherMerchants");
+  if (idx === -1) return null;
+  return html
+    .slice(Math.max(0, idx - 40), idx + length)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type RequestedSellerResult =
+  | { kind: "price"; price: number; sellerName: string | null }
+  | { kind: "reject" }
+  | { kind: "unknown" };
+
+/**
+ * `?merchantId=` URL'sinin istediği satıcının fiyatı. Listede varsa onun fiyatı;
+ * satıcı listede yoksa ancak liste okunabildiyse ve buybox kazananı da biliniyor
+ * ve başkasıysa red (satıcı ilandan çekilmiş). Kazanan bilinmiyorsa ya da liste
+ * çözülemediyse sayfa fiyatı kalır: HTML'den çıkan listede buybox kazananı yoktur
+ * ve kendi ilanımız çoğu zaman kazanandır (prod 17 Kasım: kendi ürünün
+ * taraması bu yüzden 3 kez reddedildi).
+ */
+export function resolveRequestedSeller(
+  container: Record<string, unknown>,
+  merchantId: string,
+): RequestedSellerResult {
+  const all = sellersFromProductDetail(container, "__none__");
+  const requested = all.find((s) => s.merchantId === merchantId);
+  if (requested) {
+    return { kind: "price", price: requested.price, sellerName: requested.sellerName };
+  }
+  const winner = container.merchant as Record<string, unknown> | undefined;
+  const winnerId = winner?.id !== undefined && winner?.id !== null ? String(winner.id) : null;
+  if (!winnerId || winnerId === merchantId || all.length === 0) return { kind: "unknown" };
+  return { kind: "reject" };
 }

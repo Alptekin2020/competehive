@@ -6,6 +6,7 @@ import {
   findOtherMerchantsContainer,
   isOtherSellerUrl,
   isSameListingSellerRow,
+  resolveRequestedSeller,
   sameListingAttributes,
   sellersFromProductDetail,
 } from "../utils/same-listing";
@@ -188,5 +189,73 @@ describe("extractOtherMerchantsFromHtml", () => {
   it("returns null without a list", () => {
     expect(extractOtherMerchantsFromHtml("<html></html>")).toBeNull();
     expect(extractOtherMerchantsFromHtml('{"otherMerchants":[]}')).toBeNull();
+  });
+});
+
+describe("otherMerchants entry shapes", () => {
+  it("reads top-level ids, names and plain or text prices", () => {
+    const sellers = sellersFromProductDetail(
+      {
+        otherMerchants: [
+          { merchantId: 7, merchantName: "Yedi", price: { discountedPrice: 450.5 } },
+          { sellerId: "8", sellerName: "Sekiz", sellingPrice: { value: 470 } },
+          { id: 9, name: "Dokuz", price: { value: 480 } },
+          { seller: { id: 10, name: "On" }, price: "1.299,90 TL" },
+        ],
+      },
+      null,
+    );
+    expect(sellers).toEqual([
+      { merchantId: "7", sellerName: "Yedi", price: 450.5 },
+      { merchantId: "8", sellerName: "Sekiz", price: 470 },
+      { merchantId: "9", sellerName: "Dokuz", price: 480 },
+      { merchantId: "10", sellerName: "On", price: 1299.9 },
+    ]);
+  });
+
+  it("reads an escaped list inside a JS string", () => {
+    const html =
+      '<script>window.s="{\\"otherMerchants\\":[{\\"merchantId\\":5,\\"price\\":{\\"sellingPrice\\":{\\"value\\":10}}}]}"</script>';
+    const container = extractOtherMerchantsFromHtml(html);
+    expect(sellersFromProductDetail(container!, null)).toEqual([
+      { merchantId: "5", sellerName: null, price: 10 },
+    ]);
+  });
+
+  it("skips an empty list and uses the next one", () => {
+    const html = '{"otherMerchants":[]} {"otherMerchants":[{"merchantId":3,"price":5}]}';
+    expect(sellersFromProductDetail(extractOtherMerchantsFromHtml(html)!, null)).toHaveLength(1);
+  });
+});
+
+describe("resolveRequestedSeller (prod 17 Kasım: kendi ürünü 3 kez reddedildi)", () => {
+  it("keeps the page price when the list cannot prove the seller left", () => {
+    expect(resolveRequestedSeller({ otherMerchants: [{ foo: 1 }] }, "1206503").kind).toBe(
+      "unknown",
+    );
+    expect(
+      resolveRequestedSeller({ otherMerchants: [{ merchantId: 2, price: 9 }] }, "1206503").kind,
+    ).toBe("unknown");
+    expect(
+      resolveRequestedSeller(
+        { merchant: { id: 1206503 }, otherMerchants: [{ merchantId: 2, price: 9 }] },
+        "1206503",
+      ).kind,
+    ).toBe("unknown");
+  });
+
+  it("uses the seller's own price or rejects a seller that left", () => {
+    const container = {
+      merchant: { id: 100 },
+      price: { discountedPrice: { value: 50 } },
+      otherMerchants: [{ merchantId: 2, price: 9 }],
+    };
+    expect(resolveRequestedSeller(container, "2")).toEqual({
+      kind: "price",
+      price: 9,
+      sellerName: null,
+    });
+    expect(resolveRequestedSeller(container, "100")).toMatchObject({ kind: "price", price: 50 });
+    expect(resolveRequestedSeller(container, "77").kind).toBe("reject");
   });
 });
