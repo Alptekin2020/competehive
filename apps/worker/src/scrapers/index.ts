@@ -1841,6 +1841,54 @@ function parseHepsiburadaHtml(html: string): ScrapedProduct | null {
   };
 }
 
+// Tanı: Hepsiburada "Diğer satıcılar" verisinin sayfada nerede durduğunu
+// bulmak için anahtar sayaçları ve çevreleri (aynı URL 6 saatte bir loglanır).
+// Trendyol'da aynı yöntemle veri merchantListing altında bulundu (#230).
+const hepsiburadaSellerDiagLoggedAt = new Map<string, number>();
+const HEPSIBURADA_SELLER_KEYS = [
+  "otherMerchants",
+  "otherSellers",
+  "merchantListing",
+  "listings",
+  "merchantName",
+  "merchantId",
+  "Diğer satıcılar",
+  "Diğer Satıcılar",
+  "diger-saticilar",
+] as const;
+
+function logHepsiburadaSellerDiagnostics(url: string, html: string, source: string): void {
+  const key = url.split("?")[0];
+  const last = hepsiburadaSellerDiagLoggedAt.get(key);
+  if (last !== undefined && Date.now() - last < 6 * 60 * 60 * 1000) return;
+  hepsiburadaSellerDiagLoggedAt.set(key, Date.now());
+  const markers: Record<string, number> = {};
+  for (const marker of HEPSIBURADA_SELLER_KEYS) {
+    let count = 0;
+    let idx = html.indexOf(marker);
+    while (idx !== -1 && count < 999) {
+      count++;
+      idx = html.indexOf(marker, idx + marker.length);
+    }
+    if (count > 0) markers[marker] = count;
+  }
+  logger.info(
+    {
+      url: key.slice(0, 120),
+      source,
+      len: html.length,
+      markers,
+      snippets: sellerDataSnippets(
+        html,
+        ["otherMerchants", "listings", "merchantName", "Diğer satıcılar"],
+        1,
+        500,
+      ),
+    },
+    "Hepsiburada seller diagnostics",
+  );
+}
+
 export async function scrapeHepsiburada(
   url: string,
   config: ScraperConfig = {},
@@ -1944,6 +1992,7 @@ export async function scrapeHepsiburada(
       logger.info(
         `Hepsiburada HTML scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
+      logHepsiburadaSellerDiagnostics(url, html, "html");
       await setCachedScrapeResult(url, product);
       return product;
     }
@@ -2045,6 +2094,7 @@ export async function scrapeHepsiburada(
         logger.info(
           `Hepsiburada Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
         );
+        logHepsiburadaSellerDiagnostics(url, pageHtml, "puppeteer");
         await setCachedScrapeResult(url, product);
         return product;
       }
