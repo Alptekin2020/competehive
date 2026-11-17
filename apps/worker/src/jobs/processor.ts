@@ -17,7 +17,7 @@ import {
 } from "../utils/scrape-failures";
 import { captureError } from "../sentry";
 import { PLAN_EXPIRY_GRACE_MS } from "../shared";
-import { sameListingAttributes } from "../utils/same-listing";
+import { sameListingAttributes, sameListingSellerUrl } from "../utils/same-listing";
 import {
   evaluateAlertRule,
   filterSignificantCompetitorMoves,
@@ -153,7 +153,7 @@ export async function maybeEnqueueAlerts(params: {
 // SAME-LISTING SELLERS → COMPETITORS
 // ============================================
 
-// Aynı ilanı satan diğer satıcıları (Trendyol otherMerchants) otomatik rakip
+// Aynı ilanı satan diğer satıcıları (Trendyol otherMerchants, Hepsiburada listings) otomatik rakip
 // olarak senkronla. Keşif hattı bunları bulamaz: Google satıcı varyantı
 // URL'lerini ayrı indekslemez ve urlMatchKey aynı ilanın tüm varyantlarını
 // "kendi ürün" sayıp eler. Ürün birebir aynı olduğundan matchScore=100 —
@@ -170,17 +170,22 @@ async function syncSameListingCompetitors(
 
   const moves: CompetitorPriceMove[] = [];
   try {
-    const parsed = new URL(productUrl);
-    const listingBase = `${parsed.origin}${parsed.pathname}`;
+    const isHepsiburada = /(^|\.)hepsiburada\.com$/i.test(new URL(productUrl).hostname);
+    const marketplace = isHepsiburada ? "HEPSIBURADA" : "TRENDYOL";
+    const fallbackName = isHepsiburada ? "Hepsiburada satıcısı" : "Trendyol satıcısı";
     // En ucuz 10 satıcı yeterli — kalabalık ilanlarda satır patlamasını önle.
-    const top = [...sellers].sort((a, b) => a.price - b.price).slice(0, 10);
+    const top = [...sellers]
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 10)
+      .map((seller) => ({ seller, url: sameListingSellerUrl(productUrl, seller) }))
+      .filter((entry): entry is { seller: typeof entry.seller; url: string } => !!entry.url);
     const now = new Date();
 
     // Rakip fiyat hareketi tespiti için upsert ÖNCESİ fiyatlar (URL → fiyat).
     const existingRows = await prisma.competitor.findMany({
       where: {
         trackedProductId: productId,
-        competitorUrl: { in: top.map((s) => `${listingBase}?merchantId=${s.merchantId}`) },
+        competitorUrl: { in: top.map((entry) => entry.url) },
       },
       select: { competitorUrl: true, currentPrice: true },
     });
@@ -191,9 +196,7 @@ async function syncSameListingCompetitors(
       ]),
     );
 
-    for (const [index, seller] of top.entries()) {
-      const competitorUrl = `${listingBase}?merchantId=${seller.merchantId}`;
-
+    for (const [index, { seller, url: competitorUrl }] of top.entries()) {
       // Aynı ilanın satıcısı = matchScore 100; kalite kapısı gerektirmez.
       const previousPrice = previousPriceByUrl.get(competitorUrl) ?? null;
       if (
@@ -203,7 +206,7 @@ async function syncSameListingCompetitors(
         seller.price !== previousPrice
       ) {
         moves.push({
-          competitorName: seller.sellerName ?? "Trendyol satıcısı",
+          competitorName: seller.sellerName ?? fallbackName,
           previousPrice,
           currentPrice: seller.price,
         });
@@ -223,8 +226,8 @@ async function syncSameListingCompetitors(
         create: {
           trackedProductId: productId,
           competitorUrl,
-          competitorName: seller.sellerName ?? "Trendyol satıcısı",
-          marketplace: "TRENDYOL",
+          competitorName: seller.sellerName ?? fallbackName,
+          marketplace,
           currentPrice: seller.price,
           lastScrapedAt: now,
           matchScore: 100,

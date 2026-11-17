@@ -12,7 +12,10 @@ import { isMarketplaceProductUrl } from "../serper";
 import {
   extractMerchantListingFromHtml,
   extractOtherMerchantsFromHtml,
+  extractHepsiburadaListingsFromHtml,
   findOtherMerchantsContainer,
+  hepsiburadaMagazaFromUrl,
+  hepsiburadaSellersFromListings,
   resolveRequestedSeller,
   sellerDataSnippets,
   sellersFromProductDetail,
@@ -1857,6 +1860,29 @@ const HEPSIBURADA_SELLER_KEYS = [
   "diger-saticilar",
 ] as const;
 
+/**
+ * Aynı ilanın diğer satıcılarını (`listings`) ürüne ekler. Kendi mağazamız
+ * URL'deki `magaza`, yoksa sayfanın gösterdiği satıcıdır. Tanı için satıcı
+ * bulunamazsa ilk girdinin kısa bir örneği loglanır (fiyat alanının biçimi).
+ */
+function attachHepsiburadaOtherSellers(url: string, html: string, product: ScrapedProduct): void {
+  const listings = extractHepsiburadaListingsFromHtml(html);
+  if (listings.length === 0) return;
+  const ownSeller = hepsiburadaMagazaFromUrl(url) ?? product.sellerName ?? null;
+  const sellers = hepsiburadaSellersFromListings(listings, ownSeller);
+  logger.info(
+    {
+      url: url.split("?")[0].slice(0, 120),
+      listed: listings.length,
+      sellers: sellers.length,
+      ownSeller,
+      ...(sellers.length === 0 ? { sample: JSON.stringify(listings[0]).slice(0, 800) } : {}),
+    },
+    "Hepsiburada other sellers",
+  );
+  if (sellers.length > 0) product.otherSellers = sellers;
+}
+
 function logHepsiburadaSellerDiagnostics(url: string, html: string, source: string): void {
   const key = url.split("?")[0];
   const last = hepsiburadaSellerDiagLoggedAt.get(key);
@@ -1993,6 +2019,7 @@ export async function scrapeHepsiburada(
         `Hepsiburada HTML scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
       logHepsiburadaSellerDiagnostics(url, html, "html");
+      attachHepsiburadaOtherSellers(url, html, product);
       await setCachedScrapeResult(url, product);
       return product;
     }
@@ -2095,6 +2122,7 @@ export async function scrapeHepsiburada(
           `Hepsiburada Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
         );
         logHepsiburadaSellerDiagnostics(url, pageHtml, "puppeteer");
+        attachHepsiburadaOtherSellers(url, pageHtml, product);
         await setCachedScrapeResult(url, product);
         return product;
       }
