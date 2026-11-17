@@ -161,6 +161,15 @@ export async function processCompetitorScrapeJob(
     throw err;
   }
 
+  // `?merchantId=` satırının satıcısı ilandan çekilmiş: sayfadaki fiyat başka
+  // bir satıcının, bu satıra yazılmaz. İlan bu satıcı için kalkmış sayılır.
+  if (scraped?.requestedSellerMissing) {
+    if (!(await dropIfUnpriced("seller-left"))) {
+      await markFailure({ gone: true, reason: "seller-left" });
+    }
+    return { success: false };
+  }
+
   if (!scraped?.price || scraped.price <= 0) {
     if (!(await dropIfUnpriced("no-price"))) {
       await markFailure({ gone: false, reason: "no-price" });
@@ -431,6 +440,7 @@ async function processDirectVerifyJob(
     );
     return { success: false };
   }
+  if (scraped?.requestedSellerMissing) return reject("seller-left");
   if (!scraped?.price || scraped.price <= 0) return reject("no-price");
 
   const ownName = cleanProductTitle(competitor.trackedProduct?.productName ?? "");

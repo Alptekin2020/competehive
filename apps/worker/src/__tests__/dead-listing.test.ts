@@ -165,6 +165,29 @@ describe("processCompetitorScrapeJob failure handling", () => {
     expect(health.deadAt).not.toBeNull();
   });
 
+  it("marks a ?merchantId= row dead when its seller left the listing (prod 17 Kasım)", async () => {
+    prismaMock.competitor.findUnique.mockResolvedValue(
+      row({
+        competitorUrl: "https://www.trendyol.com/pd/kumtel/lx-6331-p-65739743?merchantId=449718",
+        marketplace: "TRENDYOL",
+      }),
+    );
+    scraperFn.mockResolvedValue({
+      name: "Kumtel LX-6331",
+      price: 999,
+      currency: "TRY",
+      inStock: true,
+      requestedSellerMissing: true,
+    });
+    await expect(processCompetitorScrapeJob({ competitorId: "530da1cf" })).resolves.toEqual({
+      success: false,
+    });
+    expect(prismaMock.competitorPrice.create).not.toHaveBeenCalled();
+    const attrs = writtenAttributes();
+    expect(readScrapeHealth(attrs).deadAt).not.toBeNull();
+    expect(attrs.deadReason).toBe("seller-left");
+  });
+
   it("clears the dead mark when a fresh price is read", async () => {
     prismaMock.competitor.findUnique.mockResolvedValue(
       row({ matchAttributes: { deadAt: now.toISOString(), deadReason: "x", scrapeFailures: 3 } }),

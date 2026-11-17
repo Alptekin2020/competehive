@@ -47,6 +47,13 @@ export interface ScrapedProduct {
    * öne çıkan teklif yok). price 0 gelir; tarama hatası değil, stok durumudur.
    */
   unavailable?: boolean;
+  /**
+   * `?merchantId=` URL'sinin istediği satıcı ilanda yok (sayfa başka bir
+   * satıcıyı gösteriyor). Fiyat sayfadaki satıcınındır: rakip taraması bunu
+   * ret sayar; kendi ürün taraması eski davranışla sayfa fiyatını kullanır
+   * (prod 17 Kasım: kendi ürünü 3 kez reddedildi, ürün hataya düşüyordu).
+   */
+  requestedSellerMissing?: boolean;
 }
 
 export interface ScraperConfig {
@@ -1337,9 +1344,11 @@ export async function scrapeTrendyol(
           product.sellerName = requested.sellerName ?? product.sellerName;
         } else if (requested.kind === "reject") {
           logger.warn(
-            `Trendyol Puppeteer: istenen satıcı (merchantId=${merchantId}) sayfada doğrulanamadı — sonuç reddedildi`,
+            `Trendyol Puppeteer: istenen satıcı (merchantId=${merchantId}) ilanda yok — sayfadaki satıcı ${String(
+              (sellerContainer.merchant as Record<string, unknown> | undefined)?.id ?? "?",
+            )}`,
           );
-          product.price = 0;
+          product.requestedSellerMissing = true;
         }
       }
       if (product && product.price > 0) {
