@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
 import {
+  extractMerchantListingFromHtml,
   extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
   isOtherSellerUrl,
@@ -271,5 +272,66 @@ describe("sellerDataSnippets", () => {
 
   it("ignores the empty otherMerchantsVariants flag", () => {
     expect(extractOtherMerchantsFromHtml('{\\"otherMerchantsVariants\\":[]}')).toBeNull();
+  });
+});
+
+describe("extractMerchantListingFromHtml (prod 17 Kasım: kaçışlı merchantListing)", () => {
+  const state = {
+    product: {
+      merchantListing: {
+        merchant: { id: 616844, name: "KUSTAR", officialName: "KUSTAR LTD" },
+        otherMerchantsVariants: [
+          {
+            merchant: { id: 777, name: "Rakip Yapı" },
+            price: { discountedPrice: { value: 949.5, text: "949,50 TL" } },
+          },
+        ],
+      },
+    },
+    variants: {
+      merchantListing: { winnerVariant: { price: { discountedPrice: { value: 975.09 } } } },
+    },
+  };
+  const escaped = JSON.stringify(JSON.stringify(state).replace(/\//g, "\\u002F"));
+  const html = `<script>window.__envoy_x=${escaped};</script><p>Ürünün Diğer Satıcıları</p>`;
+
+  it("merges the page merchant, winner price and other sellers", () => {
+    const container = extractMerchantListingFromHtml(html);
+    expect(container).toEqual({
+      merchant: { id: 616844, name: "KUSTAR" },
+      price: { discountedPrice: { value: 975.09 } },
+      otherMerchants: state.product.merchantListing.otherMerchantsVariants,
+    });
+    expect(sellersFromProductDetail(container!, null)).toEqual([
+      { merchantId: "777", sellerName: "Rakip Yapı", price: 949.5 },
+    ]);
+    expect(sellersFromProductDetail(container!, "1206503").map((s) => s.merchantId)).toEqual([
+      "616844",
+      "777",
+    ]);
+  });
+
+  it("single-seller listing: no rivals, own price kept, gone seller rejected", () => {
+    const single = JSON.stringify(
+      JSON.stringify({
+        merchantListing: {
+          merchant: { id: 335599, name: "pharmanice" },
+          winnerVariant: { price: { discountedPrice: { value: 248.9 } } },
+          otherMerchantsVariants: [],
+        },
+      }),
+    );
+    const container = extractMerchantListingFromHtml(`<script>x=${single}</script>`)!;
+    expect(sellersFromProductDetail(container, null)).toEqual([]);
+    expect(resolveRequestedSeller(container, "335599")).toMatchObject({
+      kind: "price",
+      price: 248.9,
+    });
+    expect(resolveRequestedSeller(container, "42").kind).toBe("reject");
+  });
+
+  it("returns null without a merchant", () => {
+    expect(extractMerchantListingFromHtml("<html></html>")).toBeNull();
+    expect(extractMerchantListingFromHtml('{"merchantListing":{"winnerVariant":{}}}')).toBeNull();
   });
 });

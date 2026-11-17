@@ -173,8 +173,8 @@ export function isOtherSellerUrl(
   return theirs !== merchantIdFromUrl(productUrl);
 }
 
-/** `start` konumundaki `[` ile eşleşen `]`'ye kadar olan JSON dizisini okur. */
-function readJsonArrayAt(text: string, start: number): unknown[] | null {
+/** `start` konumundaki `[`/`{` ile eşleşen kapanışa kadar olan JSON değerini okur. */
+function readJsonValueAt(text: string, start: number): unknown {
   let depth = 0;
   let inString = false;
   for (let i = start; i < text.length && i - start < 500_000; i++) {
@@ -185,13 +185,12 @@ function readJsonArrayAt(text: string, start: number): unknown[] | null {
       continue;
     }
     if (ch === '"') inString = true;
-    else if (ch === "[") depth++;
-    else if (ch === "]") {
+    else if (ch === "[" || ch === "{") depth++;
+    else if (ch === "]" || ch === "}") {
       depth--;
       if (depth === 0) {
         try {
-          const arr = JSON.parse(text.slice(start, i + 1)) as unknown;
-          return Array.isArray(arr) ? arr : null;
+          return JSON.parse(text.slice(start, i + 1)) as unknown;
         } catch {
           return null;
         }
@@ -201,29 +200,74 @@ function readJsonArrayAt(text: string, start: number): unknown[] | null {
   return null;
 }
 
+/** JS dizgisi içindeki kaçışlı JSON'u (`\\"a\\":1`) düz JSON'a çevirir. */
+function unescapeJsString(text: string): string {
+  return text
+    .split("\\\\")
+    .map((part) => part.replace(/\\"/g, '"'))
+    .join("\\");
+}
+
+/** Metindeki her `"key":<açılış>` geçişinden sonraki JSON değerleri. */
+function jsonValuesAfterKey(text: string, key: string, open: "[" | "{"): unknown[] {
+  const out: unknown[] = [];
+  const pattern = new RegExp(`"${key}"\\s*:\\s*\\${open}`, "g");
+  for (let m = pattern.exec(text); m && out.length < 10; m = pattern.exec(text)) {
+    const value = readJsonValueAt(text, text.indexOf(open, m.index + key.length + 2));
+    if (value !== null) out.push(value);
+  }
+  return out;
+}
+
+/** HTML'in kendisi ve (varsa) kaçışlı durum dizgisinin düz hali. */
+function htmlTextVariants(html: string): string[] {
+  return html.includes('\\"') ? [html, unescapeJsString(html)] : [html];
+}
+
 /**
  * Sayfa HTML'ine gömülü `"otherMerchants":[...]` dizisini köşeli parantez
  * eşleştirerek çıkarır (SSR durumunda liste XHR'a hiç gitmeyebilir). Durum
  * bir JS dizgisi içinde kaçışlı (`\\"otherMerchants\\":[`) da olabilir.
  */
 export function extractOtherMerchantsFromHtml(html: string): Record<string, unknown> | null {
-  const plain = /"otherMerchants"\s*:\s*\[/g;
-  for (let m = plain.exec(html); m; m = plain.exec(html)) {
-    const arr = readJsonArrayAt(html, html.indexOf("[", m.index));
-    if (arr && arr.length > 0) return { otherMerchants: arr };
-  }
-  const escaped = /\\"otherMerchants\\"\s*:\s*\[/g;
-  for (let m = escaped.exec(html); m; m = escaped.exec(html)) {
-    const start = html.indexOf("[", m.index);
-    const unescaped = html
-      .slice(start, start + 500_000)
-      .split("\\\\")
-      .map((part) => part.replace(/\\"/g, '"'))
-      .join("\\");
-    const arr = readJsonArrayAt(unescaped, 0);
-    if (arr && arr.length > 0) return { otherMerchants: arr };
+  for (const text of htmlTextVariants(html)) {
+    for (const arr of jsonValuesAfterKey(text, "otherMerchants", "[")) {
+      if (Array.isArray(arr) && arr.length > 0) return { otherMerchants: arr };
+    }
   }
   return null;
+}
+
+/**
+ * Trendyol'un yeni ürün sayfası (prod 17 Kasım): satıcı bilgisi kaçışlı durum
+ * dizgisindeki `merchantListing` nesnelerinde durur: `merchant` (sayfada
+ * gösterilen satıcı), `winnerVariant.price` ve diğer satıcılar
+ * `otherMerchantsVariants`. Birden çok `merchantListing` parçası birleştirilir.
+ * Dönen nesne `sellersFromProductDetail` biçimindedir; satıcı kimliği yoksa null.
+ */
+export function extractMerchantListingFromHtml(html: string): Record<string, unknown> | null {
+  let merchant: Record<string, unknown> | null = null;
+  let price: unknown = null;
+  let others: unknown[] = [];
+  for (const text of htmlTextVariants(html)) {
+    for (const value of jsonValuesAfterKey(text, "merchantListing", "{")) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const listing = value as Record<string, unknown>;
+      const m = listing.merchant as Record<string, unknown> | undefined;
+      if (!merchant && m && typeof m === "object" && m.id !== undefined && m.id !== null) {
+        merchant = { id: m.id, name: m.name };
+      }
+      const winner = listing.winnerVariant as Record<string, unknown> | undefined;
+      if (price === null && winner && readPriceValue(winner.price) > 0) price = winner.price;
+      for (const key of ["otherMerchantsVariants", "otherMerchants"]) {
+        const list = listing[key];
+        if (others.length === 0 && Array.isArray(list) && list.length > 0) others = list;
+      }
+    }
+    if (merchant) break;
+  }
+  if (!merchant) return null;
+  return { merchant, ...(price !== null ? { price } : {}), otherMerchants: others };
 }
 
 /**
