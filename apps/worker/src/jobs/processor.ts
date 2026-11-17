@@ -17,6 +17,7 @@ import {
 } from "../utils/scrape-failures";
 import { captureError } from "../sentry";
 import { PLAN_EXPIRY_GRACE_MS } from "../shared";
+import { sameListingAttributes } from "../utils/same-listing";
 import {
   evaluateAlertRule,
   filterSignificantCompetitorMoves,
@@ -217,6 +218,7 @@ async function syncSameListingCompetitors(
           ...(seller.sellerName ? { competitorName: seller.sellerName } : {}),
           matchScore: 100,
           matchReason: "Aynı ilanın diğer satıcısı",
+          matchAttributes: sameListingAttributes(seller),
         },
         create: {
           trackedProductId: productId,
@@ -227,6 +229,7 @@ async function syncSameListingCompetitors(
           lastScrapedAt: now,
           matchScore: 100,
           matchReason: "Aynı ilanın diğer satıcısı",
+          matchAttributes: sameListingAttributes(seller),
         },
       });
 

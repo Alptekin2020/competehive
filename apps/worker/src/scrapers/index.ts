@@ -9,6 +9,7 @@ import { assertPublicHttpUrl, UnsafeUrlError } from "../utils/url-guard";
 import { isGenericStoreMarketplace } from "../shared";
 import { parseAvailability } from "../utils/availability";
 import { isMarketplaceProductUrl } from "../serper";
+import { findOtherMerchantsContainer, sellersFromProductDetail } from "../utils/same-listing";
 
 // ============================================
 // Scraper Types
@@ -773,6 +774,10 @@ export async function scrapeTrendyol(
   let puppeteerFinalUrl: string | null = null;
   let puppeteerContentLength: number | null = null;
   let puppeteerHasInitialState: boolean = false;
+  // Puppeteer sayfasında yakalanan "Diğer Satıcılar" listesi (productDetail biçimi).
+  let sellerContainer: Record<string, unknown> | null = null;
+  let jsonResponseCount = 0;
+  let inPageDetailStatus: number | null = null;
 
   // Strategy 1: Use Trendyol public API (most reliable from cloud IPs)
   // NOT: public.trendyol.com DNS'ten kaldırıldı (NXDOMAIN — üretimde kalıcı
@@ -1084,6 +1089,24 @@ export async function scrapeTrendyol(
           req.continue();
         }
       });
+      // Sayfanın kendi XHR'larından "Diğer Satıcılar" listesini yakala (API
+      // doğrudan çağrıldığında 403; tarayıcı içinden gelen yanıt geçer).
+      page.on("response", (res) => {
+        if (sellerContainer) return;
+        const contentType = res.headers()["content-type"] ?? "";
+        if (!contentType.includes("json")) return;
+        jsonResponseCount++;
+        res
+          .text()
+          .then((text) => {
+            if (sellerContainer || !text.includes("otherMerchants")) return;
+            const found = findOtherMerchantsContainer(JSON.parse(text));
+            if (found) sellerContainer = found;
+          })
+          .catch((err: unknown) => {
+            logger.debug(`Trendyol response body unreadable: ${errorMessage(err)}`);
+          });
+      });
 
       try {
         await page.goto(url, {
@@ -1138,6 +1161,35 @@ export async function scrapeTrendyol(
         puppeteerContentLength = pageHtml.length;
         puppeteerHasInitialState = pageHtml.includes("__PRODUCT_DETAIL_APP_INITIAL_STATE__");
 
+        // XHR'larda liste yoksa productDetail'i sayfanın içinden çağır: istek
+        // tarayıcının çerezleri ve TLS parmak iziyle gider.
+        if (pageHtml && !sellerContainer && contentId) {
+          const detailUrl = `https://apigw.trendyol.com/discovery-web-productgw-service/api/productDetail/${contentId}${
+            merchantId ? `?merchantId=${merchantId}` : ""
+          }`;
+          const inPage = await page
+            .evaluate(async (u: string) => {
+              try {
+                const r = await fetch(u, {
+                  credentials: "include",
+                  headers: { Accept: "application/json" },
+                });
+                return { status: r.status, body: await r.text() };
+              } catch (e) {
+                return { status: 0, body: String(e).slice(0, 200) };
+              }
+            }, detailUrl)
+            .catch((err: unknown) => ({ status: -1, body: errorMessage(err) }));
+          inPageDetailStatus = inPage.status;
+          if (inPage.status === 200) {
+            try {
+              sellerContainer = findOtherMerchantsContainer(JSON.parse(inPage.body));
+            } catch (err) {
+              logger.debug(`Trendyol in-page productDetail not JSON: ${errorMessage(err)}`);
+            }
+          }
+        }
+
         const pupSnippet = pageHtml.slice(0, 200).replace(/\s+/g, " ").trim();
         const pupLower = pageHtml.toLowerCase();
         const pupIsBotChallenge =
@@ -1178,7 +1230,40 @@ export async function scrapeTrendyol(
 
     if (pageHtml) {
       const product = parseTrendyolHtml(pageHtml);
+      const sameListing = sellerContainer
+        ? sellersFromProductDetail(sellerContainer, merchantId)
+        : [];
+      logger.info(
+        {
+          sellers: sameListing.length,
+          source: sellerContainer ? (inPageDetailStatus === null ? "xhr" : "in-page") : "none",
+          jsonResponses: jsonResponseCount,
+          inPageStatus: inPageDetailStatus,
+        },
+        "Trendyol other sellers",
+      );
+      // URL belirli bir satıcıyı istiyorsa sayfanın buybox fiyatı o satıcının
+      // fiyatı olmayabilir: liste okunabildiyse satıcının kendi fiyatı yazılır;
+      // listede de buybox'ta da yoksa (satmayı bırakmış) sonuç reddedilir.
+      // Liste okunamadıysa eski davranış (sayfa fiyatı) sürer.
+      if (product && merchantId && sellerContainer) {
+        const requested = sellersFromProductDetail(sellerContainer, "__none__").find(
+          (s) => s.merchantId === merchantId,
+        );
+        const winner = sellerContainer.merchant as Record<string, unknown> | undefined;
+        const winnerIsRequested = winner?.id !== undefined && String(winner.id) === merchantId;
+        if (requested) {
+          product.price = requested.price;
+          product.sellerName = requested.sellerName ?? product.sellerName;
+        } else if (!winnerIsRequested) {
+          logger.warn(
+            `Trendyol Puppeteer: istenen satıcı (merchantId=${merchantId}) sayfada doğrulanamadı — sonuç reddedildi`,
+          );
+          product.price = 0;
+        }
+      }
       if (product && product.price > 0) {
+        if (sameListing.length > 0) product.otherSellers = sameListing;
         logger.info(
           `Trendyol Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
         );

@@ -37,6 +37,7 @@ import {
 import { isGoogleHostedUrl } from "../utils/stale-competitors";
 import { isSameListing } from "../utils/url-match";
 import { ownColourText } from "../utils/direct-listing";
+import { isOtherSellerUrl, isSameListingSellerRow } from "../utils/same-listing";
 
 // Silme bandı — görüntüleme bandından bilinçli olarak daha geniş.
 export const PURGE_BAND_MIN_RATIO = 0.2;
@@ -85,7 +86,10 @@ export function shouldPurgeCompetitor(
     candidate.matchScore !== null &&
     candidate.matchScore !== undefined &&
     readMatchReview(candidate.matchAttributes) !== "confirmed" &&
-    isSameListing(candidate.competitorUrl, context.productUrl)
+    isSameListing(candidate.competitorUrl, context.productUrl) &&
+    // Aynı ilanın BAŞKA satıcısı (farklı merchantId) kendi ilanımız değildir.
+    !isOtherSellerUrl(candidate.competitorUrl, context.productUrl) &&
+    !isSameListingSellerRow(candidate.matchAttributes)
   ) {
     return "own-listing";
   }
