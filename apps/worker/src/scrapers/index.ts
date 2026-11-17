@@ -12,8 +12,8 @@ import { isMarketplaceProductUrl } from "../serper";
 import {
   extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
-  otherMerchantsSnippet,
   resolveRequestedSeller,
+  sellerDataSnippets,
   sellersFromProductDetail,
 } from "../utils/same-listing";
 
@@ -1306,7 +1306,7 @@ export async function scrapeTrendyol(
               ? { sample: JSON.stringify(sellerContainer.otherMerchants ?? null).slice(0, 600) }
               : {}
             : {
-                snippet: otherMerchantsSnippet(pageHtml),
+                snippets: sellerDataSnippets(pageHtml),
                 inPageError: inPageDetailError,
                 jsonPaths: jsonResponsePaths,
                 htmlMarkers: trendyolSellerMarkers(pageHtml),
