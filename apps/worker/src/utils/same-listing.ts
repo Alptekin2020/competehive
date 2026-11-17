@@ -125,3 +125,37 @@ export function isOtherSellerUrl(
   if (!theirs) return false;
   return theirs !== merchantIdFromUrl(productUrl);
 }
+
+/**
+ * Sayfa HTML'ine gömülü `"otherMerchants":[...]` dizisini köşeli parantez
+ * eşleştirerek çıkarır (SSR durumunda liste XHR'a hiç gitmeyebilir).
+ */
+export function extractOtherMerchantsFromHtml(html: string): Record<string, unknown> | null {
+  const marker = html.search(/"otherMerchants"\s*:\s*\[/);
+  if (marker === -1) return null;
+  const start = html.indexOf("[", marker);
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < html.length && i - start < 500_000; i++) {
+    const ch = html[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        try {
+          const arr = JSON.parse(html.slice(start, i + 1)) as unknown;
+          return Array.isArray(arr) && arr.length > 0 ? { otherMerchants: arr } : null;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}

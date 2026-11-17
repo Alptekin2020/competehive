@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
 import {
+  extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
   isOtherSellerUrl,
   isSameListingSellerRow,
@@ -170,5 +171,22 @@ describe("countFreshDirectCompetitors (prod 17 Kasım: EP3347 29/34 bayat Google
       lastScrapedAt: stale,
     }));
     expect(shouldSearchMarketplacePages(0, countFreshDirectCompetitors(rows, now))).toBe(true);
+  });
+});
+
+describe("extractOtherMerchantsFromHtml", () => {
+  it("reads an embedded list with nested brackets and strings", () => {
+    const html =
+      '<script>window.x={"product":{"name":"A [b]","otherMerchants":[{"merchant":{"id":5,"name":"M \\"q\\" ]"},"price":{"sellingPrice":{"value":10}}}],"z":1}}</script>';
+    const container = extractOtherMerchantsFromHtml(html);
+    expect(container).not.toBeNull();
+    expect(sellersFromProductDetail(container!, null)).toEqual([
+      { merchantId: "5", sellerName: 'M "q" ]', price: 10 },
+    ]);
+  });
+
+  it("returns null without a list", () => {
+    expect(extractOtherMerchantsFromHtml("<html></html>")).toBeNull();
+    expect(extractOtherMerchantsFromHtml('{"otherMerchants":[]}')).toBeNull();
   });
 });
