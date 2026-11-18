@@ -44,15 +44,16 @@ export function withinPriceBand(sourcePrice: number, candidatePrice: number): bo
 // kardeş model (3300 vs 3400 serisi) bu kadar geniş bantta "rakip" kalıyordu.
 //
 //   model-code → 0.3x–3x   (deterministik ortak kod kabulü)
-//   title      → 0.55x–1.8x (başlık kuralı / AI kararı; dayanak bilinmiyorsa da bu)
+//   title      → 0.5x–2x   (başlık kuralı / AI kararı; dayanak bilinmiyorsa da bu;
+//                           18 Kasım: 1.8x aynı başlıklı rakipleri dışarıda bırakıyordu)
 //   manual     → 0.3x–3x   (kullanıcının elle eklediği, skorsuz kayıt)
 //   confirmed  → bant yok  (kullanıcı "bu aynı ürün" dedi; onun kararı geçerli)
 //
 // Dayanak matchAttributes.matchBasis alanından okunur; alan yoksa (eski
 // kayıtlar) deterministik kod kabulünün `details` metninden çıkarılır.
 
-export const TITLE_PRICE_BAND_MIN_RATIO = 0.55;
-export const TITLE_PRICE_BAND_MAX_RATIO = 1.8;
+export const TITLE_PRICE_BAND_MIN_RATIO = 0.5;
+export const TITLE_PRICE_BAND_MAX_RATIO = 2.0;
 
 export type MatchBasis = "model-code" | "title" | "manual" | "confirmed";
 

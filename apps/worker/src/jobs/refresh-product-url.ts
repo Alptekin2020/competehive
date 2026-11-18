@@ -439,7 +439,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
       const retailer = resolveRetailer(result);
 
       // Eşleşme dayanağına göre fiyat bandı (model kodu 0.3x–3x, başlık/AI
-      // 0.55x–1.8x, onaylı kayıt bantsız): bant dışı fiyat ne güncel fiyata ne
+      // 0.5x–2x, onaylı kayıt bantsız): bant dışı fiyat ne güncel fiyata ne
       // competitor_prices / price_history'ye yazılır — grafiğe de, karara da
       // girmez. Google bu turda fiyat döndürdüğü için kayıt "görüldü" sayılır
       // (doğrudan tarama kuyruğuna ayrıca gönderilmez).

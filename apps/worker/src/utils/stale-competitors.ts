@@ -61,7 +61,7 @@ export function isGoogleHostedUrl(url: string | null | undefined): boolean {
  * karar hesaplarıyla aynı (assessCompetitor): onay bekleyen aday hareket
  * üretmez; MIN_MATCH_SCORE altı skor karar dışı (null skor manuel kayıttır,
  * geçer); kendi fiyat verilmişse yeni fiyat eşleşme dayanağının bandında
- * olmalı (model kodu 0.3x–3x, başlık/AI 0.55x–1.8x, onaylı kayıt bantsız).
+ * olmalı (model kodu 0.3x–3x, başlık/AI 0.5x–2x, onaylı kayıt bantsız).
  * Anlamlılık (% eşik) alert worker'da kullanıcının eşiğiyle süzülür — burada
  * yalnızca gerçek değişim aranır.
  */
