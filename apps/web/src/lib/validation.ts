@@ -1,7 +1,26 @@
 import { z } from "zod";
+import { checkGtinInput } from "@competehive/shared";
+
+// Barkod isteğe bağlı: boş ya da eksik = yok. Girildiyse kontrol hanesi
+// doğrulanır ve boşluksuz rakamlara çevrilir (worker `metadata.gtin` okur).
+const optionalGtin = z
+  .string()
+  .max(32, "Barkod çok uzun")
+  .nullable()
+  .optional()
+  .transform((raw, ctx) => {
+    const check = checkGtinInput(raw);
+    if (!check) return null;
+    if (!check.ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: check.error });
+      return z.NEVER;
+    }
+    return check.gtin;
+  });
 
 export const addProductSchema = z.object({
   productUrl: z.string().url("Geçerli bir URL girin"),
+  gtin: optionalGtin,
 });
 
 // Ürün maliyetini (COGS) güncelle. null = maliyeti temizle. Üst sınır, hatalı

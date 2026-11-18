@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ScanBarcode } from "lucide-react";
+import { checkGtinInput } from "@competehive/shared";
 import { SUPPORTED_MARKETPLACE_LABEL } from "@/lib/marketplaces";
+import { BarcodeScanner } from "./BarcodeScanner";
 
 type SupportLevel = "full" | "partial" | "unsupported";
 
@@ -48,6 +51,8 @@ function formatPrice(price: number, currency: string): string {
 interface AddProductModalProps {
   url: string;
   onUrlChange: (url: string) => void;
+  gtin: string;
+  onGtinChange: (gtin: string) => void;
   loading: boolean;
   error: string;
   // Plan limiti hatasında modal içinde yükseltme yolu göster — kullanıcı
@@ -60,6 +65,8 @@ interface AddProductModalProps {
 export function AddProductModal({
   url,
   onUrlChange,
+  gtin,
+  onGtinChange,
   loading,
   error,
   showUpgradeCta = false,
@@ -73,6 +80,9 @@ export function AddProductModal({
   );
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const gtinCheck = checkGtinInput(gtin);
+  const gtinError = gtinCheck && !gtinCheck.ok ? gtinCheck.error : "";
   const preview = previewState?.url === url ? previewState.data : null;
   const busy = loading || checking;
 
@@ -100,6 +110,11 @@ export function AddProductModal({
   };
 
   const handleSubmit = (e: React.FormEvent) => {
+    if (gtinError) {
+      e.preventDefault();
+      setCheckError(gtinError);
+      return;
+    }
     if (preview?.canAdd) {
       onSubmit(e);
       return;
@@ -167,6 +182,45 @@ export function AddProductModal({
           />
           <p className="text-dark-600 text-xs mb-4">
             {SUPPORTED_MARKETPLACE_LABEL} ya da kendi e-ticaret sitenizdeki ürün linkini yapıştırın.
+          </p>
+
+          <label
+            htmlFor="add-product-gtin"
+            className="block text-sm font-medium text-dark-300 mb-2"
+          >
+            Barkod <span className="text-dark-500 font-normal">(isteğe bağlı)</span>
+          </label>
+          <div className="flex gap-2 mb-2">
+            <input
+              id="add-product-gtin"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={gtin}
+              onChange={(e) => onGtinChange(e.target.value)}
+              className={`flex-1 min-w-0 bg-dark-950 border rounded-xl px-4 py-3 text-white placeholder-dark-600 focus:outline-none transition text-sm ${
+                gtinError
+                  ? "border-red-500/40 focus:border-red-500/60"
+                  : "border-dark-800 focus:border-hive-500/50"
+              }`}
+              placeholder="Örn. 8690000000000"
+              disabled={busy}
+              aria-invalid={gtinError ? true : undefined}
+            />
+            <button
+              type="button"
+              onClick={() => setScanning(true)}
+              disabled={busy}
+              className="flex items-center gap-1.5 border border-dark-700 hover:bg-dark-800 disabled:opacity-50 text-white rounded-xl px-3 text-sm font-medium transition flex-shrink-0"
+              aria-label="Barkodu kamerayla okut"
+            >
+              <ScanBarcode className="w-4 h-4" />
+              <span>Kamerayla okut</span>
+            </button>
+          </div>
+          <p className={`text-xs mb-4 ${gtinError ? "text-red-400" : "text-dark-600"}`}>
+            {gtinError ||
+              "Barkod girerseniz rakipleri barkodla da ararız ve aynı barkodlu ilanları doğrudan eşleştiririz."}
           </p>
 
           {preview && (
@@ -284,6 +338,16 @@ export function AddProductModal({
           </div>
         </form>
       </div>
+      {scanning && (
+        <BarcodeScanner
+          onDetected={(code) => {
+            onGtinChange(code);
+            setCheckError("");
+            setScanning(false);
+          }}
+          onClose={() => setScanning(false)}
+        />
+      )}
     </div>
   );
 }
