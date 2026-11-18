@@ -127,6 +127,51 @@ describe("isDormantCompetitor", () => {
     ).toBe(false);
   });
 
+  it("taranamayan Google kartı 4 gün fiyatsız kalınca uykuya alınır", () => {
+    const card = "https://www.google.com/search?ibp=oshop&q=x&prds=catalogid:42";
+    expect(
+      isDormantCompetitor(
+        { lastScrapedAt: "2026-11-10T10:00:00Z", matchScore: 85, competitorUrl: card },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isDormantCompetitor(
+        { lastScrapedAt: "2026-11-12T10:00:00Z", matchScore: 85, competitorUrl: card },
+        now,
+      ),
+    ).toBe(false);
+    // Gerçek satıcı sayfası 30 gün kuralında kalır.
+    expect(
+      isDormantCompetitor(
+        {
+          lastScrapedAt: "2026-11-10T10:00:00Z",
+          matchScore: 85,
+          competitorUrl: "https://www.trendyol.com/x/y-p-1",
+        },
+        now,
+      ),
+    ).toBe(false);
+    // Elle eklenen ve onaylanan Google kartı asla uykuya alınmaz.
+    expect(
+      isDormantCompetitor(
+        { lastScrapedAt: "2026-11-01T10:00:00Z", matchScore: null, competitorUrl: card },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isDormantCompetitor(
+        {
+          lastScrapedAt: "2026-11-01T10:00:00Z",
+          matchScore: 100,
+          review: "confirmed",
+          competitorUrl: card,
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
   it("hiç taranmamış kayıtta oluşturulma tarihine bakar", () => {
     expect(
       isDormantCompetitor(

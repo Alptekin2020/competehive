@@ -145,6 +145,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         lastScrapedAt: competitor.lastScrapedAt,
         createdAt: competitor.createdAt,
         review: readMatchReview(competitor.matchAttributes),
+        deadAt: readCompetitorDeadAt(competitor.matchAttributes),
+        competitorUrl: competitor.competitorUrl,
       })),
     );
     const chartHidden = chartHiddenHistoryFlags(

@@ -148,6 +148,34 @@ describe("countStaleTrustedCompetitors", () => {
       new Set(["updated"]),
       now,
     );
-    expect(counts).toEqual({ stale: 3, googleHosted: 1, dead: 1, trusted: 5 });
+    expect(counts).toEqual({ stale: 3, googleHosted: 1, dead: 1, trusted: 5, retired: 2 });
+  });
+
+  it("retires only automated Google cards older than the web dormancy window", () => {
+    const card = "https://www.google.com/search?ibp=oshop&prds=catalogid:9";
+    const counts = countStaleTrustedCompetitors(
+      [
+        competitor({ id: "g-80h", lastScrapedAt: hoursAgo(80), competitorUrl: card }),
+        competitor({ id: "g-5d", lastScrapedAt: hoursAgo(120), competitorUrl: card }),
+        competitor({
+          id: "g-confirmed",
+          matchScore: 100,
+          lastScrapedAt: hoursAgo(120),
+          competitorUrl: card,
+          matchAttributes: { review: "confirmed" },
+        }),
+        competitor({
+          id: "g-manual",
+          matchScore: null,
+          lastScrapedAt: hoursAgo(120),
+          competitorUrl: card,
+        }),
+        competitor({ id: "page-5d", lastScrapedAt: hoursAgo(120) }),
+      ],
+      new Set(),
+      now,
+    );
+    expect(counts.stale).toBe(5);
+    expect(counts.retired).toBe(1);
   });
 });

@@ -27,7 +27,6 @@ import { formatPctTR, parseTrNumber } from "@/lib/format";
 import RefreshButton from "@/components/RefreshButton";
 import { storeDisplayName } from "@/lib/marketplaces";
 import InfoTip from "@/components/ui/InfoTip";
-import { DORMANT_COMPETITOR_DAYS } from "@/lib/competitor-source";
 import {
   countCompetitors,
   currentCompetitors,
@@ -863,7 +862,7 @@ export default function ProductDetailPage() {
     cheapestCompetitorPrice !== null &&
     marginProtectedPrice < cheapestCompetitorPrice;
 
-  // Uykudaki (30+ gündür güncellenemeyen) otomatik kayıtlar güncel rakip
+  // Uykudaki (uzun süredir güncellenemeyen) otomatik kayıtlar güncel rakip
   // sayılmaz: sayaçlar ve güven etiketi yalnızca yaşayan kayıtlara bakar.
   const currentCompetitorCount = counts.current;
   const qualityRatio =
@@ -1811,8 +1810,7 @@ export default function ProductDetailPage() {
               {dormantCount > 0 && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1F1F23] bg-[#0A0A0B] px-3 py-2">
                   <p className="text-xs text-gray-400">
-                    {DORMANT_COMPETITOR_DAYS} günden uzun süredir fiyatı güncellenemeyen{" "}
-                    {dormantCount} eski kayıt{" "}
+                    Fiyatı uzun süredir güncellenemeyen veya ilanı kalkan {dormantCount} eski kayıt{" "}
                     {showDormant ? "'Diğer rakipler' içinde gösteriliyor" : "gizlendi"}. Bu kayıtlar
                     hesaplara girmez.
                   </p>

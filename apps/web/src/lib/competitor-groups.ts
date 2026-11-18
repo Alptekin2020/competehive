@@ -29,6 +29,7 @@ export interface GroupableCompetitor {
   review?: "pending" | "confirmed" | null;
   deadAt?: string | null;
   matchBasis?: MatchBasis | null;
+  competitorUrl?: string | null;
 }
 
 export function isPendingReview(competitor: { review?: string | null }): boolean {
@@ -112,6 +113,8 @@ function dormantInput(c: GroupableCompetitor) {
     createdAt: c.createdAt ?? null,
     matchScore: c.matchScore,
     review: c.review ?? null,
+    deadAt: c.deadAt ?? null,
+    competitorUrl: c.competitorUrl ?? null,
   };
 }
 
