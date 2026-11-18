@@ -69,3 +69,8 @@ export const updateSettingsSchema = z.object({
   telegramNotifications: z.boolean().optional(),
   webhookNotifications: z.boolean().optional(),
 });
+
+// Takipteki ürünün barkodu. null ya da boş = barkodu kaldır.
+export const updateBarcodeSchema = z.object({
+  gtin: optionalGtin,
+});
