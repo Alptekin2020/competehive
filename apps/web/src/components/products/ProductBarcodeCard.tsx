@@ -1,21 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ScanBarcode } from "lucide-react";
+import { AlertTriangle, ScanBarcode } from "lucide-react";
 import { checkGtinInput } from "@competehive/shared";
 import InfoTip from "@/components/ui/InfoTip";
+import type { BarcodeWarning } from "@/lib/product-barcode";
 import { BarcodeScanner } from "./BarcodeScanner";
 
 interface ProductBarcodeCardProps {
   productId: string;
   gtin: string | null;
+  /** Son keşif turunda barkod yalnızca başka ürünlerin ilanlarında çıktı. */
+  warning?: BarcodeWarning | null;
   /** Kayıttan sonra sayfadaki ürünün barkodunu günceller. */
   onSaved: (gtin: string | null) => void;
 }
 
 // Takipteki ürünün barkodu: elle yazılır ya da kamerayla okutulur. Kaydedilince
 // rakipler barkodla yeniden aranır (bkz. PUT /api/products/[id]/barcode).
-export function ProductBarcodeCard({ productId, gtin, onSaved }: ProductBarcodeCardProps) {
+export function ProductBarcodeCard({
+  productId,
+  gtin,
+  warning = null,
+  onSaved,
+}: ProductBarcodeCardProps) {
   const [input, setInput] = useState(gtin ?? "");
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -54,7 +62,12 @@ export function ProductBarcodeCard({ productId, gtin, onSaved }: ProductBarcodeC
       const saved: string | null = data?.gtin ?? null;
       onSaved(saved);
       setInput(saved ?? "");
-      if (data?.searchStarted) {
+      const replaced: string | null = data?.replacedListingGtin ?? null;
+      if (replaced) {
+        setNotice(
+          `Barkod kaydedildi. Dikkat: ürün sayfanızda ${replaced} barkodu okunmuştu. Girdiğiniz barkod ürünle uyuşmazsa sonraki taramadan sonra burada uyarı görürsünüz.`,
+        );
+      } else if (data?.searchStarted) {
         setNotice(
           "Barkod kaydedildi. Rakipler barkodla yeniden aranıyor, sonuçlar birkaç dakika içinde listeye düşer.",
         );
@@ -93,6 +106,31 @@ export function ProductBarcodeCard({ productId, gtin, onSaved }: ProductBarcodeC
           ? "Rakipler bu barkodla da aranıyor."
           : "Daha doğru rakip eşleşmesi için ürünün barkodunu okutun ya da yazın."}
       </p>
+
+      {warning && gtin && (
+        <div className="flex gap-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3.5 py-3 mb-3">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm text-amber-300 font-medium">
+              Bu barkod başka bir ürüne ait olabilir
+            </p>
+            <p className="text-xs text-dark-300 mt-1 leading-relaxed">
+              Son taramada bu barkodu taşıyan {warning.mismatches} ilan bulundu ama hiçbiri
+              ürününüzle aynı marka ve özellikte değildi. Bu ilanlar barkod yüzünden rakip
+              sayılmadı. Barkodu ürünün paketinden kontrol edin.
+            </p>
+            {warning.samples.length > 0 && (
+              <ul className="mt-1.5 space-y-0.5">
+                {warning.samples.map((sample) => (
+                  <li key={sample} className="text-xs text-dark-400 truncate">
+                    • {sample}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-2">
         <input

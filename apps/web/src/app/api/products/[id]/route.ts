@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, notFound, badRequest, serverError } from "@/lib/api-response";
 import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
+import { readBarcodeWarning } from "@/lib/product-barcode";
 import { classifyOwnPriceHistory } from "@/lib/price-history";
 import { buildPriceEvents } from "@/lib/product-insights";
 import { chartHiddenCompetitorIds, chartHiddenHistoryFlags } from "@/lib/competitor-groups";
@@ -188,6 +189,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       currentPrice: product.currentPrice,
       cost: product.cost,
       gtin: readMetadataGtin(product.metadata),
+      gtinWarning: readBarcodeWarning(product.metadata),
       currency: product.currency,
       status: product.status,
       refreshStatus: product.refreshStatus,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBarcodeToMetadata } from "../product-barcode";
+import { applyBarcodeToMetadata, readBarcodeWarning } from "../product-barcode";
 
 describe("applyBarcodeToMetadata", () => {
   it("adds a new barcode, keeps other metadata and asks for a search", () => {
@@ -19,10 +19,27 @@ describe("applyBarcodeToMetadata", () => {
     expect(result.shouldSearch).toBe(false);
   });
 
-  it("replaces a barcode read from the store page", () => {
+  it("replaces a barcode read from the store page and reports it", () => {
     const result = applyBarcodeToMetadata({ ean: "96385074" }, "4006381333931");
     expect(result.metadata.gtin).toBe("4006381333931");
     expect(result.shouldSearch).toBe(true);
+    expect(result.replacedListingGtin).toBe("96385074");
+  });
+
+  it("does not report replacing the user's own earlier barcode", () => {
+    const result = applyBarcodeToMetadata(
+      { gtin: "96385074", gtinSource: "user" },
+      "4006381333931",
+    );
+    expect(result.replacedListingGtin).toBeNull();
+  });
+
+  it("drops the old mismatch warning when the barcode changes", () => {
+    const result = applyBarcodeToMetadata(
+      { gtin: "96385074", gtinSource: "user", gtinWarning: { at: "x", mismatches: 2 } },
+      "4006381333931",
+    );
+    expect(result.metadata.gtinWarning).toBeUndefined();
   });
 
   it("clears every barcode key so no stale value stays active", () => {
@@ -40,6 +57,17 @@ describe("applyBarcodeToMetadata", () => {
       metadata: {},
       changed: false,
       shouldSearch: false,
+      replacedListingGtin: null,
     });
+  });
+});
+
+describe("readBarcodeWarning", () => {
+  it("reads the worker's warning and ignores broken data", () => {
+    expect(
+      readBarcodeWarning({ gtinWarning: { at: "2026-11-18", mismatches: 3, samples: ["A", 1] } }),
+    ).toEqual({ at: "2026-11-18", mismatches: 3, samples: ["A"] });
+    expect(readBarcodeWarning({ gtinWarning: "x" })).toBeNull();
+    expect(readBarcodeWarning(null)).toBeNull();
   });
 });

@@ -65,6 +65,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       gtin: parsed.data.gtin,
       changed: update.changed,
       searchStarted,
+      replacedListingGtin: update.replacedListingGtin,
     });
   } catch (error) {
     return serverError(error, "Product barcode update failed");

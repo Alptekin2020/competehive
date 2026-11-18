@@ -35,6 +35,7 @@ import {
 } from "@/lib/competitor-groups";
 import { CollapsibleGroup, CompetitorCard } from "@/components/products/CompetitorCards";
 import { ProductBarcodeCard } from "@/components/products/ProductBarcodeCard";
+import type { BarcodeWarning } from "@/lib/product-barcode";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -101,6 +102,7 @@ interface ProductData {
   currentPrice: string | null;
   cost: string | null;
   gtin?: string | null;
+  gtinWarning?: BarcodeWarning | null;
   currency: string;
   status: string;
   refreshStatus: string | null;
@@ -1339,7 +1341,10 @@ export default function ProductDetailPage() {
       <ProductBarcodeCard
         productId={product.id}
         gtin={product.gtin ?? null}
-        onSaved={(saved) => setProduct((prev) => (prev ? { ...prev, gtin: saved } : prev))}
+        warning={product.gtinWarning ?? null}
+        onSaved={(saved) =>
+          setProduct((prev) => (prev ? { ...prev, gtin: saved, gtinWarning: null } : prev))
+        }
       />
 
       <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6">
