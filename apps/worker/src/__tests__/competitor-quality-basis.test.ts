@@ -192,3 +192,12 @@ describe("trustedPeerMedian", () => {
     expect(trustedPeerMedian([row(17000)], { now, minPeers: 1 }).median).toBe(17000);
   });
 });
+
+describe("başlık bandı 0.5x–2x (18 Kasım kararı)", () => {
+  it("keeps a same-title rival at 1.94x and drops one beyond 2x", () => {
+    expect(withinPriceBandForBasis(179.9, 348.9, "title")).toBe(true);
+    expect(withinPriceBandForBasis(179.9, 370, "title")).toBe(false);
+    expect(withinPriceBandForBasis(200, 101, "title")).toBe(true);
+    expect(withinPriceBandForBasis(200, 99, "title")).toBe(false);
+  });
+});
