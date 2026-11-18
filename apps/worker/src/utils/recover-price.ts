@@ -11,6 +11,7 @@
 import * as cheerio from "cheerio";
 import { parsePrice } from "../serper";
 import { detectBotChallenge, leftProductPage } from "../scrapers";
+import { textHasGtin } from "./listing-identity";
 
 // Ürün sayfasından kopan yönlendirme kontrolü scraper'larla ortak (LISTING_GONE).
 export { leftProductPage };
@@ -27,6 +28,8 @@ export type PriceRecoveryResult = {
     | "akamai-block"
     | "bot-challenge"
     | "not-product-page";
+  /** Yalnızca `gtin` istendiğinde: sayfa aynı barkodu taşıyor mu? */
+  gtinFound?: boolean;
 };
 
 const FETCH_TIMEOUT_MS = 7000;
@@ -181,7 +184,14 @@ function isAkamaiBlock(html: string, status: number): boolean {
   return false;
 }
 
-export async function recoverPriceLightweight(url: string): Promise<PriceRecoveryResult> {
+/**
+ * `options.gtin` verilirse sayfanın aynı barkodu taşıyıp taşımadığı da
+ * döner (`gtinFound`); fiyat okunamasa bile barkod teyidi işe yarar.
+ */
+export async function recoverPriceLightweight(
+  url: string,
+  options: { gtin?: string | null } = {},
+): Promise<PriceRecoveryResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -209,15 +219,18 @@ export async function recoverPriceLightweight(url: string): Promise<PriceRecover
     if (leftProductPage(url, res.url) || looksLikeListingPage(html)) {
       return { price: null, source: "not-product-page" };
     }
+    const gtinFound = options.gtin ? textHasGtin(html, options.gtin) : undefined;
+    const withGtin = (r: PriceRecoveryResult): PriceRecoveryResult =>
+      gtinFound === undefined ? r : { ...r, gtinFound };
     const fromJsonLd = parsePriceFromJsonLd(html);
-    if (fromJsonLd) return { price: fromJsonLd, source: "jsonld" };
+    if (fromJsonLd) return withGtin({ price: fromJsonLd, source: "jsonld" });
     const fromNextData = parsePriceFromNextData(html);
-    if (fromNextData) return { price: fromNextData, source: "nextdata" };
+    if (fromNextData) return withGtin({ price: fromNextData, source: "nextdata" });
     const fromMeta = parsePriceFromMeta(html);
-    if (fromMeta) return { price: fromMeta, source: "og-meta" };
+    if (fromMeta) return withGtin({ price: fromMeta, source: "og-meta" });
     const fromDataTestId = parsePriceFromDataTestId(html);
-    if (fromDataTestId) return { price: fromDataTestId, source: "data-testid" };
-    return { price: null, source: "none" };
+    if (fromDataTestId) return withGtin({ price: fromDataTestId, source: "data-testid" });
+    return withGtin({ price: null, source: "none" });
   } catch {
     return { price: null, source: "http-error" };
   } finally {

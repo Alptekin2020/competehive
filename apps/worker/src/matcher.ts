@@ -15,10 +15,12 @@ import {
 import {
   analyzeModelIdentity,
   hasColourOrShadeConflict,
+  isModelIdentityMismatch,
   type ModelIdentity,
   type ModelIdentityAnalysis,
   truncatedTitleSlugHint,
 } from "./utils/model-identity";
+import { extractTitleGtin, textHasGtin, withListingBrand } from "./utils/listing-identity";
 import { isGoogleHostedUrl } from "./utils/stale-competitors";
 import {
   canonicalBrandToken,
@@ -91,6 +93,54 @@ export interface ProductInfo {
   url?: string;
   price?: number;
   marketplace?: string;
+  /** Kaynak: metadata'daki barkod (yoksa başlıktaki geçerli barkod okunur). */
+  gtin?: string | null;
+  /** Aday: web arama sonucunun özet metni (barkodu taşıyabilir). */
+  snippet?: string;
+}
+
+const SAME_GTIN_REASON = "Aynı barkod (GTIN) — ilan aynı ürünü satıyor";
+
+/**
+ * Kaynağın barkodu adayın başlığında, adresinde ya da arama özetinde geçiyorsa
+ * deterministik kabul (95, model-code dayanağı). Barkod ürünün kendisidir.
+ */
+function gtinAccept(
+  sourceProduct: ProductInfo,
+  candidate: ProductInfo,
+  path: string,
+  modelIdentity?: ModelIdentity,
+): MatchResult | null {
+  const gtin = sourceProduct.gtin ?? extractTitleGtin(sourceProduct.title);
+  if (!gtin) return null;
+  const text = [candidate.title, candidate.url ?? "", candidate.snippet ?? ""].join(" ");
+  if (!textHasGtin(text, gtin)) return null;
+  logDeterministicAccept(path, sourceProduct, candidate, 95, modelIdentity ?? "none");
+  return sameGtinMatch(modelIdentity);
+}
+
+/** Barkodu doğrulanmış eşleşme (sayfa barkodu teyidi de bunu kullanır). */
+export function sameGtinMatch(modelIdentity?: ModelIdentity): MatchResult {
+  return {
+    isMatch: true,
+    score: 95,
+    reason: SAME_GTIN_REASON,
+    ...(modelIdentity ? { modelIdentity } : {}),
+    attributes: {
+      brandMatch: true,
+      modelMatch: true,
+      specMatch: true,
+      categoryMatch: true,
+      details: "Kaynak ürünün barkodu aday ilanda da geçiyor",
+      matchBasis: "model-code",
+    },
+  };
+}
+
+/** Trendyol adayının başlığına mağaza yolundaki marka eklenir (bkz. withListingBrand). */
+function withCandidateBrand(sourceProduct: ProductInfo, candidate: ProductInfo): ProductInfo {
+  const title = withListingBrand(sourceProduct.title, candidate.title, candidate.url);
+  return title === candidate.title ? candidate : { ...candidate, title };
 }
 
 // ============================================
@@ -183,6 +233,7 @@ export function reevaluateUncertainMatch(
   candidate: ProductInfo,
   previous: { score: number | null; categoryMatch?: boolean | null },
 ): MatchResult | null {
+  candidate = withCandidateBrand(sourceProduct, candidate);
   if (isPackagingListing(candidate.title, sourceProduct.title)) return null;
   if (isAccessoryListing(candidate.title, sourceProduct.title)) return null;
   const cleanedSource = cleanProductTitle(sourceProduct.title);
@@ -200,6 +251,9 @@ export function reevaluateUncertainMatch(
   if (hasPackOrSpecConflict(cleanedSource, urlSlugText(candidate.url))) return null;
   // Model kimliği doğrulanmadan (farklı kod ya da adayda kod yok) yükseltme yok.
   const identity = identityOf(sourceProduct, candidate);
+  if (isModelIdentityMismatch(identity.relation)) return null;
+  const byGtin = gtinAccept(sourceProduct, candidate, "reevaluate-gtin", identity.relation);
+  if (byGtin) return byGtin;
   if (identity.relation !== "same" && identity.relation !== "none") return null;
 
   const accept = (score: number, reason: string): MatchResult => {
@@ -314,6 +368,7 @@ export async function verifyProductMatch(
   sourceProduct: ProductInfo,
   candidate: ProductInfo,
 ): Promise<MatchResult> {
+  candidate = withCandidateBrand(sourceProduct, candidate);
   // Deterministik emniyet kemeri (AI'dan bağımsız): ambalaj/koli/lojistik
   // ürünü bir tüketici ürünüyle asla eşleşmez. AI çağrısından ÖNCE çalışır —
   // hem maliyeti düşürür hem AI hatası/yanılgısında bile koruma sağlar.
@@ -350,6 +405,8 @@ export async function verifyProductMatch(
     );
     return identityRejected;
   }
+  const byGtin = gtinAccept(sourceProduct, candidate, "gtin", identity.relation);
+  if (byGtin) return byGtin;
   // Kaynakta model kodu var ama aday doğrulamıyor: deterministik kabul ve
   // backstop yükseltmesi yok, skor en fazla 69 (kullanıcı onayı beklenir).
   const identityUnknown = identity.relation === "unknown";

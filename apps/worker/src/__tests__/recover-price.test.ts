@@ -93,3 +93,40 @@ describe("recoverPriceLightweight bot challenge", () => {
     });
   });
 });
+
+describe("recoverPriceLightweight barkod teyidi", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const url = "https://www.n11.com/urun/multi-vitamin-hair-cocktail-2ml-x-10-ampul-111492082";
+  const page = (gtin: string) =>
+    `<html><head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product",
+      name: "Multi Vitamin Hair Cocktail",
+      gtin13: gtin,
+      offers: { "@type": "Offer", price: "239.90", priceCurrency: "TRY" },
+    })}</script></head><body>${"<p>x</p>".repeat(300)}</body></html>`;
+  const stub = (html: string) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const res = new Response(html, { status: 200 });
+        Object.defineProperty(res, "url", { value: url });
+        return res;
+      }),
+    );
+
+  it("reports gtinFound when the page carries the requested barcode", async () => {
+    stub(page("8681677004991"));
+    const result = await recoverPriceLightweight(url, { gtin: "8681677004991" });
+    expect(result.gtinFound).toBe(true);
+    expect(result.price).toBe(239.9);
+  });
+
+  it("reports gtinFound false for another barcode and omits it when not asked", async () => {
+    stub(page("8681677004984"));
+    expect((await recoverPriceLightweight(url, { gtin: "8681677004991" })).gtinFound).toBe(false);
+    expect((await recoverPriceLightweight(url)).gtinFound).toBeUndefined();
+  });
+});

@@ -21,7 +21,8 @@ import { logger } from "./logger";
 export const REJECT_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const REJECT_CACHE_MAX_SCORE = 40;
 // v3: kısaltılmış başlıklarda AI artık ilan adresindeki ürün adını da görüyor.
-const REJECT_CACHE_VERSION = 3;
+// v4: Trendyol adaylarında marka ilan yolundan okunuyor, barkod eşleşmesi var.
+const REJECT_CACHE_VERSION = 4;
 const REDIS_TIMEOUT_MS = 500;
 
 export interface CachedRejection {
