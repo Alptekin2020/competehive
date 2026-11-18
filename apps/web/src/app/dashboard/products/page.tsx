@@ -151,6 +151,7 @@ function ProductsPageInner() {
   const [showModal, setShowModal] = useState(() => searchParams.get("add") === "1");
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [url, setUrl] = useState("");
+  const [gtin, setGtin] = useState("");
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState("");
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
@@ -228,7 +229,7 @@ function ProductsPageInner() {
       const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productUrl: url }),
+        body: JSON.stringify({ productUrl: url, gtin: gtin.trim() || null }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -245,6 +246,7 @@ function ProductsPageInner() {
       setProducts((prev) => [data.product, ...prev]);
       setAddedBanner({ first: wasEmpty });
       setUrl("");
+      setGtin("");
       setShowModal(false);
       // Rakip keşfi POST /api/products tarafından worker kuyruğuna eklendi;
       // sonuçlar arka planda gelir (eski ek web-compare çağrısı kaldırıldı —
@@ -1077,6 +1079,8 @@ function ProductsPageInner() {
         <AddProductModal
           url={url}
           onUrlChange={setUrl}
+          gtin={gtin}
+          onGtinChange={setGtin}
           loading={formLoading}
           error={formError}
           showUpgradeCta={formErrorCode === "PLAN_LIMIT"}

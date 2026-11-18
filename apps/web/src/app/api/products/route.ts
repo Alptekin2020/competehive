@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
     const parsed = addProductSchema.safeParse(body);
     if (!parsed.success) return badRequest(parsed.error.errors[0].message);
 
-    const { productUrl } = parsed.data;
+    const { productUrl, gtin: userGtin } = parsed.data;
     logContext.productUrl = productUrl;
 
     const marketplace = detectMarketplaceFromUrl(productUrl);
@@ -339,6 +339,9 @@ export async function POST(req: NextRequest) {
           category: analysis.category,
           searchKeywords: analysis.searchKeywords,
           ...(storeIdentifiers ?? {}),
+          // Kullanıcının yazdığı/okuttuğu barkod sayfadan okunandan önce gelir:
+          // worker bununla barkodla arama yapar ve aynı barkodlu ilanı kabul eder.
+          ...(userGtin ? { gtin: userGtin, gtinSource: "user" } : {}),
         },
       },
     });

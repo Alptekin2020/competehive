@@ -5,6 +5,8 @@
 export { validateWebEnv, validateWorkerEnv, webEnvSchema, workerEnvSchema } from "./env";
 export { normalizeProductImage } from "./normalize-product-image";
 export { parseAvailability } from "./availability";
+export { checkGtinInput, isValidGtin, normalizeGtinInput } from "./gtin";
+export type { GtinCheck } from "./gtin";
 export {
   MIN_MATCH_SCORE,
   PRICE_BAND_MIN_RATIO,
