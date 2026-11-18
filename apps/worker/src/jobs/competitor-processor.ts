@@ -10,7 +10,13 @@ import {
   resolveRetailer,
 } from "../serper";
 import type { SerperShoppingResult } from "../serper";
-import { reevaluateUncertainMatch, verifyProductMatch, MatchResult } from "../matcher";
+import {
+  reevaluateUncertainMatch,
+  sameGtinMatch,
+  verifyProductMatch,
+  MatchResult,
+} from "../matcher";
+import { extractTitleGtin } from "../utils/listing-identity";
 import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
 import { Marketplace, Prisma } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
@@ -32,7 +38,12 @@ import {
   urlMatchKey,
 } from "../utils/url-match";
 import { isPlausiblePriceChange } from "../utils/price-sanity";
-import { MAX_SEARCH_QUERIES, buildSearchQueries, cleanProductTitle } from "../utils/search-queries";
+import {
+  MAX_SEARCH_QUERIES,
+  buildSearchQueries,
+  cleanProductTitle,
+  extractGtin,
+} from "../utils/search-queries";
 import { buildZeroReason } from "../utils/zero-reason";
 import { isGenericStoreMarketplace, storeHostFromUrl } from "../shared";
 
@@ -227,6 +238,8 @@ async function healStoredCompetitors(productId: string, sourceTitle: string): Pr
   return healed;
 }
 
+const MAX_GTIN_PAGE_CHECKS_PER_ROUND = 6;
+
 export async function processCompetitorJob(job: Job<OnboardJobData>) {
   const { productId, title, url } = job.data;
   console.log(`🔍 Competitor arama başlıyor: ${title} (${productId})`);
@@ -252,6 +265,11 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     // döndürüp tüm rakipleri AI'a reddettiriyordu.
     const queries = buildSearchQueries(product.productName, title, product.metadata);
     console.log(`🧠 Arama sorguları: ${JSON.stringify(queries)}`);
+    // Barkod: ürün kimliğinin en güvenilir kaynağı (bkz. utils/listing-identity).
+    const sourceGtin =
+      extractGtin(product.metadata) ??
+      extractTitleGtin(product.productName) ??
+      extractTitleGtin(title);
 
     if (queries.length === 0) {
       console.warn(`⚠️ Geçerli arama sorgusu üretilemedi: ${productId}`);
@@ -314,6 +332,8 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let promotedCandidateCount = 0;
     const promotedIds = new Set<string>();
     let directScrapeQueuedCount = 0;
+    // Barkod teyidi için okunan ilan sayfası sayısı (tur başına sınırlı).
+    let gtinPageChecks = 0;
     // Anahtar: izleme parametrelerinden arındırılmış URL (competitorUrlKey).
     // Ham URL ile karşılaştırınca aynı ilan farklı izleme parametresiyle
     // geldiğinde "yeni rakip" sanılıp hem tekrar AI'a gidiyor hem listede
@@ -453,6 +473,8 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         // Kurtarma yolunda da eşleşme skoru SAKLANMALI — aksi halde rakip kaydı
         // matchScore=null ile yaratılıp UI'da "güvenilir" muamelesi görüyor.
         let recoveryMatch: MatchResult | null = null;
+        // Barkod teyidi için sayfa zaten okunduysa sonucu (fiyat dahil).
+        let gtinPageRecovery: Awaited<ReturnType<typeof recoverPriceLightweight>> | null = null;
         const needsRecovery = (!price || price <= 0) && isScraperBacked;
 
         // Başlık eşleşti ama hafif HTTP ile fiyat alınamadı (datacenter IP'leri
@@ -507,12 +529,43 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                   url: product.productUrl || url || undefined,
                   price: sourcePrice ?? undefined,
                   marketplace: product.marketplace,
+                  gtin: sourceGtin,
                 },
-                { title: result.title, url: result.link, marketplace: retailer.name },
+                {
+                  title: result.title,
+                  url: result.link,
+                  marketplace: retailer.name,
+                  snippet: result.snippet,
+                },
                 resultUrlKey,
               );
             } catch {
               continue;
+            }
+
+            // Başlık reddedildi ama ürünün barkodu var: ilan sayfası aynı barkodu
+            // taşıyorsa ilan aynı üründür (kesik/markasız başlıklar AI'ı yanıltıyor).
+            // Okunan fiyat aşağıdaki kurtarma adımında yeniden kullanılır.
+            if (
+              !preMatch.isMatch &&
+              sourceGtin &&
+              gtinPageChecks < MAX_GTIN_PAGE_CHECKS_PER_ROUND &&
+              !isGoogleHostedLink(result.link) &&
+              !(preMatch.modelIdentity && isModelIdentityMismatch(preMatch.modelIdentity))
+            ) {
+              gtinPageChecks++;
+              try {
+                const page = await recoverPriceLightweight(result.link, { gtin: sourceGtin });
+                if (page.gtinFound) {
+                  console.log(
+                    `🏷️ Barkod ilan sayfasında doğrulandı (${sourceGtin}): ${result.title.slice(0, 60)}`,
+                  );
+                  preMatch = sameGtinMatch(preMatch.modelIdentity);
+                  gtinPageRecovery = page;
+                }
+              } catch (err) {
+                console.error(`Barkod teyidi hatası (${result.link}):`, err);
+              }
             }
 
             if (!preMatch.isMatch) {
@@ -607,7 +660,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
           // Title eşleşti (veya bilinen rakip) → lightweight HTTP fallback ile fiyat çek
           try {
-            const recovered = await recoverPriceLightweight(result.link);
+            const recovered = gtinPageRecovery ?? (await recoverPriceLightweight(result.link));
             if (recovered.price && recovered.price > 0) {
               price = recovered.price;
               priceRecovered = true;
@@ -652,8 +705,13 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           // deterministik başlık kuralı artık "aynı ürün" diyorsa aday
           // kullanıcıyı beklemeden kabul edilir (AI'a tekrar sorulmaz).
           const promoted = reevaluateUncertainMatch(
-            { title, url: product.productUrl || url || undefined, price: sourcePrice ?? undefined },
-            { title: result.title, url: result.link, price },
+            {
+              title,
+              url: product.productUrl || url || undefined,
+              price: sourcePrice ?? undefined,
+              gtin: sourceGtin,
+            },
+            { title: result.title, url: result.link, price, snippet: result.snippet },
             {
               score: known.matchScore,
               categoryMatch: readCategoryMatch(known.matchAttributes),
@@ -794,8 +852,15 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                 url: product.productUrl || url || undefined,
                 price: sourcePrice ?? undefined,
                 marketplace: product.marketplace,
+                gtin: sourceGtin,
               },
-              { title: result.title, url: result.link, price, marketplace: retailer.name },
+              {
+                title: result.title,
+                url: result.link,
+                price,
+                marketplace: retailer.name,
+                snippet: result.snippet,
+              },
               resultUrlKey,
             );
           } catch {
@@ -1001,7 +1066,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       if (!storedName) continue;
       const storedPrice = candidate.currentPrice ? Number(candidate.currentPrice) : undefined;
       const promoted = reevaluateUncertainMatch(
-        { title, url: product.productUrl || url || undefined, price: sourcePrice ?? undefined },
+        {
+          title,
+          url: product.productUrl || url || undefined,
+          price: sourcePrice ?? undefined,
+          gtin: sourceGtin,
+        },
         { title: storedName, url: candidate.competitorUrl, price: storedPrice },
         {
           score: candidate.matchScore,

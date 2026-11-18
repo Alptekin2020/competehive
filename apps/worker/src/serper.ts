@@ -11,6 +11,8 @@ export interface SerperShoppingResult {
   price: string; // "₺1.299,00" formatında
   imageUrl?: string;
   position: number;
+  /** Web araması sonucunun özet metni (barkod taşıyabilir; bkz. listing-identity). */
+  snippet?: string;
 }
 
 export interface Retailer {
@@ -490,6 +492,7 @@ interface SerperOrganicResult {
   position?: number;
   price?: number | string;
   currency?: string;
+  snippet?: string;
 }
 
 /**
@@ -525,6 +528,7 @@ export function mapOrganicToShoppingResults(
       link: r.link,
       price,
       position: r.position ?? out.length + 1,
+      ...(typeof r.snippet === "string" && r.snippet ? { snippet: r.snippet } : {}),
     });
   }
   return out;
