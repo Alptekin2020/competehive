@@ -34,6 +34,8 @@ import {
   groupCompetitors,
 } from "@/lib/competitor-groups";
 import { CollapsibleGroup, CompetitorCard } from "@/components/products/CompetitorCards";
+import { ProductBarcodeCard } from "@/components/products/ProductBarcodeCard";
+import type { BarcodeWarning } from "@/lib/product-barcode";
 import PriceTrend from "@/components/PriceTrend";
 import { ProductDetailSkeleton } from "@/components/Skeleton";
 import ErrorState from "@/components/ErrorState";
@@ -99,6 +101,8 @@ interface ProductData {
   productImage: string | null;
   currentPrice: string | null;
   cost: string | null;
+  gtin?: string | null;
+  gtinWarning?: BarcodeWarning | null;
   currency: string;
   status: string;
   refreshStatus: string | null;
@@ -1333,6 +1337,15 @@ export default function ProductDetailPage() {
           </p>
         )}
       </div>
+
+      <ProductBarcodeCard
+        productId={product.id}
+        gtin={product.gtin ?? null}
+        warning={product.gtinWarning ?? null}
+        onSaved={(saved) =>
+          setProduct((prev) => (prev ? { ...prev, gtin: saved, gtinWarning: null } : prev))
+        }
+      />
 
       <div className="bg-[#111113] border border-[#1F1F23] rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6">
         <h3 className="text-white font-semibold mb-2 inline-flex items-center gap-2">

@@ -41,3 +41,18 @@ export function checkGtinInput(raw: string | null | undefined): GtinCheck | null
   }
   return { ok: true, gtin };
 }
+
+/**
+ * Ürün metadata'sındaki barkod (worker `extractGtin` ile aynı anahtarlar ve
+ * sıra: gtin, ean, barcode, gtin13). Yoksa null.
+ */
+export function readMetadataGtin(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const meta = metadata as Record<string, unknown>;
+  for (const key of ["gtin", "ean", "barcode", "gtin13"]) {
+    const v = meta[key];
+    const digits = typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+    if (/^\d{8,14}$/.test(digits)) return digits;
+  }
+  return null;
+}

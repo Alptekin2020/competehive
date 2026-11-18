@@ -16,7 +16,7 @@ import {
   verifyProductMatch,
   MatchResult,
 } from "../matcher";
-import { extractTitleGtin } from "../utils/listing-identity";
+import { extractTitleGtin, textHasGtin } from "../utils/listing-identity";
 import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
 import { Marketplace, Prisma } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
@@ -58,6 +58,12 @@ import {
   shouldSearchMarketplacePages,
 } from "../utils/second-source";
 import { isGoogleHostedUrl } from "../utils/stale-competitors";
+import {
+  isUserEnteredGtin,
+  nextUserGtinWarning,
+  userGtinCorroborated,
+  type GtinCandidate,
+} from "../utils/user-gtin";
 import {
   isCacheableRejection,
   readCachedRejection,
@@ -270,6 +276,12 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
       extractGtin(product.metadata) ??
       extractTitleGtin(product.productName) ??
       extractTitleGtin(title);
+    // Kullanıcının girdiği barkod yanlış olabilir: yalnızca marka + başlık
+    // uyumuyla birlikte kanıt sayılır (bkz. utils/user-gtin).
+    const sourceGtinFromUser = isUserEnteredGtin(product.metadata, sourceGtin, [
+      product.productName,
+      title,
+    ]);
 
     if (queries.length === 0) {
       console.warn(`⚠️ Geçerli arama sorgusu üretilemedi: ${productId}`);
@@ -334,6 +346,18 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
     let directScrapeQueuedCount = 0;
     // Barkod teyidi için okunan ilan sayfası sayısı (tur başına sınırlı).
     let gtinPageChecks = 0;
+    // Kullanıcı barkodunu taşıyan sonuçlar: ürünle uyuşan / uyuşmayan.
+    const userGtinHits = { corroborated: 0, mismatched: [] as string[] };
+    const userGtinSeen = new Set<string>();
+    const noteUserGtinHit = (key: string, candidate: GtinCandidate) => {
+      if (!sourceGtinFromUser || userGtinSeen.has(key)) return;
+      userGtinSeen.add(key);
+      if (userGtinCorroborated(product.productName || title, candidate)) {
+        userGtinHits.corroborated++;
+      } else {
+        userGtinHits.mismatched.push(candidate.title);
+      }
+    };
     // Anahtar: izleme parametrelerinden arındırılmış URL (competitorUrlKey).
     // Ham URL ile karşılaştırınca aynı ilan farklı izleme parametresiyle
     // geldiğinde "yeni rakip" sanılıp hem tekrar AI'a gidiyor hem listede
@@ -436,6 +460,16 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
 
         const resultUrlKey = competitorUrlKey(result.link);
         if (rejectedUrlKeys.has(resultUrlKey)) continue;
+        if (
+          sourceGtinFromUser &&
+          textHasGtin(`${result.title} ${result.link} ${result.snippet ?? ""}`, sourceGtin)
+        ) {
+          noteUserGtinHit(resultUrlKey, {
+            title: result.title,
+            url: result.link,
+            snippet: result.snippet,
+          });
+        }
 
         const known = knownByUrl.get(resultUrlKey);
         // Google kartı, gerçek ürün sayfasına taşınmış bir rakibin eski anahtarı:
@@ -530,6 +564,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                   price: sourcePrice ?? undefined,
                   marketplace: product.marketplace,
                   gtin: sourceGtin,
+                  gtinFromUser: sourceGtinFromUser,
                 },
                 {
                   title: result.title,
@@ -556,7 +591,21 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               gtinPageChecks++;
               try {
                 const page = await recoverPriceLightweight(result.link, { gtin: sourceGtin });
-                if (page.gtinFound) {
+                const pageCandidate = {
+                  title: result.title,
+                  url: result.link,
+                  snippet: result.snippet,
+                };
+                if (page.gtinFound) noteUserGtinHit(resultUrlKey, pageCandidate);
+                if (
+                  page.gtinFound &&
+                  sourceGtinFromUser &&
+                  !userGtinCorroborated(product.productName || title, pageCandidate)
+                ) {
+                  console.log(
+                    `🏷️ Kullanıcı barkodu sayfada var ama ürünle uyuşmuyor, kabul edilmedi: ${result.title.slice(0, 60)}`,
+                  );
+                } else if (page.gtinFound) {
                   console.log(
                     `🏷️ Barkod ilan sayfasında doğrulandı (${sourceGtin}): ${result.title.slice(0, 60)}`,
                   );
@@ -710,6 +759,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
               url: product.productUrl || url || undefined,
               price: sourcePrice ?? undefined,
               gtin: sourceGtin,
+              gtinFromUser: sourceGtinFromUser,
             },
             { title: result.title, url: result.link, price, snippet: result.snippet },
             {
@@ -853,6 +903,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
                 price: sourcePrice ?? undefined,
                 marketplace: product.marketplace,
                 gtin: sourceGtin,
+                gtinFromUser: sourceGtinFromUser,
               },
               {
                 title: result.title,
@@ -1071,6 +1122,7 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
           url: product.productUrl || url || undefined,
           price: sourcePrice ?? undefined,
           gtin: sourceGtin,
+          gtinFromUser: sourceGtinFromUser,
         },
         { title: storedName, url: candidate.competitorUrl, price: storedPrice },
         {
@@ -1162,6 +1214,33 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         previousInStock: null,
         competitorMoves,
       });
+    }
+
+    // Kullanıcı barkodu bu turda yalnızca başka ürünlerin ilanlarında çıktıysa
+    // ürün sayfasında "barkod başka ürüne ait olabilir" uyarısı gösterilir.
+    if (sourceGtinFromUser) {
+      const meta = (product.metadata ?? {}) as Record<string, unknown>;
+      const next = nextUserGtinWarning(meta.gtinWarning, userGtinHits, now);
+      if (next) {
+        try {
+          const fresh = await prisma.trackedProduct.findUnique({
+            where: { id: productId },
+            select: { metadata: true },
+          });
+          const freshMeta = { ...((fresh?.metadata ?? {}) as Record<string, unknown>) };
+          if (next.warning) freshMeta.gtinWarning = next.warning;
+          else delete freshMeta.gtinWarning;
+          await prisma.trackedProduct.update({
+            where: { id: productId },
+            data: { metadata: freshMeta as Prisma.InputJsonValue },
+          });
+          console.log(
+            `🏷️ Kullanıcı barkodu: ${userGtinHits.corroborated} uyuşan, ${userGtinHits.mismatched.length} uyuşmayan ilan${next.warning ? " — uyarı yazıldı" : " — uyarı kaldırıldı"}`,
+          );
+        } catch (err) {
+          console.error(`Barkod uyarısı yazılamadı (${productId}):`, err);
+        }
+      }
     }
 
     // Google ürün kartına bağlı rakipleri satıcının gerçek ürün sayfasına taşı

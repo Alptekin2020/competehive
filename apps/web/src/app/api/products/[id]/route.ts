@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { apiSuccess, unauthorized, notFound, badRequest, serverError } from "@/lib/api-response";
 import { getEffectiveFeatures } from "@/lib/plan-gates";
 import { updateProductSchema } from "@/lib/validation";
+import { readBarcodeWarning } from "@/lib/product-barcode";
 import { classifyOwnPriceHistory } from "@/lib/price-history";
 import { buildPriceEvents } from "@/lib/product-insights";
 import { chartHiddenCompetitorIds, chartHiddenHistoryFlags } from "@/lib/competitor-groups";
@@ -13,6 +14,7 @@ import {
   getMarketplaceInfo,
   getRetailerInfoFromDomain,
   readCompetitorDeadAt,
+  readMetadataGtin,
 } from "@competehive/shared";
 
 // Ürün URL'sinin pazaryeri görünen adı ("Trendyol", "Amazon TR"). Worker kendi
@@ -58,6 +60,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         currentPrice: true,
         cost: true,
         currency: true,
+        metadata: true,
         status: true,
         refreshStatus: true,
         refreshRequestedAt: true,
@@ -185,6 +188,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       productImage: product.productImage,
       currentPrice: product.currentPrice,
       cost: product.cost,
+      gtin: readMetadataGtin(product.metadata),
+      gtinWarning: readBarcodeWarning(product.metadata),
       currency: product.currency,
       status: product.status,
       refreshStatus: product.refreshStatus,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkGtinInput, isValidGtin, normalizeGtinInput } from "../gtin";
+import { checkGtinInput, isValidGtin, normalizeGtinInput, readMetadataGtin } from "../gtin";
 
 describe("isValidGtin", () => {
   it("accepts valid EAN-13, EAN-8, UPC-A and GTIN-14", () => {
@@ -48,5 +48,14 @@ describe("checkGtinInput", () => {
       ok: false,
       error: "Barkod geçersiz görünüyor, rakamları kontrol edin.",
     });
+  });
+});
+
+describe("readMetadataGtin", () => {
+  it("reads the same keys as the worker, gtin first", () => {
+    expect(readMetadataGtin({ gtin: "4006381333931", ean: "96385074" })).toBe("4006381333931");
+    expect(readMetadataGtin({ ean: 96385074 })).toBe("96385074");
+    expect(readMetadataGtin({ gtin: null, barcode: "abc" })).toBeNull();
+    expect(readMetadataGtin(null)).toBeNull();
   });
 });

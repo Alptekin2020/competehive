@@ -22,6 +22,7 @@ import {
 } from "./utils/model-identity";
 import { extractTitleGtin, textHasGtin, withListingBrand } from "./utils/listing-identity";
 import { isGoogleHostedUrl } from "./utils/stale-competitors";
+import { userGtinCorroborated } from "./utils/user-gtin";
 import {
   canonicalBrandToken,
   hasPackOrSpecConflict,
@@ -95,6 +96,11 @@ export interface ProductInfo {
   marketplace?: string;
   /** Kaynak: metadata'daki barkod (yoksa başlıktaki geçerli barkod okunur). */
   gtin?: string | null;
+  /**
+   * Kaynak barkodu kullanıcı girdi (yanlış olabilir): barkod isabeti ancak
+   * marka + başlık uyumuyla kabul edilir (utils/user-gtin).
+   */
+  gtinFromUser?: boolean;
   /** Aday: web arama sonucunun özet metni (barkodu taşıyabilir). */
   snippet?: string;
 }
@@ -115,6 +121,17 @@ function gtinAccept(
   if (!gtin) return null;
   const text = [candidate.title, candidate.url ?? "", candidate.snippet ?? ""].join(" ");
   if (!textHasGtin(text, gtin)) return null;
+  if (
+    sourceProduct.gtinFromUser &&
+    gtin === sourceProduct.gtin &&
+    !userGtinCorroborated(sourceProduct.title, candidate)
+  ) {
+    logger.info(
+      { path, source: sourceProduct.title, candidate: candidate.title, url: candidate.url },
+      "User barcode found on a listing that does not match the product",
+    );
+    return null;
+  }
   logDeterministicAccept(path, sourceProduct, candidate, 95, modelIdentity ?? "none");
   return sameGtinMatch(modelIdentity);
 }
