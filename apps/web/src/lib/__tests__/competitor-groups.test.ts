@@ -104,6 +104,26 @@ describe("groupCompetitors", () => {
 });
 
 describe("countCompetitors", () => {
+  it("ölü işaretli ve 4 günden eski Google kartını uykuda sayar", () => {
+    const deadRow: GroupableCompetitor = {
+      id: "dead",
+      currentPrice: "17000.00",
+      matchScore: 90,
+      lastScrapedAt: FRESH,
+      deadAt: "2026-11-14T12:00:00Z",
+    };
+    const oldCard: GroupableCompetitor = {
+      ...STALE,
+      id: "old-card",
+      competitorUrl: "https://www.google.com/search?ibp=oshop&prds=catalogid:7",
+    };
+    expect(countCompetitors([TRUSTED_A, deadRow, oldCard, STALE], NOW)).toEqual({
+      current: 2,
+      pending: 0,
+      dormant: 2,
+    });
+  });
+
   it("rakip sayısı onay bekleyen ve uykudaki kayıtları saymaz", () => {
     expect(countCompetitors(ALL, NOW)).toEqual({ current: 4, pending: 1, dormant: 1 });
     expect(currentCompetitors(ALL, NOW).map((c) => c.id)).toEqual([

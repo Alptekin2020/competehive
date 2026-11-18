@@ -130,6 +130,18 @@ export function competitorOpenLabel(competitor: CompetitorLinkInput): string {
 /** Bu kadar gündür fiyatı güncellenmeyen otomatik kayıt "uykuda" sayılır. */
 export const DORMANT_COMPETITOR_DAYS = 30;
 
+/**
+ * Google ürün kartına bağlı (gerçek sayfası bulunamamış) otomatik kayıt bu
+ * kadar gün fiyatsız kalınca uykuya alınır. Bu kayıtlar doğrudan taranamaz;
+ * fiyatı yalnızca Google kartı yeniden göründüğünde tazelenir. Prod 18 Kasım:
+ * 282 güvenilir rakibin 116'sı satıcısı bilinmeyen, Google'ın artık
+ * döndürmediği kartlardı ve 30 gün boyunca "Eski" fiyatla listede kalıyordu.
+ * Kart yeniden görülür ya da gerçek sayfaya bağlanırsa kayıt kendiliğinden
+ * geri gelir (lastScrapedAt tazelenir). Worker aynası:
+ * apps/worker/src/utils/stale-competitors.ts GOOGLE_CARD_DORMANT_DAYS.
+ */
+export const GOOGLE_CARD_DORMANT_DAYS = 4;
+
 export interface DormantCheckInput {
   lastScrapedAt: string | Date | null;
   createdAt?: string | Date | null;
@@ -137,6 +149,8 @@ export interface DormantCheckInput {
   review?: "pending" | "confirmed" | null;
   /** İlan yayından kalktı işareti (worker `matchAttributes.deadAt`). */
   deadAt?: string | Date | null;
+  /** Varsa: Google ürün kartı bağlantıları daha erken uykuya alınır. */
+  competitorUrl?: string | null;
 }
 
 /**
@@ -144,7 +158,8 @@ export interface DormantCheckInput {
  * hesaplara girmez (72 saat kuralı); listede ve "N rakip" sayısında durmaları
  * güncel rakip sayısını olduğundan büyük gösterir. Elle eklenen (skor null) ve
  * kullanıcının onayladığı kayıtlar asla uykuda sayılmaz. İlanı kaldırılmış
- * (`deadAt`) otomatik kayıt hemen uykuda sayılır.
+ * (`deadAt`) otomatik kayıt hemen, taranamayan Google kartı
+ * GOOGLE_CARD_DORMANT_DAYS sonra uykuda sayılır.
  */
 export function isDormantCompetitor(input: DormantCheckInput, now: Date = new Date()): boolean {
   if (input.matchScore === null || input.review === "confirmed") return false;
@@ -154,5 +169,8 @@ export function isDormantCompetitor(input: DormantCheckInput, now: Date = new Da
   if (!reference) return false;
   const time = new Date(reference).getTime();
   if (!Number.isFinite(time)) return false;
-  return now.getTime() - time > DORMANT_COMPETITOR_DAYS * 24 * 60 * 60 * 1000;
+  const days = isGoogleHostedUrl(input.competitorUrl)
+    ? GOOGLE_CARD_DORMANT_DAYS
+    : DORMANT_COMPETITOR_DAYS;
+  return now.getTime() - time > days * 24 * 60 * 60 * 1000;
 }

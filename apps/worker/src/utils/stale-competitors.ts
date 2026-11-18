@@ -160,6 +160,13 @@ export function pickStaleCompetitorsForDirectScrape(
   );
 }
 
+/**
+ * Web aynası (apps/web/src/lib/competitor-source.ts GOOGLE_CARD_DORMANT_DAYS):
+ * gerçek sayfası bulunamamış Google kartı bu kadar gün fiyatsız kalınca web'de
+ * uykuya alınır (listede ve sayaçlarda görünmez).
+ */
+export const GOOGLE_CARD_DORMANT_DAYS = 4;
+
 export interface StaleTrustedCounts {
   /** Güvenilir (skor null ya da ≥ MIN) ve fiyatı 72 saatten eski rakip sayısı. */
   stale: number;
@@ -169,6 +176,13 @@ export interface StaleTrustedCounts {
   dead: number;
   /** Değerlendirilen güvenilir rakip sayısı. */
   trusted: number;
+  /**
+   * Web'de uykuya alınan (listede görünmeyen) otomatik kayıtlar: ölü işaretli
+   * ya da GOOGLE_CARD_DORMANT_DAYS'ten eski Google kartı. stale/trusted
+   * içinde de sayılırlar; kullanıcının gördüğü tazelik
+   * (stale - retired) / (trusted - retired).
+   */
+  retired: number;
 }
 
 /**
@@ -183,15 +197,33 @@ export function countStaleTrustedCompetitors(
   staleHours = 72,
 ): StaleTrustedCounts {
   const cutoff = now.getTime() - staleHours * 60 * 60 * 1000;
-  const counts: StaleTrustedCounts = { stale: 0, googleHosted: 0, dead: 0, trusted: 0 };
+  const googleCutoff = now.getTime() - GOOGLE_CARD_DORMANT_DAYS * 24 * 60 * 60 * 1000;
+  const counts: StaleTrustedCounts = {
+    stale: 0,
+    googleHosted: 0,
+    dead: 0,
+    trusted: 0,
+    retired: 0,
+  };
   for (const c of competitors) {
     if (c.matchScore !== null && c.matchScore < MIN_MATCH_SCORE) continue;
     counts.trusted++;
     if (updatedIds.has(c.id)) continue;
     if (c.lastScrapedAt !== null && c.lastScrapedAt.getTime() >= cutoff) continue;
     counts.stale++;
-    if (isGoogleHostedUrl(c.competitorUrl)) counts.googleHosted++;
-    if (readScrapeHealth(c.matchAttributes).deadAt) counts.dead++;
+    const google = isGoogleHostedUrl(c.competitorUrl);
+    const dead = Boolean(readScrapeHealth(c.matchAttributes).deadAt);
+    if (google) counts.googleHosted++;
+    if (dead) counts.dead++;
+    // Elle eklenen (skor null) ve onaylı kayıtlar web'de hiç uykuya alınmaz.
+    const automated =
+      c.matchScore !== null && readMatchBasis(c.matchAttributes, c.matchScore) !== "confirmed";
+    if (
+      automated &&
+      (dead || (google && (c.lastScrapedAt === null || c.lastScrapedAt.getTime() < googleCutoff)))
+    ) {
+      counts.retired++;
+    }
   }
   return counts;
 }

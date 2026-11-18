@@ -610,7 +610,7 @@ export async function processRefreshUrlJob(job: Job<RefreshUrlJobData>) {
     // rakip sayısı (zaman içinde izlenebilsin diye her turda loglanır).
     const freshness = countStaleTrustedCompetitors(uniqueKnown, updatedCompetitorIds, now);
     console.log(
-      `🧊 Rakip tazeliği (${productUrl}): ${freshness.stale}/${freshness.trusted} güvenilir rakip 72 saatten eski (Google kartı: ${freshness.googleHosted}, ölü: ${freshness.dead}), ${directScrapesQueued} doğrudan taramaya`,
+      `🧊 Rakip tazeliği (${productUrl}): ${freshness.stale}/${freshness.trusted} güvenilir rakip 72 saatten eski (Google kartı: ${freshness.googleHosted}, ölü: ${freshness.dead}), görünür: ${freshness.stale - freshness.retired}/${freshness.trusted - freshness.retired} (uykuya alınan ${freshness.retired}), ${directScrapesQueued} doğrudan taramaya`,
     );
     // Teşhis: bayat Google kartlarından gerçek sayfası aranamayanların
     // satıcıları (bilinmeyen satıcı sitesi). Yeni satıcı alan adı buradan eklenir.
