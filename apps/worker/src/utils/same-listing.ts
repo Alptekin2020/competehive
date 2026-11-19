@@ -397,6 +397,27 @@ export function extractHepsiburadaListingsFromHtml(html: string): Record<string,
   return [];
 }
 
+/**
+ * Sayfanın gösterdiği (buybox) satıcı: ürünün kendi ilan nesnesi
+ * `"listingId":…,"merchantName":"Kumtel Türkiye","merchantId":"<uuid>","merchantCity":…`
+ * sırasıyla durur; `listings` girdileri ise `merchantId` ile başlar, karışmaz.
+ * JSON-LD'deki satıcı adı çoğu zaman marka olur (prod 19 Kasım: icollagen
+ * sayfasının satıcısı "onlineecza"), bu yüzden kendi mağaza buradan okunur.
+ */
+export function extractHepsiburadaShownMerchant(
+  html: string,
+): { merchantId: string; merchantName: string } | null {
+  const pattern =
+    /"merchantName"\s*:\s*"([^"\\]{1,120})"\s*,\s*"merchantId"\s*:\s*"([^"\\]{1,80})"\s*,\s*"merchantCity"/;
+  for (const text of htmlTextVariants(html)) {
+    const match = pattern.exec(text);
+    if (match && match[1].trim()) {
+      return { merchantName: match[1].trim(), merchantId: match[2].trim() };
+    }
+  }
+  return null;
+}
+
 function foldSellerName(name: string): string {
   return name.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
 }
@@ -422,23 +443,29 @@ function listingEntryPrice(entry: Record<string, unknown>): number {
 
 /**
  * `listings` girdilerinden satıcılar. Kendi mağazamız (ürün URL'sindeki
- * `magaza`, yoksa sayfanın gösterdiği satıcı) listeden çıkarılır; fiyatı
- * okunamayan girdi atlanır.
+ * `magaza` ve sayfanın gösterdiği satıcı; ad ya da `merchantId` ile) listeden
+ * çıkarılır; fiyatı okunamayan girdi atlanır.
  */
 export function hepsiburadaSellersFromListings(
   listings: Record<string, unknown>[],
-  ownSellerName: string | null,
+  ownSellerName: string | null | Array<string | null | undefined>,
+  ownMerchantId?: string | null,
 ): SameListingSeller[] {
-  const own = ownSellerName ? foldSellerName(ownSellerName) : null;
+  const ownNames = new Set(
+    (Array.isArray(ownSellerName) ? ownSellerName : [ownSellerName])
+      .filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+      .map(foldSellerName),
+  );
   const sellers: SameListingSeller[] = [];
   const seen = new Set<string>();
   for (const entry of listings) {
     const name = typeof entry.merchantName === "string" ? entry.merchantName.trim() : "";
     if (!name) continue;
-    if (own && foldSellerName(name) === own) continue;
+    if (ownNames.has(foldSellerName(name))) continue;
     const idRaw = entry.merchantId;
     const merchantId =
       typeof idRaw === "string" || typeof idRaw === "number" ? String(idRaw) : foldSellerName(name);
+    if (ownMerchantId && merchantId === ownMerchantId) continue;
     if (seen.has(merchantId)) continue;
     if (entry.isSalable === false) continue;
     const price = listingEntryPrice(entry);

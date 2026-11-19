@@ -14,6 +14,7 @@ import {
   extractOtherMerchantsFromHtml,
   extractHepsiburadaListingsFromHtml,
   findOtherMerchantsContainer,
+  extractHepsiburadaShownMerchant,
   hepsiburadaMagazaFromUrl,
   hepsiburadaSellersFromListings,
   resolveRequestedSeller,
@@ -1863,20 +1864,27 @@ const HEPSIBURADA_SELLER_KEYS = [
 
 /**
  * Aynı ilanın diğer satıcılarını (`listings`) ürüne ekler. Kendi mağazamız
- * URL'deki `magaza`, yoksa sayfanın gösterdiği satıcıdır. Tanı için satıcı
+ * URL'deki `magaza` ve sayfanın gösterdiği (buybox) satıcıdır. Tanı için satıcı
  * bulunamazsa ilk girdinin kısa bir örneği loglanır (fiyat alanının biçimi).
  */
 function attachHepsiburadaOtherSellers(url: string, html: string, product: ScrapedProduct): void {
   const listings = extractHepsiburadaListingsFromHtml(html);
   if (listings.length === 0) return;
-  const ownSeller = hepsiburadaMagazaFromUrl(url) ?? product.sellerName ?? null;
-  const sellers = hepsiburadaSellersFromListings(listings, ownSeller);
+  const magaza = hepsiburadaMagazaFromUrl(url);
+  // Kendi fiyatımız sayfanın gösterdiği satıcının fiyatıdır; o satıcı (ve URL'de
+  // seçilmişse `magaza`) rakip olamaz. JSON-LD adı çoğu zaman marka olduğundan
+  // yalnızca gösterilen satıcı okunamazsa kullanılır.
+  const shown = extractHepsiburadaShownMerchant(html);
+  const ownNames = [magaza, shown?.merchantName ?? (magaza ? null : product.sellerName)];
+  const sellers = hepsiburadaSellersFromListings(listings, ownNames, shown?.merchantId ?? null);
   logger.info(
     {
       url: url.split("?")[0].slice(0, 120),
       listed: listings.length,
       sellers: sellers.length,
-      ownSeller,
+      ownSeller: magaza ?? shown?.merchantName ?? product.sellerName ?? null,
+      shownSeller: shown?.merchantName ?? null,
+      pageSeller: product.sellerName ?? null,
       ...(sellers.length === 0 ? { sample: JSON.stringify(listings[0]).slice(0, 800) } : {}),
     },
     "Hepsiburada other sellers",

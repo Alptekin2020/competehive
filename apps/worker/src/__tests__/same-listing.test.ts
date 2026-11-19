@@ -4,6 +4,7 @@ import { shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
 import {
   extractMerchantListingFromHtml,
   extractHepsiburadaListingsFromHtml,
+  extractHepsiburadaShownMerchant,
   extractOtherMerchantsFromHtml,
   findOtherMerchantsContainer,
   hepsiburadaMagazaFromUrl,
@@ -413,6 +414,57 @@ describe("Hepsiburada same-listing sellers", () => {
     expect(isOtherSellerUrl(url, url)).toBe(false);
     // Kendi mağaza adını bilmiyorsak koruma yok (kendi ilanımız olabilir).
     expect(isOtherSellerUrl(sellerUrl, url.split("?")[0])).toBe(false);
+  });
+
+  it("reads the shown (buybox) merchant, not a listings entry", () => {
+    // Prod 19 Kasım: icollagen sayfasında JSON-LD adı marka, satıcı onlineecza.
+    const page = JSON.stringify({
+      product: {
+        url: "https://www.hepsiburada.com/icollagen-kolajen-ve-prebiyotik-tablet",
+        listingId: "8c3c75fe",
+        merchantName: "onlineecza",
+        merchantId: "96af0f3e-037d-4aa4-a991-646b3c95663a",
+        merchantCity: "İSTANBUL",
+      },
+      hasMoreListings: true,
+      listings: [
+        { merchantId: "a29b", listingId: "a086", merchantName: "DerKoz", prices: [{ value: 400 }] },
+        {
+          merchantId: "96af0f3e-037d-4aa4-a991-646b3c95663a",
+          merchantName: "OnlineEcza ",
+          prices: [{ value: 410 }],
+        },
+        { merchantId: "c1", merchantName: "icollagen", prices: [{ value: 420 }] },
+      ],
+    });
+    const escaped = `<script>window.__S__ = "${page.replace(/"/g, '\\"')}";</script>`;
+    for (const source of [escaped, `<script>${page}</script>`]) {
+      expect(extractHepsiburadaShownMerchant(source)).toEqual({
+        merchantName: "onlineecza",
+        merchantId: "96af0f3e-037d-4aa4-a991-646b3c95663a",
+      });
+    }
+    const shown = extractHepsiburadaShownMerchant(escaped);
+    const sellers = hepsiburadaSellersFromListings(
+      extractHepsiburadaListingsFromHtml(escaped),
+      [null, shown?.merchantName],
+      shown?.merchantId,
+    );
+    // Gösterilen satıcı (kendi fiyatımız) rakip olmaz; marka adlı mağaza rakiptir.
+    expect(sellers.map((s) => s.sellerName)).toEqual(["DerKoz", "icollagen"]);
+    expect(extractHepsiburadaShownMerchant("<html>no state</html>")).toBeNull();
+  });
+
+  it("drops the own store by merchantId even when the name differs", () => {
+    const sellers = hepsiburadaSellersFromListings(
+      [
+        { merchantId: "own-id", merchantName: "Kumtel Türkiye Resmi", prices: [{ value: 1 }] },
+        { merchantId: "x", merchantName: "PORGATECH", prices: [{ value: 2 }] },
+      ],
+      ["Kumtel"],
+      "own-id",
+    );
+    expect(sellers.map((s) => s.sellerName)).toEqual(["PORGATECH"]);
   });
 
   it("keeps Trendyol merchantId URLs", () => {
