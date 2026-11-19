@@ -17,6 +17,9 @@
 //    Kasım: Doğanay bataryası). Yol parçası kaynağın markasıyla aynıysa marka
 //    aday başlığının önüne eklenir.
 
+/** Barkod kabulünün gerekçesi (matcher + boot denetimi aynı metni kullanır). */
+export const SAME_GTIN_REASON = "Aynı barkod (GTIN) — ilan aynı ürünü satıyor";
+
 function fold(s: string): string {
   return s
     .replace(/[İIı]/g, "i")
@@ -63,6 +66,24 @@ export function extractTitleGtin(title: string | null | undefined): string | nul
 export function textHasGtin(text: string | null | undefined, gtin: string | null): boolean {
   if (!text || !gtin) return false;
   return new RegExp(`(?<!\\d)${gtin}(?!\\d)`).test(text);
+}
+
+/**
+ * Adresin barkod kanıtı sayılabilecek kısmı: alan adı + yol. Sorgu dizesi
+ * sayılmaz, Google'ın kendi kartı hiç sayılmaz: kart adresi bizim arama
+ * sorgumuzu (`q=Evde+Aesthetic+8681677004991`) taşır, barkodla yapılan
+ * aramada dönen HER kart barkodu "içeriyordu" (prod 19 Kasım: Evde Aesthetic
+ * serumuna aynı markanın dermaroller'ı ve cilt bakım seti 95 ile kabul edildi).
+ */
+export function gtinUrlText(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (/(^|\.)google\.[a-z.]+$/i.test(parsed.hostname)) return "";
+    return `${parsed.hostname}${parsed.pathname}`;
+  } catch {
+    return "";
+  }
 }
 
 /** Trendyol ilan adresinin mağaza/marka yol parçası (`/pd/<marka>/…` dahil). */

@@ -15,6 +15,7 @@ import {
   sameListingAttributes,
   sellerDataSnippets,
   sellersFromProductDetail,
+  hepsiburadaListingApiHints,
 } from "../utils/same-listing";
 import { countFreshDirectCompetitors, shouldSearchMarketplacePages } from "../utils/second-source";
 import { pickStaleCompetitorsForDirectScrape } from "../utils/stale-competitors";
@@ -422,5 +423,17 @@ describe("Hepsiburada same-listing sellers", () => {
         price: 1,
       }),
     ).toBe("https://www.trendyol.com/x/y-p-123?merchantId=555");
+  });
+});
+
+describe("hepsiburadaListingApiHints", () => {
+  it("collects listing/merchant URL-like strings, unescaping \\u002F", () => {
+    const html =
+      '{"api":"https:\\u002F\\u002Flisting-api.hepsiburada.com\\u002Fv2\\u002Flistings?sku={sku}","x":"/api/merchants/abc","img":"/static/merchant-logo.png","p":"/kedi-kumu-pm-HBC0000ABC","n":"/other"}';
+    const hints = hepsiburadaListingApiHints(html);
+    expect(hints).toContain("https://listing-api.hepsiburada.com/v2/listings?sku={sku}");
+    expect(hints).toContain("/api/merchants/abc");
+    expect(hints.some((h) => h.includes(".png"))).toBe(false);
+    expect(hints.some((h) => h.includes("-pm-"))).toBe(false);
   });
 });

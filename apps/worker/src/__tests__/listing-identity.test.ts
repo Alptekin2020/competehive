@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractTitleGtin,
+  gtinUrlText,
   isValidGtin,
   textHasGtin,
   trendyolBrandSlug,
@@ -116,5 +117,42 @@ describe("matcher — barkod ve marka yolu", () => {
       { score: 30 },
     );
     expect(promoted?.isMatch).toBe(true);
+  });
+});
+
+describe("barcode evidence never comes from a search query (prod 19 Nov)", () => {
+  const GOOGLE_CARD =
+    "https://www.google.com/search?ibp=oshop&q=Evde+Aesthetic+8681677004991&prds=catalogid:5542020750947907179,pvo:2&gl=tr&udm=28";
+
+  it("drops Google cards and query strings from the URL text", () => {
+    expect(gtinUrlText(GOOGLE_CARD)).toBe("");
+    expect(gtinUrlText("https://www.n11.com/urun/serum-8681677004991-123?q=1")).toBe(
+      "www.n11.com/urun/serum-8681677004991-123",
+    );
+    expect(gtinUrlText("https://shop.example.com/p?barcode=8681677004991")).toBe(
+      "shop.example.com/p",
+    );
+    expect(gtinUrlText(undefined)).toBe("");
+  });
+
+  it("does not accept another product of the brand whose Google card URL echoes the query", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const result = await verifyProductMatch(
+      { title: EVDE_SOURCE },
+      { title: "Evde Aesthetic Dermoroller 540 İğneli 2 mm", url: GOOGLE_CARD },
+    );
+    expect(result.score).toBeLessThan(95);
+  });
+
+  it("still accepts the barcode in a listing path", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const result = await verifyProductMatch(
+      { title: EVDE_SOURCE },
+      {
+        title: "Evde Aesthetic Multi Vitamin...",
+        url: "https://www.n11.com/urun/evde-aesthetic-serum-8681677004991-123456",
+      },
+    );
+    expect(result.score).toBe(95);
   });
 });
