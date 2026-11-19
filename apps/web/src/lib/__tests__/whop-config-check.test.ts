@@ -7,6 +7,7 @@ import {
   normalizeId,
   planFetchFailedCheck,
   summarizeChecks,
+  whopWebhookUrl,
   type PlanExpectation,
   type WhopEnvSnapshot,
   type WhopPlanRecord,
@@ -178,5 +179,27 @@ describe("evaluateWebhookReceipts", () => {
     expect(evaluateWebhookReceipts({ lastOk: ok, lastFail: olderFail }, null)).toHaveLength(1);
     const failing = evaluateWebhookReceipts({ lastOk: ok, lastFail: newerFail }, null);
     expect(failing.map((c) => c.status)).toEqual(["ok", "error"]);
+  });
+});
+
+describe("whopWebhookUrl", () => {
+  it("www'siz uygulama adresinde bile www'li webhook adresi önerir", () => {
+    expect(whopWebhookUrl("https://competehive.com")).toBe(
+      "https://www.competehive.com/api/webhooks/whop",
+    );
+    expect(whopWebhookUrl("https://competehive.com/")).toBe(
+      "https://www.competehive.com/api/webhooks/whop",
+    );
+  });
+
+  it("tanımsız ya da geçersiz adreste varsayılan www adresine düşer", () => {
+    expect(whopWebhookUrl(null)).toBe("https://www.competehive.com/api/webhooks/whop");
+    expect(whopWebhookUrl("not a url")).toBe("https://www.competehive.com/api/webhooks/whop");
+  });
+
+  it("başka bir alan adını olduğu gibi kullanır", () => {
+    expect(whopWebhookUrl("https://staging.example.com")).toBe(
+      "https://staging.example.com/api/webhooks/whop",
+    );
   });
 });

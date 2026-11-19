@@ -69,8 +69,17 @@ function duplicateGroups(entries: Array<[string, string | null]>): string[][] {
   return [...byValue.values()].filter((names) => names.length > 1);
 }
 
+// Whop yönlendirme takip etmez: www'siz alan adı 307 ile www'ye yönlendiği
+// için önerilen adres, NEXT_PUBLIC_APP_URL www'siz ayarlanmış olsa bile her
+// zaman www'li olmalıdır (aksi halde sayfa çalışmayan adresi önerir).
 export function whopWebhookUrl(appUrl: string | null): string {
-  const base = (appUrl || "https://www.competehive.com").replace(/\/$/, "");
+  let base = (appUrl || "https://www.competehive.com").replace(/\/$/, "");
+  try {
+    const parsed = new URL(base);
+    if (parsed.hostname === "competehive.com") base = "https://www.competehive.com";
+  } catch {
+    base = "https://www.competehive.com";
+  }
   return `${base}/api/webhooks/whop`;
 }
 
