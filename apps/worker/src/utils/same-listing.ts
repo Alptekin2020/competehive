@@ -320,6 +320,29 @@ export function sellerDataSnippets(
   return out;
 }
 
+/**
+ * Tanı: Hepsiburada ilk sayfada yalnız 2 diğer satıcı verir
+ * (`hasMoreListings: true`). Kalanları getiren adresi bulmak için sayfadaki
+ * ilan/satıcı ile ilgili adres benzeri dizgeler (kaçışlı `\u002F` dahil)
+ * toplanır. En çok `limit` benzersiz değer.
+ */
+export function hepsiburadaListingApiHints(html: string, limit = 12): string[] {
+  const text = html.replace(/\\u002F/gi, "/").replace(/\\\//g, "/");
+  const out = new Set<string>();
+  const re =
+    /(?:https?:\/\/[a-z0-9.-]+)?\/[a-z0-9._~\-/{}:]*(?:listing|merchant|seller|satici)[a-z0-9._~\-/{}:?=&]*/gi;
+  for (const m of text.matchAll(re)) {
+    const value = m[0];
+    if (value.length < 8 || value.length > 200) continue;
+    // Ürün sayfası slug'ları ve statik dosyalar ipucu değildir.
+    if (/\.(?:js|css|png|jpe?g|svg|webp|woff2?)(?:$|\?)/i.test(value)) continue;
+    if (/-p[m]?-[A-Z0-9]+/i.test(value)) continue;
+    out.add(value);
+    if (out.size >= limit) break;
+  }
+  return [...out];
+}
+
 export type RequestedSellerResult =
   | { kind: "price"; price: number; sellerName: string | null }
   | { kind: "reject" }

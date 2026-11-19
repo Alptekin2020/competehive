@@ -17,6 +17,7 @@ import {
   hepsiburadaMagazaFromUrl,
   hepsiburadaSellersFromListings,
   resolveRequestedSeller,
+  hepsiburadaListingApiHints,
   sellerDataSnippets,
   sellersFromProductDetail,
 } from "../utils/same-listing";
@@ -1910,6 +1911,14 @@ function logHepsiburadaSellerDiagnostics(url: string, html: string, source: stri
         1,
         500,
       ),
+      // Kalan satıcıları getiren adres: bayrağın çevresi + adres benzeri dizgeler.
+      moreListings: sellerDataSnippets(
+        html,
+        ["hasMoreListings", "listingCount", "totalListing", "merchantCount"],
+        1,
+        300,
+      ),
+      apiHints: hepsiburadaListingApiHints(html),
     },
     "Hepsiburada seller diagnostics",
   );
