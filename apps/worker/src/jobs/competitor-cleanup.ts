@@ -37,6 +37,8 @@ import {
 import { isGoogleHostedUrl } from "../utils/stale-competitors";
 import { isSameListing } from "../utils/url-match";
 import { ownColourText } from "../utils/direct-listing";
+import { SAME_GTIN_REASON, extractTitleGtin, textHasGtin } from "../utils/listing-identity";
+import { extractGtin } from "../utils/search-queries";
 import { isOtherSellerUrl, isSameListingSellerRow } from "../utils/same-listing";
 
 // Silme bandı — görüntüleme bandından bilinçli olarak daha geniş.
@@ -503,5 +505,68 @@ export async function downgradeWrongColourDirectLinks(): Promise<number> {
   if (wrong.length > 0) {
     logger.info({ downgraded: wrong.length }, "Wrong-colour direct links downgraded");
   }
+  return wrong.length;
+}
+
+// ============================================
+// Google kartı adresindeki arama sorgusundan gelen yanlış barkod kabulleri
+// (prod 19 Kasım)
+// ============================================
+//
+// Barkodla yapılan aramada Google kartlarının adresi sorguyu (q=…<barkod>)
+// taşıdığı için aynı markanın başka ürünleri 95 "aynı barkod" ile kabul edildi.
+// Barkod kanıtı artık adresin yalnız yolundan okunuyor (gtinUrlText); mevcut
+// satırlar burada düzeltilir. Kart başlığında barkod yoksa kabulün tek dayanağı
+// sorgu dizesiydi: satır SİLİNMEZ, skoru 30'a iner. Onaylı satırlara dokunulmaz.
+
+export const FALSE_GTIN_DOWNGRADE_SCORE = 30;
+export const FALSE_GTIN_REASON = "Barkod yalnızca arama sorgusundaydı, ilan doğrulanamadı";
+
+export function isFalseGtinGoogleAccept(
+  sourceGtin: string | null,
+  row: {
+    competitorName: string | null;
+    competitorUrl: string;
+    matchReason: string | null;
+    matchAttributes: unknown;
+  },
+): boolean {
+  if (row.matchReason !== SAME_GTIN_REASON) return false;
+  if (!isGoogleHostedUrl(row.competitorUrl)) return false;
+  if (readMatchReview(row.matchAttributes) === "confirmed") return false;
+  if (!sourceGtin) return true;
+  return !textHasGtin(row.competitorName ?? "", sourceGtin);
+}
+
+export async function downgradeFalseGtinAccepts(): Promise<number> {
+  const rows = await prisma.competitor.findMany({
+    where: { matchScore: { gte: MIN_MATCH_SCORE }, matchReason: SAME_GTIN_REASON },
+    select: {
+      id: true,
+      competitorName: true,
+      competitorUrl: true,
+      matchReason: true,
+      matchAttributes: true,
+      trackedProduct: { select: { productName: true, metadata: true } },
+    },
+  });
+  const wrong = rows.filter((r) => {
+    const gtin =
+      extractGtin(r.trackedProduct?.metadata) ??
+      extractTitleGtin(r.trackedProduct?.productName ?? "");
+    return isFalseGtinGoogleAccept(gtin, r);
+  });
+  for (const r of wrong) {
+    await prisma.competitor.update({
+      where: { id: r.id },
+      data: { matchScore: FALSE_GTIN_DOWNGRADE_SCORE, matchReason: FALSE_GTIN_REASON },
+    });
+    logger.info(
+      { competitorId: r.id, name: (r.competitorName ?? "").slice(0, 80) },
+      "Google card barcode accept downgraded: barcode was only in the search query",
+    );
+  }
+  if (wrong.length > 0)
+    logger.info({ downgraded: wrong.length }, "False barcode accepts downgraded");
   return wrong.length;
 }

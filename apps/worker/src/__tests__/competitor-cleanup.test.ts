@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isWrongColourDirectLink, shouldPurgeCompetitor } from "../jobs/competitor-cleanup";
+import {
+  isFalseGtinGoogleAccept,
+  isWrongColourDirectLink,
+  shouldPurgeCompetitor,
+} from "../jobs/competitor-cleanup";
+import { SAME_GTIN_REASON } from "../utils/listing-identity";
 
 const slipper = {
   productName: "Havaianas Top Tiras Kadın Gümüş Terlik 4137428-5178 Gümüş - Gri",
@@ -137,5 +142,33 @@ describe("isWrongColourDirectLink (prod 17 Kasım: Arzum OK004 Bakır)", () => {
         competitorUrl: nar.competitorUrl.replace("nar-p-185831", "bakir-p-146157"),
       }),
     ).toBe(false);
+  });
+});
+
+describe("isFalseGtinGoogleAccept (prod 19 Nov)", () => {
+  const gtin = "8681677004991";
+  const card =
+    "https://www.google.com/search?ibp=oshop&q=Evde+Aesthetic+8681677004991&prds=catalogid:1,pvo:2";
+  const row = (over: Partial<Parameters<typeof isFalseGtinGoogleAccept>[1]> = {}) => ({
+    competitorName: "Evde Aesthetic Dermoroller 540 İğneli 2 mm",
+    competitorUrl: card,
+    matchReason: SAME_GTIN_REASON,
+    matchAttributes: {},
+    ...over,
+  });
+
+  it("flags a Google card accepted only through the query string", () => {
+    expect(isFalseGtinGoogleAccept(gtin, row())).toBe(true);
+  });
+
+  it("keeps cards whose title has the barcode, real pages, other reasons and confirmed rows", () => {
+    expect(isFalseGtinGoogleAccept(gtin, row({ competitorName: `Serum ${gtin}` }))).toBe(false);
+    expect(
+      isFalseGtinGoogleAccept(gtin, row({ competitorUrl: "https://www.n11.com/urun/serum-1" })),
+    ).toBe(false);
+    expect(isFalseGtinGoogleAccept(gtin, row({ matchReason: "Aynı ürün" }))).toBe(false);
+    expect(isFalseGtinGoogleAccept(gtin, row({ matchAttributes: { review: "confirmed" } }))).toBe(
+      false,
+    );
   });
 });

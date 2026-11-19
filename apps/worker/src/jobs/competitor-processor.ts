@@ -16,7 +16,7 @@ import {
   verifyProductMatch,
   MatchResult,
 } from "../matcher";
-import { extractTitleGtin, textHasGtin } from "../utils/listing-identity";
+import { extractTitleGtin, gtinUrlText, textHasGtin } from "../utils/listing-identity";
 import { analyzeModelIdentity, isModelIdentityMismatch } from "../utils/model-identity";
 import { Marketplace, Prisma } from "@prisma/client";
 import { updateTrackedProductRefresh } from "../utils/tracked-product-refresh";
@@ -462,7 +462,10 @@ export async function processCompetitorJob(job: Job<OnboardJobData>) {
         if (rejectedUrlKeys.has(resultUrlKey)) continue;
         if (
           sourceGtinFromUser &&
-          textHasGtin(`${result.title} ${result.link} ${result.snippet ?? ""}`, sourceGtin)
+          textHasGtin(
+            `${result.title} ${gtinUrlText(result.link)} ${result.snippet ?? ""}`,
+            sourceGtin,
+          )
         ) {
           noteUserGtinHit(resultUrlKey, {
             title: result.title,

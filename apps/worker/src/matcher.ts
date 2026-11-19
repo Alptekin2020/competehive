@@ -20,7 +20,13 @@ import {
   type ModelIdentityAnalysis,
   truncatedTitleSlugHint,
 } from "./utils/model-identity";
-import { extractTitleGtin, textHasGtin, withListingBrand } from "./utils/listing-identity";
+import {
+  extractTitleGtin,
+  gtinUrlText,
+  SAME_GTIN_REASON,
+  textHasGtin,
+  withListingBrand,
+} from "./utils/listing-identity";
 import { isGoogleHostedUrl } from "./utils/stale-competitors";
 import { userGtinCorroborated } from "./utils/user-gtin";
 import {
@@ -105,10 +111,9 @@ export interface ProductInfo {
   snippet?: string;
 }
 
-const SAME_GTIN_REASON = "Aynı barkod (GTIN) — ilan aynı ürünü satıyor";
-
 /**
- * Kaynağın barkodu adayın başlığında, adresinde ya da arama özetinde geçiyorsa
+ * Kaynağın barkodu adayın başlığında, adresinin yolunda (sorgu dizesi ve
+ * Google kartı sayılmaz, bkz. gtinUrlText) ya da arama özetinde geçiyorsa
  * deterministik kabul (95, model-code dayanağı). Barkod ürünün kendisidir.
  */
 function gtinAccept(
@@ -119,7 +124,7 @@ function gtinAccept(
 ): MatchResult | null {
   const gtin = sourceProduct.gtin ?? extractTitleGtin(sourceProduct.title);
   if (!gtin) return null;
-  const text = [candidate.title, candidate.url ?? "", candidate.snippet ?? ""].join(" ");
+  const text = [candidate.title, gtinUrlText(candidate.url), candidate.snippet ?? ""].join(" ");
   if (!textHasGtin(text, gtin)) return null;
   if (
     sourceProduct.gtinFromUser &&
