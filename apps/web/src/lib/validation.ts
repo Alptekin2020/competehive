@@ -74,3 +74,34 @@ export const updateSettingsSchema = z.object({
 export const updateBarcodeSchema = z.object({
   gtin: optionalGtin,
 });
+
+/**
+ * Ayarlar → "Mağaza adım": pazaryerlerinde satıcı olarak görünen kendi mağaza
+ * adları. Aynı ilanda kendi fiyatı bu satırdan okunur, rakip sayılmaz.
+ */
+export const MAX_OWN_STORE_NAMES = 5;
+export const updateOwnStoreNamesSchema = z.object({
+  storeNames: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(2, "Mağaza adı en az 2 karakter olmalı")
+        .max(80, "Mağaza adı en fazla 80 karakter olabilir"),
+    )
+    .max(MAX_OWN_STORE_NAMES, `En fazla ${MAX_OWN_STORE_NAMES} mağaza adı ekleyebilirsiniz`),
+});
+
+/** Boşlukları sadeleştirir, büyük/küçük harf farkıyla tekrarlananları atar. */
+export function cleanOwnStoreNames(names: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of names) {
+    const name = raw.replace(/\s+/g, " ").trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}

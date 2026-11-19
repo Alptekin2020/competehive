@@ -59,6 +59,13 @@ export interface ScrapedProduct {
    * (prod 17 Kasım: kendi ürünü 3 kez reddedildi, ürün hataya düşüyordu).
    */
   requestedSellerMissing?: boolean;
+  /**
+   * URL belirli bir satıcı seçmiyorsa sayfanın gösterdiği (buybox) satıcı;
+   * `price` onun fiyatıdır. Kullanıcının mağaza adı (Ayarlar) bu satıcı değilse
+   * `applyOwnStore` kendi fiyatını `otherSellers` içinden okur ve bu satıcıyı
+   * rakip yapar.
+   */
+  pageSeller?: { merchantId: string | null; sellerName: string };
 }
 
 export interface ScraperConfig {
@@ -972,6 +979,9 @@ export async function scrapeTrendyol(
               ? parseInt(String(ratingScore.totalRatingCount))
               : undefined,
             otherSellers: otherSellers.length > 0 ? otherSellers : undefined,
+            ...(merchantId === null && typeof merchant?.name === "string" && merchant.name.trim()
+              ? { pageSeller: { merchantId: responseMerchantId, sellerName: merchant.name.trim() } }
+              : {}),
           };
 
           logger.info(
@@ -1358,6 +1368,16 @@ export async function scrapeTrendyol(
       }
       if (product && product.price > 0) {
         if (sameListing.length > 0) product.otherSellers = sameListing;
+        const shownMerchant = sellerContainer?.merchant as Record<string, unknown> | undefined;
+        if (!merchantId && typeof shownMerchant?.name === "string" && shownMerchant.name.trim()) {
+          product.pageSeller = {
+            merchantId:
+              shownMerchant.id !== undefined && shownMerchant.id !== null
+                ? String(shownMerchant.id)
+                : null,
+            sellerName: shownMerchant.name.trim(),
+          };
+        }
         logger.info(
           `Trendyol Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
         );
@@ -1890,6 +1910,9 @@ function attachHepsiburadaOtherSellers(url: string, html: string, product: Scrap
     "Hepsiburada other sellers",
   );
   if (sellers.length > 0) product.otherSellers = sellers;
+  if (!magaza && shown) {
+    product.pageSeller = { merchantId: shown.merchantId, sellerName: shown.merchantName };
+  }
 }
 
 function logHepsiburadaSellerDiagnostics(url: string, html: string, source: string): void {
