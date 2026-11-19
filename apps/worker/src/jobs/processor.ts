@@ -17,6 +17,7 @@ import {
 } from "../utils/scrape-failures";
 import { captureError } from "../sentry";
 import { PLAN_EXPIRY_GRACE_MS } from "../shared";
+import { applyOwnStore, shouldRetireOwnStoreRow } from "../utils/own-store";
 import { sameListingAttributes, sameListingSellerUrl } from "../utils/same-listing";
 import {
   evaluateAlertRule,
@@ -274,6 +275,42 @@ async function syncSameListingCompetitors(
   return moves;
 }
 
+/**
+ * Kullanıcının kendi mağazasını gösteren otomatik rakip satırlarını ölü işaretler
+ * (`deadReason: "own-store"`): karar hesaplarından düşer, web'de uyuyan rakip
+ * olarak gizlenir. Silinmez; mağaza adı değişirse satır taze fiyatla geri gelir.
+ */
+async function retireOwnStoreCompetitors(
+  productId: string,
+  ownStoreNames: readonly string[],
+): Promise<void> {
+  try {
+    const rows = await prisma.competitor.findMany({
+      where: { trackedProductId: productId },
+      select: { id: true, competitorName: true, matchScore: true, matchAttributes: true },
+    });
+    const now = new Date().toISOString();
+    let retired = 0;
+    for (const row of rows) {
+      if (!shouldRetireOwnStoreRow(row, ownStoreNames)) continue;
+      const attrs =
+        row.matchAttributes && typeof row.matchAttributes === "object"
+          ? (row.matchAttributes as Record<string, unknown>)
+          : {};
+      await prisma.competitor.update({
+        where: { id: row.id },
+        data: { matchAttributes: { ...attrs, deadAt: now, deadReason: "own-store" } },
+      });
+      retired++;
+    }
+    if (retired > 0) {
+      logger.info({ productId, retired }, "Own-store rows retired from competitors");
+    }
+  } catch (error) {
+    logger.error({ productId, error }, "Own-store competitor retire failed (non-fatal)");
+  }
+}
+
 // ============================================
 // SCRAPE WORKER
 // ============================================
@@ -288,7 +325,7 @@ export const scrapeWorker = new Worker(
     try {
       // Scraper'ı al ve çalıştır
       const scraper = getScraper(marketplace);
-      const result: ScrapedProduct = await scraper(productUrl);
+      const scraped: ScrapedProduct = await scraper(productUrl);
 
       // Mevcut fiyatı al
       const product = await prisma.trackedProduct.findUnique({
@@ -297,8 +334,28 @@ export const scrapeWorker = new Worker(
           currentPrice: true,
           status: true,
           metadata: true,
+          user: { select: { ownStoreNames: true } },
         },
       });
+
+      // Kullanıcının mağaza adı (Ayarlar) sayfanın gösterdiği satıcı değilse
+      // kendi fiyatı ilandaki kendi satırından okunur; kendi mağazası rakip olmaz.
+      const ownStoreNames = product?.user?.ownStoreNames ?? [];
+      const ownStore = applyOwnStore(scraped, ownStoreNames);
+      const result = ownStore.product;
+      if (ownStore.outcome !== "none") {
+        logger.info(
+          {
+            productId,
+            outcome: ownStore.outcome,
+            ownSeller: ownStore.ownSeller,
+            pageSeller: scraped.pageSeller?.sellerName ?? null,
+            pagePrice: scraped.price,
+            ownPrice: result.price,
+          },
+          "Own store resolved on listing",
+        );
+      }
 
       const previousPrice = product?.currentPrice ? Number(product.currentPrice) : null;
       const previousInStock = product ? product.status !== "OUT_OF_STOCK" : null;
@@ -373,6 +430,7 @@ export const scrapeWorker = new Worker(
       // kuyruğundan ÖNCE ki COMPETITOR_CHEAPER taze buybox fiyatlarını görsün.
       // Dönen fiyat hareketleri COMPETITOR_PRICE_CHANGE kuralını besler.
       const competitorMoves = await syncSameListingCompetitors(productId, productUrl, result);
+      if (ownStoreNames.length > 0) await retireOwnStoreCompetitors(productId, ownStoreNames);
 
       // Fiyat/stok değiştiyse alert kontrolünü kuyruğa al — tüm fiyat-güncelleme
       // yollarıyla paylaşılan ortak yardımcı (manuel "Yenile" ve 6 saatlik
