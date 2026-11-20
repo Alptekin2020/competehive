@@ -8,12 +8,19 @@
 
 import type { ScrapedOtherSeller, ScrapedProduct } from "../scrapers";
 
-/** Karşılaştırma için mağaza adı: tr-TR küçük harf, harf/rakam dışı her şey atılır. */
+const TR_FOLD: Record<string, string> = { ç: "c", ğ: "g", ı: "i", ö: "o", ş: "s", ü: "u" };
+
+/**
+ * Karşılaştırma için mağaza adı: tr-TR küçük harf, Türkçe harfler ASCII'ye
+ * (N11 satıcıyı "kustarsuarmaturleri" gibi bir kısa adla gösterir), harf/rakam
+ * dışı her şey atılır.
+ */
 export function normalizeStoreName(name: string | null | undefined): string {
   if (!name) return "";
   return name
     .toLocaleLowerCase("tr-TR")
     .normalize("NFC")
+    .replace(/[çğıöşü]/g, (ch) => TR_FOLD[ch] ?? ch)
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 

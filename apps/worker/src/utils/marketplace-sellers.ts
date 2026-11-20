@@ -83,6 +83,9 @@ export function amazonSellerIdFromUrl(url: string | null | undefined): string | 
   return param(parsed, "smid") ?? param(parsed, "m");
 }
 
+/** Amazon.com.tr'nin kendi satıcı kimliği (prod 20 Kasım, `#merchantID`). */
+export const AMAZON_TR_MERCHANT_ID = "A1UNQM1SR2CHM";
+
 /** Amazon "Tüm teklifler" panelinin (AOD) HTML parçasını veren adres. */
 export function amazonOffersUrl(url: string): string | null {
   const parsed = parseUrl(url);
@@ -150,6 +153,7 @@ export function parseAmazonOffers(html: string): ScrapedOtherSeller[] {
       null;
     const merchantId =
       sellerIdFromHref(link.attr("href")) ||
+      (sellerName && /^amazon(\.com)?\.tr$/i.test(sellerName) ? AMAZON_TR_MERCHANT_ID : null) ||
       (sellerName ? `name:${sellerName.toLocaleLowerCase("tr-TR").replace(/\s+/g, "")}` : null);
     const price = parseTrPrice(
       offer.find(".a-price .a-offscreen").first().text() ||
@@ -162,9 +166,55 @@ export function parseAmazonOffers(html: string): ScrapedOtherSeller[] {
   return out;
 }
 
+/**
+ * N11 sayfasının gösterdiği satıcının kısa adı (`magaza`): kaçışlı durumda
+ * `productUrlWithoutSellerShop` alanından hemen önceki ürün adresinin `magaza`
+ * parametresi (prod 20 Kasım: "…-64270488?magaza=kustarsuarmaturleri",
+ * "productUrlWithoutSellerShop":…). Satıcı listesindeki adresler bu alanın
+ * önünde durmaz.
+ */
+export function n11ShownSellerSlug(html: string): string | null {
+  const idx = html.indexOf("productUrlWithoutSellerShop");
+  if (idx === -1) return null;
+  const before = html.slice(Math.max(0, idx - 400), idx);
+  const matches = [...before.matchAll(/[?&]magaza=([A-Za-z0-9_.-]+)/g)];
+  const slug = matches.length > 0 ? matches[matches.length - 1][1] : null;
+  return slug && slug.length >= 2 ? slug : null;
+}
+
+/**
+ * N11 "Diğer Mağazalar" bloğundaki satıcılar (`.otherSellers`): her kartta
+ * `?magaza=<kısa ad>` bağlantısı, `.name` görünen ad ve fiyat. Fiyatı
+ * okunamayan kart atlanır.
+ */
+export function parseN11OtherSellers(html: string): ScrapedOtherSeller[] {
+  const $ = cheerio.load(html);
+  const out: ScrapedOtherSeller[] = [];
+  const seen = new Set<string>();
+  $(".otherSellers .swiper-slide, .otherSellers [data-index]").each((_, el) => {
+    const card = $(el);
+    const href = card.find('a[href*="magaza="]').first().attr("href") ?? "";
+    const slug = href.match(/[?&]magaza=([A-Za-z0-9_.-]+)/)?.[1];
+    if (!slug || seen.has(slug)) return;
+    const sellerName = card.find(".name").first().text().replace(/\s+/g, " ").trim() || slug;
+    const priceText =
+      card.find("ins").first().text() ||
+      card.find("[class*='price' i], [class*='Price']").first().text() ||
+      "";
+    const price = parseTrPrice(priceText);
+    if (price <= 0) return;
+    seen.add(slug);
+    out.push({ merchantId: slug, sellerName, price });
+  });
+  return out;
+}
+
 /** Ayarlar'daki ad gibi karşılaştırma: tr-TR küçük harf, boşluksuz. */
 function foldName(name: string | null | undefined): string {
-  return (name ?? "").toLocaleLowerCase("tr-TR").replace(/[^\p{L}\p{N}]+/gu, "");
+  return (name ?? "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/[çğıöşü]/g, (ch) => ({ ç: "c", ğ: "g", ı: "i", ö: "o", ş: "s", ü: "u" })[ch] ?? ch)
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 /** Gösterilen satıcıyı (kimlik ya da ad) diğer satıcılardan çıkarır. */

@@ -25,7 +25,9 @@ import {
 import {
   amazonOffersUrl,
   amazonShownMerchant,
+  n11ShownSellerSlug,
   parseAmazonOffers,
+  parseN11OtherSellers,
   SELLER_DIAGNOSTIC_KEYS,
   sellerMarketplaceForUrl,
   urlPinsSeller,
@@ -1565,6 +1567,38 @@ async function scrapeWithFallback(
 // çevreleri aynı URL için 6 saatte bir loglanır ("Marketplace seller diagnostics").
 const marketplaceSellerDiagLoggedAt = new Map<string, number>();
 
+// Prod 20 Kasım ilk tanı: N11 satıcıları "Diğer Mağazalar" bloğunda (HTML),
+// Pazarama gösterilen satıcı `productSellerId` çevresinde (Nuxt durumu).
+const SELLER_CONTEXT_KEYS: Partial<
+  Record<string, ReadonlyArray<{ key: string; before: number; after: number }>>
+> = {
+  N11: [
+    { key: 'class="otherSellers"', before: 0, after: 3500 },
+    { key: "productUrlWithoutSellerShop", before: 600, after: 100 },
+  ],
+  PAZARAMA: [
+    { key: "productSellerId", before: 1500, after: 800 },
+    { key: "otherSellers:[{", before: 0, after: 2000 },
+  ],
+  AMAZON_TR: [{ key: 'id="merchantInfoFeature_feature_div"', before: 0, after: 1200 }],
+};
+
+function sellerContextSnippets(
+  html: string,
+  specs: ReadonlyArray<{ key: string; before: number; after: number }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const { key, before, after } of specs) {
+    const idx = html.indexOf(key);
+    if (idx === -1) continue;
+    out[key] = html
+      .slice(Math.max(0, idx - before), idx + after)
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return out;
+}
+
 function annotateMarketplaceSellers(
   url: string,
   html: string,
@@ -1573,10 +1607,31 @@ function annotateMarketplaceSellers(
 ): void {
   const marketplace = sellerMarketplaceForUrl(url);
   if (!marketplace || marketplace === "TRENDYOL" || marketplace === "HEPSIBURADA") return;
-  if (!urlPinsSeller(url) && !product.pageSeller) {
+  const pinned = urlPinsSeller(url);
+  if (!pinned && !product.pageSeller) {
     const shown = marketplace === "AMAZON_TR" ? amazonShownMerchant(html) : null;
-    const sellerName = shown?.sellerName || product.sellerName?.trim();
-    if (sellerName) product.pageSeller = { merchantId: shown?.merchantId ?? null, sellerName };
+    const n11Slug = marketplace === "N11" ? n11ShownSellerSlug(html) : null;
+    const sellerName = shown?.sellerName || product.sellerName?.trim() || n11Slug;
+    if (sellerName) {
+      product.pageSeller = { merchantId: shown?.merchantId ?? n11Slug ?? null, sellerName };
+    }
+  }
+  if (marketplace === "N11" && !pinned && !product.otherSellers) {
+    // "Diğer Mağazalar" sayfanın içinde: ayrı istek gerekmez.
+    const listed = parseN11OtherSellers(html);
+    const sellers = withoutShownSeller(listed, product.pageSeller ?? null);
+    if (sellers.length > 0) product.otherSellers = sellers;
+    if (html.includes('class="otherSellers"')) {
+      logger.info(
+        {
+          url: url.split("?")[0].slice(0, 120),
+          listed: listed.length,
+          sellers: sellers.length,
+          pageSeller: product.pageSeller?.sellerName ?? null,
+        },
+        "N11 other sellers",
+      );
+    }
   }
 
   const key = url.split("?")[0];
@@ -1609,6 +1664,8 @@ function annotateMarketplaceSellers(
         1,
         400,
       ),
+      // Satıcı kartlarının/alanlarının tam yapısı (fiyat ve ad alanları).
+      context: sellerContextSnippets(html, SELLER_CONTEXT_KEYS[marketplace] ?? []),
     },
     "Marketplace seller diagnostics",
   );
