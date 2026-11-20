@@ -351,6 +351,9 @@ export async function runMigrations() {
     await client.query(
       `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "own_store_names" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]`,
     );
+    await client.query(
+      `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "own_stores" JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    );
 
     // (d) Lookup indexes. NOTE: model Notification has no `created_at` — its
     // timestamp column is `sent_at` (the route's orderBy), so the time index
