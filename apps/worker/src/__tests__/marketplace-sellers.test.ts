@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ScrapedProduct } from "../scrapers";
 import {
   amazonAsinFromUrl,
+  n11ShownSellerSlug,
+  parseN11OtherSellers,
   amazonOffersUrl,
   amazonShownMerchant,
   parseAmazonOffers,
@@ -10,7 +12,7 @@ import {
   urlPinsSeller,
   withoutShownSeller,
 } from "../utils/marketplace-sellers";
-import { applyOwnStore } from "../utils/own-store";
+import { applyOwnStore, isOwnStoreName } from "../utils/own-store";
 import { isOtherSellerUrl, sameListingSellerUrl } from "../utils/same-listing";
 
 const AMAZON_URL = "https://www.amazon.com.tr/Philips-EP3347-90/dp/B0B5TQ2X4K?ref=sr_1_1";
@@ -64,7 +66,7 @@ describe("marketplace sellers", () => {
   it("reads the other Amazon offers but not the pinned buybox", () => {
     expect(parseAmazonOffers(AOD_HTML)).toEqual([
       { merchantId: "A3MYSTORE9", sellerName: "Benim Mağazam", price: 12799 },
-      { merchantId: "name:amazon.com.tr", sellerName: "Amazon.com.tr", price: 13100.5 },
+      { merchantId: "A1UNQM1SR2CHM", sellerName: "Amazon.com.tr", price: 13100.5 },
     ]);
   });
 
@@ -98,21 +100,21 @@ describe("marketplace sellers", () => {
         price: 1,
       }),
     ).toBe("https://www.amazon.com.tr/dp/B0B5TQ2X4K?smid=A3MYSTORE9");
-    // Kimliksiz satıcı (Amazon'un kendisi) için seçilebilir URL yok.
+    // Kimliksiz satıcı için seçilebilir URL yok.
     expect(
       sameListingSellerUrl(AMAZON_URL, {
-        merchantId: "name:amazon.com.tr",
-        sellerName: "Amazon.com.tr",
+        merchantId: "name:baskasatici",
+        sellerName: "Başka Satıcı",
         price: 1,
       }),
     ).toBeNull();
     expect(
       sameListingSellerUrl("https://www.n11.com/urun/kahve-makinesi-123", {
-        merchantId: "x",
+        merchantId: "kahvedukkani",
         sellerName: "Kahve Dükkanı",
         price: 1,
       }),
-    ).toBe("https://www.n11.com/urun/kahve-makinesi-123?magaza=Kahve%20D%C3%BCkkan%C4%B1");
+    ).toBe("https://www.n11.com/urun/kahve-makinesi-123?magaza=kahvedukkani");
   });
 
   it("treats another Amazon seller of the own listing as a rival, not the own listing", () => {
@@ -143,6 +145,29 @@ describe("marketplace sellers", () => {
     expect(resolved.product.otherSellers?.map((s) => s.sellerName)).toEqual([
       "Teknoloji Dünyası",
       "Amazon.com.tr",
+    ]);
+  });
+
+  // Prod 20 Kasım "Marketplace seller diagnostics" (N11): kaçışlı durumda
+  // gösterilen satıcının adresi `productUrlWithoutSellerShop` alanından önce;
+  // "Diğer Mağazalar" kartları `?magaza=<kısa ad>` + `.name` taşır.
+  it("reads the shown N11 seller from the page state", () => {
+    const html =
+      '{"title":"Kustar","productUrl":"https:\\u002F\\u002Fwww.n11.com\\u002Furun\\u002Fkustar-64270488?magaza=kustarsuarmaturleri","productUrlWithoutSellerShop":"https:\\u002F\\u002Fwww.n11.com\\u002Furun\\u002Fkustar-64270488"}';
+    expect(n11ShownSellerSlug(html)).toBe("kustarsuarmaturleri");
+    expect(n11ShownSellerSlug("<html></html>")).toBeNull();
+    expect(isOwnStoreName("kustarsuarmaturleri", ["Kustar Su Armatürleri"])).toBe(true);
+  });
+
+  it("reads N11 other stores with their prices", () => {
+    const html = `<div class="otherSellers"><div class="otherSellers-top"><h3>Diğer Mağazalar</h3></div>
+      <div class="swiper-wrapper">
+        <div data-index="0" class="swiper-slide"><a href="/urun/icollagen-133827429?magaza=semizticaret" class="titleAndPointWrapper"><div class="title"><span class="name">Semizticaret</span></div></a>
+          <div class="priceContainer"><ins>1.249,90 TL</ins></div></div>
+        <div data-index="1" class="swiper-slide"><a href="/urun/icollagen-133827429?magaza=teknosa"><span class="name">Teknosa</span></a></div>
+      </div></div>`;
+    expect(parseN11OtherSellers(html)).toEqual([
+      { merchantId: "semizticaret", sellerName: "Semizticaret", price: 1249.9 },
     ]);
   });
 });

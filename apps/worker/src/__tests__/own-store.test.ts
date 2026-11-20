@@ -27,7 +27,7 @@ const base: ScrapedProduct = {
 describe("normalizeStoreName", () => {
   it("folds Turkish case, spaces and punctuation", () => {
     expect(normalizeStoreName("KUMTEL TÜRKİYE")).toBe(normalizeStoreName("kumtel türkiye"));
-    expect(normalizeStoreName("Benim  Mağazam A.Ş.")).toBe("benimmağazamaş");
+    expect(normalizeStoreName("Benim  Mağazam A.Ş.")).toBe("benimmagazamas");
     expect(isOwnStoreName("benim mağazam aş", ["Benim Mağazam A.Ş."])).toBe(true);
     // Tam eşleşme: kısmi ad başka mağazayı kapsamaz.
     expect(isOwnStoreName("Kumtel Türkiye", ["Kumtel"])).toBe(false);

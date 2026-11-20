@@ -487,15 +487,19 @@ export function hepsiburadaSellersFromListings(
 
 /**
  * Aynı ilanın diğer satıcısının rakip URL'si: Trendyol `?merchantId=<id>`,
- * Hepsiburada/N11 `?magaza=<satıcı adı>` (satıcıyı adıyla seçer), Amazon
+ * Hepsiburada `?magaza=<satıcı adı>`, N11 `?magaza=<kısa ad>`, Amazon
  * `/dp/<ASIN>?smid=<satıcı kimliği>` (kimliksiz satıcı için URL yazılmaz).
  */
 export function sameListingSellerUrl(productUrl: string, seller: SameListingSeller): string | null {
   try {
     const parsed = new URL(productUrl);
     const base = `${parsed.origin}${parsed.pathname}`;
-    if (/(^|\.)(hepsiburada|n11)\.com$/i.test(parsed.hostname)) {
+    if (/(^|\.)hepsiburada\.com$/i.test(parsed.hostname)) {
       return seller.sellerName ? `${base}?magaza=${encodeURIComponent(seller.sellerName)}` : null;
+    }
+    // N11 satıcıyı kısa adıyla (`magaza=<slug>`) seçer; slug merchantId'dedir.
+    if (/(^|\.)n11\.com$/i.test(parsed.hostname)) {
+      return `${base}?magaza=${encodeURIComponent(seller.merchantId)}`;
     }
     if (/(^|\.)amazon\.com\.tr$/i.test(parsed.hostname)) {
       const asin = amazonAsinFromUrl(productUrl);
