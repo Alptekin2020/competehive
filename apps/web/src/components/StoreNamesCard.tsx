@@ -76,9 +76,9 @@ export default function StoreNamesCard() {
         <h3 className="text-base sm:text-lg font-semibold text-white">Mağaza adım</h3>
       </div>
       <p className="mt-1 text-sm text-dark-400">
-        Trendyol ve Hepsiburada&apos;da satıcı olarak göründüğünüz mağaza adını yazın. Aynı ilanı
-        başka satıcılar da satıyorsa fiyatınız kendi satırınızdan okunur ve mağazanız rakip
-        sayılmaz. Satış yapmadığınız pazaryerini boş bırakın.
+        Her pazaryerinde satıcı olarak göründüğünüz mağaza adını yazın. Aynı ilanı başka satıcılar
+        da satıyorsa fiyatınız kendi satırınızdan okunur ve mağazanız rakip sayılmaz. Satış
+        yapmadığınız pazaryerlerini boş bırakın.
       </p>
 
       {stores === null ? (

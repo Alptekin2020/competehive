@@ -4,12 +4,18 @@
  * tek liste (`users.own_store_names`, tüm pazaryerleri) kullanılır. Worker
  * aynası: `apps/worker/src/utils/own-store.ts` (`parseOwnStores`).
  *
- * Yalnız taramanın ilandaki satıcıları okuduğu pazaryerleri (`pageSeller` /
- * `otherSellers`): başka yerde girilen ad hiçbir şeyi değiştirmez. Vatan,
- * Teknosa, MediaMarkt kendi ürününü satan perakendeciler; Amazon, N11,
- * Pazarama, PttAVM satıcılarını okumaya başlayınca buraya eklenir.
+ * Yalnız aynı ilanı birden çok satıcının sattığı pazaryerleri. Vatan, Teknosa
+ * ve MediaMarkt kendi stoğunu satan perakendecilerdir; mağaza adı alanı yoktur.
+ * Worker aynası: `apps/worker/src/utils/marketplace-sellers.ts`.
  */
-export const OWN_STORE_MARKETPLACES: readonly string[] = ["TRENDYOL", "HEPSIBURADA"];
+export const OWN_STORE_MARKETPLACES: readonly string[] = [
+  "TRENDYOL",
+  "HEPSIBURADA",
+  "AMAZON_TR",
+  "N11",
+  "PAZARAMA",
+  "PTTAVM",
+];
 
 export function parseOwnStores(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};

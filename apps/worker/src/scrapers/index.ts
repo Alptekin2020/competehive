@@ -22,6 +22,15 @@ import {
   sellerDataSnippets,
   sellersFromProductDetail,
 } from "../utils/same-listing";
+import {
+  amazonOffersUrl,
+  amazonShownMerchant,
+  parseAmazonOffers,
+  SELLER_DIAGNOSTIC_KEYS,
+  sellerMarketplaceForUrl,
+  urlPinsSeller,
+  withoutShownSeller,
+} from "../utils/marketplace-sellers";
 
 // ============================================
 // Scraper Types
@@ -80,6 +89,11 @@ export interface ScraperConfig {
   untrustedHost?: boolean;
   /** Accept başlığını değiştirir (ör. Shopify ürün JSON'u için application/json). */
   accept?: string;
+  /**
+   * Kendi ürün taraması: ilanın diğer satıcılarını ayrı bir istekle de oku
+   * (Amazon "Tüm teklifler"). Rakip taramaları bu isteği yapmaz.
+   */
+  otherSellers?: boolean;
 }
 
 const MAX_REDIRECTS = 5;
@@ -1461,6 +1475,7 @@ async function scrapeWithFallback(
       logger.info(
         `${marketplaceName} HTML scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
+      annotateMarketplaceSellers(url, html, product, "html");
       return product;
     }
     if (product?.unavailable) {
@@ -1516,6 +1531,7 @@ async function scrapeWithFallback(
       logger.info(
         `${marketplaceName} Puppeteer scraped: ${product.name} - ${product.price} ${product.currency}`,
       );
+      annotateMarketplaceSellers(url, html, product, "puppeteer");
       return product;
     }
     if (product?.unavailable) {
@@ -1541,6 +1557,102 @@ async function scrapeWithFallback(
       retryable: true,
     },
   );
+}
+
+// Amazon, N11, Pazarama, PttAVM: sayfanın gösterdiği satıcı (URL satıcı
+// seçmiyorsa) `pageSeller` olur; Ayarlar → "Mağaza adım" bununla karşılaştırılır.
+// Diğer satıcıların sayfada nerede durduğunu bulmak için anahtar sayaçları ve
+// çevreleri aynı URL için 6 saatte bir loglanır ("Marketplace seller diagnostics").
+const marketplaceSellerDiagLoggedAt = new Map<string, number>();
+
+function annotateMarketplaceSellers(
+  url: string,
+  html: string,
+  product: ScrapedProduct,
+  source: string,
+): void {
+  const marketplace = sellerMarketplaceForUrl(url);
+  if (!marketplace || marketplace === "TRENDYOL" || marketplace === "HEPSIBURADA") return;
+  if (!urlPinsSeller(url) && !product.pageSeller) {
+    const shown = marketplace === "AMAZON_TR" ? amazonShownMerchant(html) : null;
+    const sellerName = shown?.sellerName || product.sellerName?.trim();
+    if (sellerName) product.pageSeller = { merchantId: shown?.merchantId ?? null, sellerName };
+  }
+
+  const key = url.split("?")[0];
+  const last = marketplaceSellerDiagLoggedAt.get(key);
+  if (last !== undefined && Date.now() - last < 6 * 60 * 60 * 1000) return;
+  marketplaceSellerDiagLoggedAt.set(key, Date.now());
+  const keys = SELLER_DIAGNOSTIC_KEYS[marketplace];
+  const markers: Record<string, number> = {};
+  for (const marker of keys) {
+    let count = 0;
+    let idx = html.indexOf(marker);
+    while (idx !== -1 && count < 999) {
+      count++;
+      idx = html.indexOf(marker, idx + marker.length);
+    }
+    if (count > 0) markers[marker] = count;
+  }
+  logger.info(
+    {
+      marketplace,
+      url: key.slice(0, 120),
+      source,
+      len: html.length,
+      sellerName: product.sellerName ?? null,
+      pageSeller: product.pageSeller?.sellerName ?? null,
+      markers,
+      snippets: sellerDataSnippets(
+        html,
+        keys.filter((k) => markers[k]),
+        1,
+        400,
+      ),
+    },
+    "Marketplace seller diagnostics",
+  );
+}
+
+/**
+ * Amazon ilanının diğer satıcıları "Tüm teklifler" (AOD) parçasından okunur.
+ * Sayfanın gösterdiği satıcı listeye girmez (kullanıcı oysa kendini rakip
+ * görürdü). Okunamazsa ürün olduğu gibi kalır.
+ */
+async function attachAmazonOtherSellers(
+  url: string,
+  product: ScrapedProduct,
+  config: ScraperConfig,
+): Promise<void> {
+  if (urlPinsSeller(url)) return;
+  const offersUrl = amazonOffersUrl(url);
+  if (!offersUrl) return;
+  try {
+    const html = await fetchWithRetry(offersUrl, config, 1);
+    const challenge = detectBotChallenge(html);
+    const listed = challenge ? [] : parseAmazonOffers(html);
+    const sellers = withoutShownSeller(listed, product.pageSeller ?? null);
+    logger.info(
+      {
+        url: url.split("?")[0].slice(0, 120),
+        listed: listed.length,
+        sellers: sellers.length,
+        pageSeller: product.pageSeller?.sellerName ?? null,
+        challenge: challenge ?? null,
+        len: html.length,
+        ...(listed.length === 0
+          ? { snippets: sellerDataSnippets(html, ["aod-offer", "soldBy", "a-offscreen"], 1, 300) }
+          : {}),
+      },
+      "Amazon other sellers",
+    );
+    if (sellers.length > 0) product.otherSellers = sellers;
+  } catch (error) {
+    logger.warn(
+      { url: url.split("?")[0].slice(0, 120), error: errorMessage(error) },
+      "Amazon other sellers fetch failed",
+    );
+  }
 }
 
 // ============================================
@@ -2316,7 +2428,11 @@ export async function scrapeAmazonTR(
   config: ScraperConfig = {},
 ): Promise<ScrapedProduct> {
   logger.info(`Scraping Amazon TR: ${url}`);
-  return scrapeWithFallbackCached(url, config, parseAmazonTRHtml, "Amazon TR");
+  const product = await scrapeWithFallbackCached(url, config, parseAmazonTRHtml, "Amazon TR");
+  if (config.otherSellers && !product.otherSellers) {
+    await attachAmazonOtherSellers(url, product, config);
+  }
+  return product;
 }
 
 // ============================================

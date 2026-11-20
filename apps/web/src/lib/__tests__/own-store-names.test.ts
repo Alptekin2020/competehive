@@ -41,7 +41,7 @@ describe("own store names", () => {
         FOO: "Bar",
         HEPSIBURADA: "HB",
       }),
-    ).toEqual({ TRENDYOL: "Benim Mağazam", HEPSIBURADA: "HB" });
+    ).toEqual({ TRENDYOL: "Benim Mağazam", N11: "N11 Mağazam", HEPSIBURADA: "HB" });
     expect(parseOwnStores({ trendyol: " A ", x: 1 })).toEqual({ TRENDYOL: "A" });
   });
 });

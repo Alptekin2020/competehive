@@ -8,6 +8,11 @@
 // Puppeteer sayfası botu geçtiğinde sayfanın kendi XHR'larındaki ya da sayfa
 // içinden yapılan productDetail çağrısındaki `otherMerchants` listesi okunur.
 
+import {
+  amazonAsinFromUrl,
+  amazonSellerIdFromUrl,
+  sellerMarketplaceForUrl,
+} from "./marketplace-sellers";
 /** Aynı ilanı satan diğer satıcı. */
 export interface SameListingSeller {
   merchantId: string;
@@ -185,6 +190,10 @@ export function isOtherSellerUrl(
 ): boolean {
   const theirs = merchantIdFromUrl(competitorUrl);
   if (theirs) return theirs !== merchantIdFromUrl(productUrl);
+  const theirAmazon = amazonSellerIdFromUrl(competitorUrl);
+  if (theirAmazon && sellerMarketplaceForUrl(competitorUrl) === "AMAZON_TR") {
+    return theirAmazon !== amazonSellerIdFromUrl(productUrl);
+  }
   const theirMagaza = hepsiburadaMagazaFromUrl(competitorUrl);
   if (!theirMagaza) return false;
   const ownMagaza = hepsiburadaMagazaFromUrl(productUrl);
@@ -478,14 +487,20 @@ export function hepsiburadaSellersFromListings(
 
 /**
  * Aynı ilanın diğer satıcısının rakip URL'si: Trendyol `?merchantId=<id>`,
- * Hepsiburada `?magaza=<satıcı adı>` (Hepsiburada satıcıyı adıyla seçer).
+ * Hepsiburada/N11 `?magaza=<satıcı adı>` (satıcıyı adıyla seçer), Amazon
+ * `/dp/<ASIN>?smid=<satıcı kimliği>` (kimliksiz satıcı için URL yazılmaz).
  */
 export function sameListingSellerUrl(productUrl: string, seller: SameListingSeller): string | null {
   try {
     const parsed = new URL(productUrl);
     const base = `${parsed.origin}${parsed.pathname}`;
-    if (/(^|\.)hepsiburada\.com$/i.test(parsed.hostname)) {
+    if (/(^|\.)(hepsiburada|n11)\.com$/i.test(parsed.hostname)) {
       return seller.sellerName ? `${base}?magaza=${encodeURIComponent(seller.sellerName)}` : null;
+    }
+    if (/(^|\.)amazon\.com\.tr$/i.test(parsed.hostname)) {
+      const asin = amazonAsinFromUrl(productUrl);
+      if (!asin || !/^[A-Z0-9]{8,20}$/.test(seller.merchantId)) return null;
+      return `${parsed.origin}/dp/${asin}?smid=${seller.merchantId}`;
     }
     return `${base}?merchantId=${seller.merchantId}`;
   } catch {
