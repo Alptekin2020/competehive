@@ -5,6 +5,8 @@ import {
   amazonAsinFromUrl,
   n11ShownSellerSlug,
   parseN11OtherSellers,
+  parsePttavmOtherSellers,
+  pazaramaShownSeller,
   amazonOffersUrl,
   amazonShownMerchant,
   parseAmazonOffers,
@@ -160,14 +162,60 @@ describe("marketplace sellers", () => {
   });
 
   it("reads N11 other stores with their prices", () => {
-    const html = `<div class="otherSellers"><div class="otherSellers-top"><h3>Diğer Mağazalar</h3></div>
-      <div class="swiper-wrapper">
-        <div data-index="0" class="swiper-slide"><a href="/urun/icollagen-133827429?magaza=semizticaret" class="titleAndPointWrapper"><div class="title"><span class="name">Semizticaret</span></div></a>
-          <div class="priceContainer"><ins>1.249,90 TL</ins></div></div>
-        <div data-index="1" class="swiper-slide"><a href="/urun/icollagen-133827429?magaza=teknosa"><span class="name">Teknosa</span></a></div>
-      </div></div>`;
+    // Prod 20 Kasım kart yapısı: ad `.unifiedProductPrice .name`, puan
+    // `.sellerPoint`, fiyat `.priceAreaWrapper .priceDisplay`.
+    const html = `<div class="otherSellers"><h3>Diğer Mağazalar</h3><div class="swiper-wrapper">
+      <div data-index="0" class="swiper-slide js-other-seller-observe"><div class="unifiedProduct"><div class="unifiedProductInfo"><div class="unifiedProductPrice"><div class="titleWrapper"><a href="/urun/oral-b-18872592?magaza=krmsaglik" class="titleAndPointWrapper"><div class="title"><span class="name">KRMSAGLIK</span></div> <div class="sellerPoint"><span>9.9</span></div></a></div></div></div>
+        <a href="/urun/oral-b-18872592?magaza=krmsaglik"><div class="cargoInformation"><span>Ücretsiz Kargo</span></div></a>
+        <div class="priceAreaWrapper"><a href="/urun/oral-b-18872592?magaza=krmsaglik"><div class="priceArea"><div class="priceDisplay">1.765,31 TL</div></div></a></div></div></div>
+      <div data-index="1" class="swiper-slide"><div class="unifiedProduct"><a href="/urun/oral-b-18872592?magaza=balaca" class="titleAndPointWrapper"><span class="name">BALACA</span></a>
+        <div class="priceAreaWrapper"><div class="priceDisplay">1.759 TL</div></div></div></div>
+      <div data-index="2" class="swiper-slide"><a href="/urun/oral-b-18872592?magaza=fiyatsiz"><span class="name">Fiyatsız</span></a></div>
+    </div></div>`;
     expect(parseN11OtherSellers(html)).toEqual([
-      { merchantId: "semizticaret", sellerName: "Semizticaret", price: 1249.9 },
+      { merchantId: "krmsaglik", sellerName: "KRMSAGLIK", price: 1765.31 },
+      { merchantId: "balaca", sellerName: "BALACA", price: 1759 },
     ]);
+  });
+
+  it("reads the shown Pazarama seller from the Nuxt state", () => {
+    const html =
+      'breadcrumb:[],shareUrl:"https:\\u002F\\u002Fwww.pazarama.com\\u002Fphilips-hd965090-p-8710103862772?magaza=bortas-teknoji",breadcrumb:[{categoryId:b$}],sellerId:"d7e0b2d6-391a-44af-e1aa-08dbf62a48fa",productId:y';
+    expect(pazaramaShownSeller(html)).toEqual({
+      merchantId: "d7e0b2d6-391a-44af-e1aa-08dbf62a48fa",
+      sellerName: "bortas-teknoji",
+    });
+    expect(isOwnStoreName("bortas-teknoji", ["Bortaş Teknoji"])).toBe(true);
+  });
+
+  it("reads PttAVM other sellers with their own listing URLs", () => {
+    const html = `<section class="otherMerchants__iwDHX" aria-label="Diğer Satıcılar"><h2>Diğer Satıcılar</h2>
+      <div class="card__MSQ14">
+        <div class="merchantItem__ApmEw clickable__cFHaw"><div class="merchantHeader__lmcva"><a href="https://www.pttavm.com/kumtel-lx-6331-pembe-p-1402332420" class="merchantName__hegdG">GIYAS</a><span class="merchantScore__NCIgJ">8.1</span></div>
+          <div class="priceWrapper__x1"><span class="oldPrice__a">1.299,00 TL</span><span class="price__b">1.149,90 TL</span></div></div>
+        <div class="merchantItem__ApmEw"><a href="https://www.pttavm.com/kumtel-lx-6331-p-1646732995" class="merchantName__hegdG">Nudem Living</a><div>Fiyat 1.199 TL</div></div>
+      </div></section>`;
+    expect(parsePttavmOtherSellers(html)).toEqual([
+      {
+        merchantId: "1402332420",
+        sellerName: "GIYAS",
+        price: 1149.9,
+        url: "https://www.pttavm.com/kumtel-lx-6331-pembe-p-1402332420",
+      },
+      {
+        merchantId: "1646732995",
+        sellerName: "Nudem Living",
+        price: 1199,
+        url: "https://www.pttavm.com/kumtel-lx-6331-p-1646732995",
+      },
+    ]);
+    expect(
+      sameListingSellerUrl("https://www.pttavm.com/kumtel-lx-6331-p-697723322", {
+        merchantId: "1402332420",
+        sellerName: "GIYAS",
+        price: 1149.9,
+        url: "https://www.pttavm.com/kumtel-lx-6331-pembe-p-1402332420?utm_source=x",
+      }),
+    ).toBe("https://www.pttavm.com/kumtel-lx-6331-pembe-p-1402332420");
   });
 });

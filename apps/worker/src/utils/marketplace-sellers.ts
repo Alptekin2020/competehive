@@ -197,14 +197,66 @@ export function parseN11OtherSellers(html: string): ScrapedOtherSeller[] {
     const slug = href.match(/[?&]magaza=([A-Za-z0-9_.-]+)/)?.[1];
     if (!slug || seen.has(slug)) return;
     const sellerName = card.find(".name").first().text().replace(/\s+/g, " ").trim() || slug;
-    const priceText =
-      card.find("ins").first().text() ||
-      card.find("[class*='price' i], [class*='Price']").first().text() ||
-      "";
-    const price = parseTrPrice(priceText);
+    // Prod 20 Kasım: fiyat `.priceDisplay` ("1.759 TL"); üst `.unifiedProductPrice`
+    // satıcı adını ve puanını taşır, fiyat sanılmamalı.
+    const price =
+      parseTrPrice(card.find(".priceDisplay").first().text()) ||
+      lowestTlAmount(card.find(".priceAreaWrapper").first().text());
     if (price <= 0) return;
     seen.add(slug);
     out.push({ merchantId: slug, sellerName, price });
+  });
+  return out;
+}
+
+/** Metindeki "1.759 TL" / "1.765,31 TL" tutarlarının en düşüğü (indirimli fiyat). */
+function lowestTlAmount(text: string): number {
+  const prices = [
+    ...text.matchAll(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:TL|₺)/g),
+  ]
+    .map((m) => parseTrPrice(m[1]))
+    .filter((p) => p > 0);
+  return prices.length > 0 ? Math.min(...prices) : 0;
+}
+
+/**
+ * Pazarama sayfasının gösterdiği satıcı (Nuxt durumu, prod 20 Kasım):
+ * `shareUrl:"…?magaza=<kısa ad>"` ve hemen ardındaki `sellerId:"<uuid>"`.
+ */
+export function pazaramaShownSeller(
+  html: string,
+): { merchantId: string | null; sellerName: string } | null {
+  const idx = html.indexOf("shareUrl:");
+  if (idx === -1) return null;
+  const window = html.slice(idx, idx + 1500);
+  const slug = window.slice(0, 400).match(/[?&]magaza=([A-Za-z0-9_.-]+)/)?.[1];
+  if (!slug || slug.length < 2) return null;
+  const sellerId = window.match(/sellerId:"([0-9a-f-]{36})"/i)?.[1] ?? null;
+  return { merchantId: sellerId ?? slug, sellerName: slug };
+}
+
+/**
+ * PttAVM "Diğer Satıcılar" bölümü (`otherMerchants__*`, sınıf adları karma):
+ * her satıcının kendi ilanına giden `merchantName__*` bağlantısı ve fiyatı.
+ * Her satıcının ayrı `-p-<id>` ilanı vardır; satır o adresle yazılır.
+ */
+export function parsePttavmOtherSellers(html: string): ScrapedOtherSeller[] {
+  const $ = cheerio.load(html);
+  const out: ScrapedOtherSeller[] = [];
+  const seen = new Set<string>();
+  $('[class*="otherMerchants__"] [class*="merchantItem__"]').each((_, el) => {
+    const card = $(el);
+    const link = card.find('a[class*="merchantName__"]').first();
+    const href = link.attr("href") ?? "";
+    const sellerName = link.text().replace(/\s+/g, " ").trim() || null;
+    const listingId = href.match(/-p-(\d+)/)?.[1];
+    if (!listingId || !sellerName || seen.has(listingId)) return;
+    // Fiyat alanının yapısı canlıda henüz görülmedi: kartın "… TL" tutarlarının
+    // en düşüğü (eski fiyat ve indirimli fiyat birlikte durabilir).
+    const price = lowestTlAmount(card.text());
+    if (price <= 0) return;
+    seen.add(listingId);
+    out.push({ merchantId: listingId, sellerName, price, url: href });
   });
   return out;
 }

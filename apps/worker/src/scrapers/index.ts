@@ -28,6 +28,8 @@ import {
   n11ShownSellerSlug,
   parseAmazonOffers,
   parseN11OtherSellers,
+  parsePttavmOtherSellers,
+  pazaramaShownSeller,
   SELLER_DIAGNOSTIC_KEYS,
   sellerMarketplaceForUrl,
   urlPinsSeller,
@@ -44,6 +46,8 @@ export interface ScrapedOtherSeller {
   merchantId: string;
   sellerName: string | null;
   price: number;
+  /** Satıcının kendi ilan sayfası (PttAVM: her satıcının ayrı `-p-<id>` ilanı). */
+  url?: string;
 }
 
 export interface ScrapedProduct {
@@ -1581,6 +1585,7 @@ const SELLER_CONTEXT_KEYS: Partial<
     { key: "otherSellers:[{", before: 0, after: 2000 },
   ],
   AMAZON_TR: [{ key: 'id="merchantInfoFeature_feature_div"', before: 0, after: 1200 }],
+  PTTAVM: [{ key: 'class="otherMerchants__', before: 0, after: 3000 }],
 };
 
 function sellerContextSnippets(
@@ -1609,11 +1614,32 @@ function annotateMarketplaceSellers(
   if (!marketplace || marketplace === "TRENDYOL" || marketplace === "HEPSIBURADA") return;
   const pinned = urlPinsSeller(url);
   if (!pinned && !product.pageSeller) {
-    const shown = marketplace === "AMAZON_TR" ? amazonShownMerchant(html) : null;
+    const shown =
+      marketplace === "AMAZON_TR"
+        ? amazonShownMerchant(html)
+        : marketplace === "PAZARAMA"
+          ? pazaramaShownSeller(html)
+          : null;
     const n11Slug = marketplace === "N11" ? n11ShownSellerSlug(html) : null;
     const sellerName = shown?.sellerName || product.sellerName?.trim() || n11Slug;
     if (sellerName) {
       product.pageSeller = { merchantId: shown?.merchantId ?? n11Slug ?? null, sellerName };
+    }
+  }
+  if (marketplace === "PTTAVM" && !product.otherSellers) {
+    const listed = parsePttavmOtherSellers(html);
+    const sellers = withoutShownSeller(listed, product.pageSeller ?? null);
+    if (sellers.length > 0) product.otherSellers = sellers;
+    if (html.includes("otherMerchants__")) {
+      logger.info(
+        {
+          url: url.split("?")[0].slice(0, 120),
+          listed: listed.length,
+          sellers: sellers.length,
+          pageSeller: product.pageSeller?.sellerName ?? null,
+        },
+        "PttAVM other sellers",
+      );
     }
   }
   if (marketplace === "N11" && !pinned && !product.otherSellers) {
