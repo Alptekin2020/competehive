@@ -18,6 +18,8 @@ export interface SameListingSeller {
   merchantId: string;
   sellerName: string | null;
   price: number;
+  /** Satıcının kendi ilan adresi (PttAVM); varsa satır bu adresle yazılır. */
+  url?: string;
 }
 
 /** Bir JSON içinde `otherMerchants` dizisini taşıyan nesneyi bulur (derinlik sınırlı). */
@@ -494,11 +496,16 @@ export function sameListingSellerUrl(productUrl: string, seller: SameListingSell
   try {
     const parsed = new URL(productUrl);
     const base = `${parsed.origin}${parsed.pathname}`;
+    if (seller.url) {
+      const own = new URL(seller.url, parsed.origin);
+      // Yalnız aynı pazaryerindeki satıcı sayfası; sorgu (izleme) atılır.
+      return own.hostname === parsed.hostname ? `${own.origin}${own.pathname}` : null;
+    }
     if (/(^|\.)hepsiburada\.com$/i.test(parsed.hostname)) {
       return seller.sellerName ? `${base}?magaza=${encodeURIComponent(seller.sellerName)}` : null;
     }
-    // N11 satıcıyı kısa adıyla (`magaza=<slug>`) seçer; slug merchantId'dedir.
-    if (/(^|\.)n11\.com$/i.test(parsed.hostname)) {
+    // N11/Pazarama satıcıyı kısa adıyla (`magaza=<slug>`) seçer; slug merchantId'dedir.
+    if (/(^|\.)(n11|pazarama)\.com$/i.test(parsed.hostname)) {
       return `${base}?magaza=${encodeURIComponent(seller.merchantId)}`;
     }
     if (/(^|\.)amazon\.com\.tr$/i.test(parsed.hostname)) {
