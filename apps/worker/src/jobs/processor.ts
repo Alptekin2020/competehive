@@ -24,6 +24,7 @@ import {
   shouldRetireOwnStoreRow,
 } from "../utils/own-store";
 import { sameListingAttributes, sameListingSellerUrl } from "../utils/same-listing";
+import { SELLER_MARKETPLACE_LABELS, sellerMarketplaceForUrl } from "../utils/marketplace-sellers";
 import {
   evaluateAlertRule,
   filterSignificantCompetitorMoves,
@@ -176,9 +177,8 @@ async function syncSameListingCompetitors(
 
   const moves: CompetitorPriceMove[] = [];
   try {
-    const isHepsiburada = /(^|\.)hepsiburada\.com$/i.test(new URL(productUrl).hostname);
-    const marketplace = isHepsiburada ? "HEPSIBURADA" : "TRENDYOL";
-    const fallbackName = isHepsiburada ? "Hepsiburada satıcısı" : "Trendyol satıcısı";
+    const marketplace = sellerMarketplaceForUrl(productUrl) ?? "TRENDYOL";
+    const fallbackName = `${SELLER_MARKETPLACE_LABELS[marketplace]} satıcısı`;
     // En ucuz 10 satıcı yeterli — kalabalık ilanlarda satır patlamasını önle.
     const top = [...sellers]
       .sort((a, b) => a.price - b.price)
@@ -340,7 +340,7 @@ export const scrapeWorker = new Worker(
     try {
       // Scraper'ı al ve çalıştır
       const scraper = getScraper(marketplace);
-      const scraped: ScrapedProduct = await scraper(productUrl);
+      const scraped: ScrapedProduct = await scraper(productUrl, { otherSellers: true });
 
       // Mevcut fiyatı al
       const product = await prisma.trackedProduct.findUnique({
