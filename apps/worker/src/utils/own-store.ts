@@ -1,4 +1,5 @@
-// Kullanıcının kendi mağazası (Ayarlar → "Mağaza adım", users.own_store_names).
+// Kullanıcının kendi mağazası (Ayarlar → "Mağaza adım": pazaryeri başına users.own_stores,
+// adı girilmemiş pazaryerinde tüm pazaryerleri için users.own_store_names).
 //
 // Aynı ilanı birden çok satıcı satar. Sayfanın gösterdiği satıcı (buybox) her
 // zaman kullanıcı değildir: kullanıcı ilandaki diğer satıcılardan biriyse kendi
@@ -138,4 +139,39 @@ export function shouldRetireOwnStoreRow(
     competitorSellerName(row.competitorName, row.matchAttributes),
     ownStoreNames,
   );
+}
+
+/**
+ * `users.own_stores` JSON'u (`{"TRENDYOL": "Mağaza"}`): yalnız dolu metin
+ * değerler alınır. Web aynası: `apps/web/src/lib/own-stores.ts`.
+ */
+export function parseOwnStores(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string" && value.trim()) out[key.toUpperCase()] = value.trim();
+  }
+  return out;
+}
+
+/**
+ * Bir pazaryerindeki kendi mağaza adları: o pazaryerine özel ad varsa yalnız o,
+ * yoksa tüm pazaryerleri için girilmiş eski liste (`own_store_names`).
+ */
+export function ownStoreNamesFor(
+  marketplace: string | null | undefined,
+  ownStores: unknown,
+  fallbackNames: readonly string[] | null | undefined,
+): string[] {
+  const specific = marketplace ? parseOwnStores(ownStores)[marketplace.toUpperCase()] : undefined;
+  if (specific) return [specific];
+  return [...(fallbackNames ?? [])];
+}
+
+/** Kullanıcının herhangi bir mağaza adı var mı (pazaryerine özel ya da genel). */
+export function hasAnyOwnStore(
+  ownStores: unknown,
+  fallbackNames: readonly string[] | null | undefined,
+): boolean {
+  return Object.keys(parseOwnStores(ownStores)).length > 0 || (fallbackNames?.length ?? 0) > 0;
 }

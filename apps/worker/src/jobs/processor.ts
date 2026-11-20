@@ -17,7 +17,12 @@ import {
 } from "../utils/scrape-failures";
 import { captureError } from "../sentry";
 import { PLAN_EXPIRY_GRACE_MS } from "../shared";
-import { applyOwnStore, shouldRetireOwnStoreRow } from "../utils/own-store";
+import {
+  applyOwnStore,
+  hasAnyOwnStore,
+  ownStoreNamesFor,
+  shouldRetireOwnStoreRow,
+} from "../utils/own-store";
 import { sameListingAttributes, sameListingSellerUrl } from "../utils/same-listing";
 import {
   evaluateAlertRule,
@@ -282,17 +287,27 @@ async function syncSameListingCompetitors(
  */
 async function retireOwnStoreCompetitors(
   productId: string,
-  ownStoreNames: readonly string[],
+  ownStores: unknown,
+  fallbackNames: readonly string[],
 ): Promise<void> {
   try {
     const rows = await prisma.competitor.findMany({
       where: { trackedProductId: productId },
-      select: { id: true, competitorName: true, matchScore: true, matchAttributes: true },
+      select: {
+        id: true,
+        competitorName: true,
+        marketplace: true,
+        matchScore: true,
+        matchAttributes: true,
+      },
     });
     const now = new Date().toISOString();
     let retired = 0;
     for (const row of rows) {
-      if (!shouldRetireOwnStoreRow(row, ownStoreNames)) continue;
+      // Satırın kendi pazaryerindeki mağaza adı: Hepsiburada'daki rakip satırı
+      // kullanıcının Hepsiburada mağazasıyla karşılaştırılır.
+      const names = ownStoreNamesFor(row.marketplace, ownStores, fallbackNames);
+      if (!shouldRetireOwnStoreRow(row, names)) continue;
       const attrs =
         row.matchAttributes && typeof row.matchAttributes === "object"
           ? (row.matchAttributes as Record<string, unknown>)
@@ -334,14 +349,18 @@ export const scrapeWorker = new Worker(
           currentPrice: true,
           status: true,
           metadata: true,
-          user: { select: { ownStoreNames: true } },
+          user: { select: { ownStoreNames: true, ownStores: true } },
         },
       });
 
       // Kullanıcının mağaza adı (Ayarlar) sayfanın gösterdiği satıcı değilse
       // kendi fiyatı ilandaki kendi satırından okunur; kendi mağazası rakip olmaz.
-      const ownStoreNames = product?.user?.ownStoreNames ?? [];
-      const ownStore = applyOwnStore(scraped, ownStoreNames);
+      const fallbackStoreNames = product?.user?.ownStoreNames ?? [];
+      const ownStores = product?.user?.ownStores ?? {};
+      const ownStore = applyOwnStore(
+        scraped,
+        ownStoreNamesFor(marketplace, ownStores, fallbackStoreNames),
+      );
       const result = ownStore.product;
       if (ownStore.outcome !== "none") {
         logger.info(
@@ -430,7 +449,9 @@ export const scrapeWorker = new Worker(
       // kuyruğundan ÖNCE ki COMPETITOR_CHEAPER taze buybox fiyatlarını görsün.
       // Dönen fiyat hareketleri COMPETITOR_PRICE_CHANGE kuralını besler.
       const competitorMoves = await syncSameListingCompetitors(productId, productUrl, result);
-      if (ownStoreNames.length > 0) await retireOwnStoreCompetitors(productId, ownStoreNames);
+      if (hasAnyOwnStore(ownStores, fallbackStoreNames)) {
+        await retireOwnStoreCompetitors(productId, ownStores, fallbackStoreNames);
+      }
 
       // Fiyat/stok değiştiyse alert kontrolünü kuyruğa al — tüm fiyat-güncelleme
       // yollarıyla paylaşılan ortak yardımcı (manuel "Yenile" ve 6 saatlik

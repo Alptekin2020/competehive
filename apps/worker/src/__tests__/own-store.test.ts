@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { ScrapedProduct } from "../scrapers";
 import {
   applyOwnStore,
+  hasAnyOwnStore,
   isOwnStoreName,
   normalizeStoreName,
+  ownStoreNamesFor,
+  parseOwnStores,
   shouldRetireOwnStoreRow,
 } from "../utils/own-store";
 
@@ -131,5 +134,41 @@ describe("shouldRetireOwnStoreRow", () => {
         own,
       ),
     ).toBe(false);
+  });
+});
+
+describe("per-marketplace store names", () => {
+  const stores = { TRENDYOL: "Benim Trendyol", hepsiburada: " HB Mağazam ", N11: "", X: 5 };
+
+  it("reads only filled string values, keys upper-cased", () => {
+    expect(parseOwnStores(stores)).toEqual({
+      TRENDYOL: "Benim Trendyol",
+      HEPSIBURADA: "HB Mağazam",
+    });
+    expect(parseOwnStores(null)).toEqual({});
+    expect(parseOwnStores(["a"])).toEqual({});
+  });
+
+  it("uses the marketplace's own name, else the all-marketplaces list", () => {
+    expect(ownStoreNamesFor("TRENDYOL", stores, ["Genel"])).toEqual(["Benim Trendyol"]);
+    expect(ownStoreNamesFor("HEPSIBURADA", stores, [])).toEqual(["HB Mağazam"]);
+    expect(ownStoreNamesFor("N11", stores, ["Genel"])).toEqual(["Genel"]);
+    expect(ownStoreNamesFor("AMAZON_TR", {}, [])).toEqual([]);
+    expect(ownStoreNamesFor(null, stores, ["Genel"])).toEqual(["Genel"]);
+  });
+
+  it("a Trendyol name never marks a Hepsiburada seller as own", () => {
+    const hb = applyOwnStore(
+      { ...base, otherSellers: [{ merchantId: "t1", sellerName: "Benim Trendyol", price: 900 }] },
+      ownStoreNamesFor("HEPSIBURADA", { TRENDYOL: "Benim Trendyol" }, []),
+    );
+    expect(hb.outcome).toBe("none");
+    expect(hb.product.price).toBe(1043.33);
+  });
+
+  it("knows when the user has any store name", () => {
+    expect(hasAnyOwnStore({}, [])).toBe(false);
+    expect(hasAnyOwnStore({ N11: "x" }, [])).toBe(true);
+    expect(hasAnyOwnStore({}, ["Genel"])).toBe(true);
   });
 });

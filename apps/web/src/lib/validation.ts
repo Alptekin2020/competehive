@@ -80,17 +80,37 @@ export const updateBarcodeSchema = z.object({
  * adları. Aynı ilanda kendi fiyatı bu satırdan okunur, rakip sayılmaz.
  */
 export const MAX_OWN_STORE_NAMES = 5;
-export const updateOwnStoreNamesSchema = z.object({
-  storeNames: z
-    .array(
-      z
-        .string()
-        .trim()
-        .min(2, "Mağaza adı en az 2 karakter olmalı")
-        .max(80, "Mağaza adı en fazla 80 karakter olabilir"),
-    )
-    .max(MAX_OWN_STORE_NAMES, `En fazla ${MAX_OWN_STORE_NAMES} mağaza adı ekleyebilirsiniz`),
-});
+
+/** Pazaryeri başına tek mağaza adı; boş metin o pazaryerinin adını siler. */
+const ownStoreNameValue = z
+  .string()
+  .trim()
+  .max(80, "Mağaza adı en fazla 80 karakter olabilir")
+  .refine((value) => value.length === 0 || value.length >= 2, {
+    message: "Mağaza adı en az 2 karakter olmalı",
+  });
+
+export const updateOwnStoresSchema = z
+  .object({
+    stores: z
+      .record(z.string(), ownStoreNameValue)
+      .refine((stores) => Object.keys(stores).length <= 30, "Geçersiz pazaryeri listesi")
+      .optional(),
+    // Eski "tüm pazaryerleri" listesi (yalnız silmek/düzenlemek için).
+    storeNames: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(2, "Mağaza adı en az 2 karakter olmalı")
+          .max(80, "Mağaza adı en fazla 80 karakter olabilir"),
+      )
+      .max(MAX_OWN_STORE_NAMES, `En fazla ${MAX_OWN_STORE_NAMES} mağaza adı ekleyebilirsiniz`)
+      .optional(),
+  })
+  .refine((body) => body.stores !== undefined || body.storeNames !== undefined, {
+    message: "Güncellenecek alan yok",
+  });
 
 /** Boşlukları sadeleştirir, büyük/küçük harf farkıyla tekrarlananları atar. */
 export function cleanOwnStoreNames(names: readonly string[]): string[] {

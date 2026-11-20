@@ -55,6 +55,9 @@ model User {
   // Kullanıcının kendi mağaza adları (Ayarlar → "Mağaza adım"): aynı ilandaki
   // satıcılar arasında kendi fiyatı bu mağazadan okunur, rakip sayılmaz.
   ownStoreNames      String[] @default([]) @map("own_store_names")
+  // Pazaryeri başına kendi mağaza adı: {"TRENDYOL": "…", "HEPSIBURADA": "…"}.
+  // Adı girilmemiş pazaryerinde ownStoreNames (tüm pazaryerleri) kullanılır.
+  ownStores          Json     @default("{}") @map("own_stores")
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
