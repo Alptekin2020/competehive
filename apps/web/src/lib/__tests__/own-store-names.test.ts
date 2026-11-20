@@ -34,7 +34,13 @@ describe("own store names", () => {
 
   it("keeps only supported marketplaces and filled names", () => {
     expect(
-      cleanOwnStores({ TRENDYOL: "  Benim   Mağazam ", N11: "", FOO: "Bar", HEPSIBURADA: "HB" }),
+      cleanOwnStores({
+        TRENDYOL: "  Benim   Mağazam ",
+        N11: "N11 Mağazam",
+        VATAN: "Vatan",
+        FOO: "Bar",
+        HEPSIBURADA: "HB",
+      }),
     ).toEqual({ TRENDYOL: "Benim Mağazam", HEPSIBURADA: "HB" });
     expect(parseOwnStores({ trendyol: " A ", x: 1 })).toEqual({ TRENDYOL: "A" });
   });
